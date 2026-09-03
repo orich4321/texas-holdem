@@ -1,0 +1,30 @@
+{
+  "name": "texas-holdem",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@9.15.4",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "postcss": "8.5.23",
+      "qs": "6.16.0"
+    }
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter @texas-holdem/web --filter @texas-holdem/server dev",
+    "test": "tsx --test tests/**/*.test.mjs",
+    "lint": "eslint apps tests --max-warnings=0",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "e2e": "pnpm --filter @texas-holdem/web build"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.20.0",
+    "@next/eslint-plugin-next": "^15.5.25",
+    "eslint": "^9.20.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "typescript-eslint": "^8.69.0"
+  }
+}
