@@ -10,6 +10,7 @@ cleanup() {
 trap cleanup EXIT
 
 "${compose[@]}" up --wait
+bash tests/verify-token-migration-upgrade.sh
 DATABASE_URL="$TEST_DATABASE_URL" pnpm --filter @texas-holdem/server exec prisma generate --schema prisma/schema.prisma
 DATABASE_URL="$TEST_DATABASE_URL" pnpm --filter @texas-holdem/server exec prisma migrate deploy --schema prisma/schema.prisma
-env NODE_ENV=test TEST_DATABASE_URL="$TEST_DATABASE_URL" pnpm exec tsx --test tests/server-*.integration.test.mjs
+env NODE_ENV=test TEST_DATABASE_URL="$TEST_DATABASE_URL" pnpm exec tsx --test --test-concurrency=1 tests/server-*.integration.test.mjs

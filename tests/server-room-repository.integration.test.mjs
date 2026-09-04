@@ -60,6 +60,39 @@ test('room repository persists a room with two players and retrieves it by join 
   );
 });
 
+test('room repository stores only hashed access tokens and resolves them only in their room', { skip: !integrationEnabled }, async () => {
+  const repository = new RoomRepository(prisma);
+  const firstRoom = await repository.createRoom({
+    status: 'WAITING',
+    host: { id: randomUUID(), displayName: 'First host', initialStack: 1_000 },
+  });
+  const secondRoom = await repository.createRoom({
+    status: 'WAITING',
+    host: { id: randomUUID(), displayName: 'Second host', initialStack: 1_000 },
+  });
+
+  assert.equal(typeof firstRoom.hostAccessToken, 'string');
+  assert.match(firstRoom.hostAccessToken, /^[A-Za-z0-9_-]{43}$/);
+  assert.notEqual(firstRoom.hostAccessToken, secondRoom.hostAccessToken);
+
+  const persistedHost = await prisma.$queryRaw`
+    SELECT "accessTokenHash" FROM "Player" WHERE "id" = ${firstRoom.hostPlayerId}::uuid
+  `;
+  assert.equal(persistedHost.length, 1);
+  assert.notEqual(persistedHost[0].accessTokenHash, firstRoom.hostAccessToken);
+  assert.match(persistedHost[0].accessTokenHash, /^[a-f0-9]{64}$/);
+
+  const resolved = await repository.findPlayerByRoomJoinIdAndAccessToken(firstRoom.joinId, firstRoom.hostAccessToken);
+  assert.equal(resolved?.id, firstRoom.hostPlayerId);
+  assert.equal(await repository.findPlayerByRoomJoinIdAndAccessToken(firstRoom.joinId, 'not-a-valid-token'), null);
+  assert.equal(await repository.findPlayerByRoomJoinIdAndAccessToken(firstRoom.joinId, secondRoom.hostAccessToken), null);
+  assert.equal(await repository.findPlayerByRoomJoinIdAndAccessToken(secondRoom.joinId, firstRoom.hostAccessToken), null);
+
+  const publicRoom = await repository.findRoomByJoinId(firstRoom.joinId);
+  assert.equal('hostAccessToken' in publicRoom, false);
+  assert.equal('accessTokenHash' in publicRoom.players[0], false);
+});
+
 test('room repository rejects duplicate join IDs', { skip: !integrationEnabled }, async () => {
   const joinId = `room-${randomUUID()}`;
   const repository = new RoomRepository(prisma, () => joinId);

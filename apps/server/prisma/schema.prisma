@@ -34,8 +34,9 @@ model Player {
   roomId       String   @db.Uuid
   displayName  String
   initialStack Int
-  currentStack Int
-  room         Room     @relation("RoomPlayers", fields: [roomId], references: [id], onDelete: Cascade)
+  currentStack    Int
+  accessTokenHash String @unique
+  room            Room     @relation("RoomPlayers", fields: [roomId], references: [id], onDelete: Cascade)
   hostedRooms  Room[]   @relation("RoomHost")
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
