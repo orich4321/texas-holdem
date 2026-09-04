@@ -8,6 +8,8 @@
   },
   "pnpm": {
     "overrides": {
+      "deepmerge-ts": "8.0.0",
+      "mysql2": "3.23.1",
       "postcss": "8.5.23",
       "qs": "6.16.0"
     }
@@ -15,6 +17,7 @@
   "scripts": {
     "dev": "pnpm --parallel --filter @texas-holdem/web --filter @texas-holdem/server dev",
     "test": "tsx --test tests/**/*.test.mjs",
+    "test:persistence": "bash tests/run-persistence-integration.sh",
     "lint": "eslint apps tests --max-warnings=0",
     "typecheck": "pnpm -r --if-present typecheck",
     "e2e": "pnpm --filter @texas-holdem/web build"

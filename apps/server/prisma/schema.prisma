@@ -1,0 +1,79 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum RoomStatus {
+  WAITING
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+model Room {
+  id           String     @id @default(uuid()) @db.Uuid
+  joinId       String     @unique
+  status       RoomStatus @default(WAITING)
+  hostPlayerId String?    @db.Uuid
+  hostPlayer   Player?    @relation("RoomHost", fields: [id, hostPlayerId], references: [roomId, id], onDelete: Restrict)
+  players      Player[]   @relation("RoomPlayers")
+  events       GameEvent[]
+  snapshots    GameSnapshot[]
+  settlements  Settlement[]
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@index([status])
+}
+
+model Player {
+  id           String   @id @db.Uuid
+  roomId       String   @db.Uuid
+  displayName  String
+  initialStack Int
+  currentStack Int
+  room         Room     @relation("RoomPlayers", fields: [roomId], references: [id], onDelete: Cascade)
+  hostedRooms  Room[]   @relation("RoomHost")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([roomId])
+  @@unique([roomId, id])
+}
+
+model GameEvent {
+  id        String   @id @default(uuid()) @db.Uuid
+  roomId    String   @db.Uuid
+  sequence  Int
+  type      String
+  payload   Json
+  room      Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([roomId, sequence])
+}
+
+model GameSnapshot {
+  id        String   @id @default(uuid()) @db.Uuid
+  roomId    String   @db.Uuid
+  sequence  Int
+  state     Json
+  room      Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([roomId, sequence])
+}
+
+model Settlement {
+  id             String   @id @default(uuid()) @db.Uuid
+  roomId         String   @db.Uuid
+  idempotencyKey String
+  result         Json
+  room           Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  createdAt      DateTime @default(now())
+
+  @@unique([roomId, idempotencyKey])
+}
