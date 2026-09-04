@@ -71,7 +71,8 @@ function createHttpCorsMiddleware(isOriginAllowed: OriginPolicy): RequestHandler
     }
 
     response.setHeader('Access-Control-Allow-Origin', origin);
-    response.setHeader('Access-Control-Allow-Methods', 'POST');
+    response.setHeader('Access-Control-Allow-Credentials', 'true');
+    response.setHeader('Access-Control-Allow-Methods', 'GET, POST');
     response.setHeader('Access-Control-Allow-Headers', 'Content-Type');
     response.setHeader('Vary', 'Origin');
 
@@ -82,6 +83,15 @@ function createHttpCorsMiddleware(isOriginAllowed: OriginPolicy): RequestHandler
 
     next();
   };
+}
+
+function setPlayerSessionCookie(response: express.Response, accessToken: string): void {
+  response.cookie('poker_player_token', accessToken, {
+    httpOnly: true,
+    sameSite: 'lax',
+    secure: process.env.NODE_ENV === 'production',
+    path: '/',
+  });
 }
 
 export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy() }: CreateAppDependencies) {
@@ -103,9 +113,66 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
         status: 'WAITING',
         host: { id: randomUUID(), ...input },
       });
+      setPlayerSessionCookie(response, room.hostAccessToken);
       response.status(201).json({ roomId: room.joinId, invitePath: `/r/${room.joinId}` });
     } catch {
       console.error('Room creation failed');
+      response.status(500).json({ error: { code: 'INTERNAL_ERROR' } });
+    }
+  });
+
+  app.post('/rooms/:joinId/join', async (request, response) => {
+    const input = validateCreateRoomInput(request.body);
+    if (!input) {
+      response.status(400).json({ error: { code: 'INVALID_REQUEST' } });
+      return;
+    }
+
+    try {
+      const result = await roomRepository.joinWaitingRoom(request.params.joinId, {
+        id: randomUUID(),
+        ...input,
+      });
+      if (result.kind === 'not-found') {
+        response.status(404).json({ error: { code: 'ROOM_NOT_FOUND' } });
+        return;
+      }
+      if (result.kind === 'not-joinable') {
+        response.status(409).json({ error: { code: 'ROOM_NOT_JOINABLE' } });
+        return;
+      }
+      if (result.kind === 'full') {
+        response.status(409).json({ error: { code: 'ROOM_FULL' } });
+        return;
+      }
+      setPlayerSessionCookie(response, result.playerAccessToken);
+      response.status(201).json({ roomId: result.room.joinId, invitePath: `/r/${result.room.joinId}` });
+    } catch {
+      console.error('Room join failed');
+      response.status(500).json({ error: { code: 'INTERNAL_ERROR' } });
+    }
+  });
+
+  app.get('/rooms/:joinId', async (request, response) => {
+    try {
+      const room = await roomRepository.findRoomByJoinId(request.params.joinId);
+      if (!room || room.status !== 'WAITING') {
+        response.status(404).json({ error: { code: 'ROOM_NOT_FOUND' } });
+        return;
+      }
+      const host = room.players.find((player) => player.id === room.hostPlayerId);
+      if (!host) {
+        response.status(404).json({ error: { code: 'ROOM_NOT_FOUND' } });
+        return;
+      }
+      response.json({
+        joinId: room.joinId,
+        status: room.status,
+        host: { displayName: host.displayName },
+        players: room.players.map(({ displayName, initialStack, currentStack }) => ({ displayName, initialStack, currentStack })),
+      });
+    } catch {
+      console.error('Room lookup failed');
       response.status(500).json({ error: { code: 'INTERNAL_ERROR' } });
     }
   });

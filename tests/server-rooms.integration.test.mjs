@@ -54,6 +54,14 @@ async function postRoom(body) {
   });
 }
 
+async function postJoin(joinId, body) {
+  return globalThis.fetch(`${baseUrl}/rooms/${joinId}/join`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
 test('POST /rooms persists a waiting room and its host then returns an opaque invite', { skip: !integrationEnabled }, async () => {
   const response = await postRoom({ displayName: '  Ada  ', initialStack: 1500 });
 
@@ -61,6 +69,9 @@ test('POST /rooms persists a waiting room and its host then returns an opaque in
   const result = await response.json();
   assert.match(result.roomId, /^[a-f0-9]{16}$/);
   assert.deepEqual(result, { roomId: result.roomId, invitePath: `/r/${result.roomId}` });
+  const sessionCookie = response.headers.get('set-cookie');
+  assert.match(sessionCookie, /^poker_player_token=[A-Za-z0-9_-]{43}; Path=\/; HttpOnly; SameSite=Lax$/);
+  assert.equal(sessionCookie.includes('Secure'), false);
 
   const room = await repository.findRoomByJoinId(result.roomId);
   assert.equal(room?.status, 'WAITING');
@@ -141,7 +152,8 @@ test('POST /rooms rejects unapproved browser origins and supports approved prefl
 
   assert.equal(preflight.status, 204);
   assert.equal(preflight.headers.get('access-control-allow-origin'), approvedOrigin);
-  assert.equal(preflight.headers.get('access-control-allow-methods'), 'POST');
+  assert.equal(preflight.headers.get('access-control-allow-methods'), 'GET, POST');
+  assert.equal(preflight.headers.get('access-control-allow-credentials'), 'true');
 
   const rejected = await globalThis.fetch(`${baseUrl}/rooms`, {
     method: 'POST',
@@ -150,7 +162,87 @@ test('POST /rooms rejects unapproved browser origins and supports approved prefl
   });
 
   assert.equal(rejected.status, 403);
+  assert.equal(rejected.headers.get('access-control-allow-credentials'), null);
   assert.equal(await prisma.room.count(), 0);
+});
+
+test('POST /rooms/:joinId/join creates a non-host player with a private session cookie', { skip: !integrationEnabled }, async () => {
+  const created = await postRoom({ displayName: 'Host', initialStack: 800 });
+  const { roomId } = await created.json();
+  const joined = await postJoin(roomId, { displayName: '  Guest  ', initialStack: 400, id: 'attacker-player-id', currentStack: 999_999, role: 'HOST', token: 'attacker-token' });
+
+  assert.equal(joined.status, 201);
+  assert.deepEqual(await joined.json(), { roomId, invitePath: `/r/${roomId}` });
+  const guestCookie = joined.headers.get('set-cookie');
+  assert.match(guestCookie, /^poker_player_token=[A-Za-z0-9_-]{43}; Path=\/; HttpOnly; SameSite=Lax$/);
+
+  const room = await repository.findRoomByJoinId(roomId);
+  assert.equal(room?.hostPlayerId, room?.players[0]?.id);
+  assert.deepEqual(room?.players.map(({ displayName, initialStack, currentStack }) => ({ displayName, initialStack, currentStack })), [
+    { displayName: 'Host', initialStack: 800, currentStack: 800 },
+    { displayName: 'Guest', initialStack: 400, currentStack: 400 },
+  ]);
+  assert.notEqual(room?.hostPlayerId, room?.players[1]?.id);
+  const guestToken = guestCookie.match(/^poker_player_token=([^;]+)/)?.[1];
+  const persistedGuest = await prisma.$queryRaw`SELECT "accessTokenHash" FROM "Player" WHERE "id" = ${room?.players[1]?.id}::uuid`;
+  assert.equal(persistedGuest.length, 1);
+  assert.match(persistedGuest[0].accessTokenHash, /^[a-f0-9]{64}$/);
+  assert.notEqual(persistedGuest[0].accessTokenHash, guestToken);
+  assert.equal((await repository.findPlayerByRoomJoinIdAndAccessToken(roomId, guestToken))?.id, room?.players[1]?.id);
+});
+
+test('POST /rooms/:joinId/join caps a waiting room at nine players', { skip: !integrationEnabled }, async () => {
+  const created = await postRoom({ displayName: 'Host', initialStack: 800 });
+  const { roomId } = await created.json();
+
+  for (let index = 1; index <= 8; index += 1) {
+    const joined = await postJoin(roomId, { displayName: `Guest ${index}`, initialStack: 400 });
+    assert.equal(joined.status, 201);
+  }
+
+  const full = await postJoin(roomId, { displayName: 'Overflow', initialStack: 400 });
+  assert.equal(full.status, 409);
+  assert.deepEqual(await full.json(), { error: { code: 'ROOM_FULL' } });
+  assert.equal(await prisma.player.count(), 9);
+});
+
+test('POST /rooms/:joinId/join returns stable generic errors for invalid input, missing, and closed rooms', { skip: !integrationEnabled }, async () => {
+  const missing = await postJoin('0123456789abcdef', { displayName: 'Guest', initialStack: 400 });
+  assert.equal(missing.status, 404);
+  assert.deepEqual(await missing.json(), { error: { code: 'ROOM_NOT_FOUND' } });
+
+  const created = await postRoom({ displayName: 'Host', initialStack: 800 });
+  const { roomId } = await created.json();
+  for (const invalidBody of [{}, { displayName: ' ', initialStack: 400 }, { displayName: 'Guest', initialStack: 1.5 }]) {
+    const invalid = await postJoin(roomId, invalidBody);
+    assert.equal(invalid.status, 400);
+    assert.deepEqual(await invalid.json(), { error: { code: 'INVALID_REQUEST' } });
+  }
+  await prisma.room.update({ where: { joinId: roomId }, data: { status: 'IN_PROGRESS' } });
+  const closed = await postJoin(roomId, { displayName: 'Guest', initialStack: 400 });
+  assert.equal(closed.status, 409);
+  assert.deepEqual(await closed.json(), { error: { code: 'ROOM_NOT_JOINABLE' } });
+  assert.equal(await prisma.player.count(), 1);
+});
+
+test('GET /rooms/:joinId exposes only a waiting room lobby projection', { skip: !integrationEnabled }, async () => {
+  const created = await postRoom({ displayName: 'Host', initialStack: 800 });
+  const { roomId } = await created.json();
+  await postJoin(roomId, { displayName: 'Guest', initialStack: 400 });
+
+  const lobby = await globalThis.fetch(`${baseUrl}/rooms/${roomId}`);
+  assert.equal(lobby.status, 200);
+  const result = await lobby.json();
+  assert.deepEqual(result, { joinId: roomId, status: 'WAITING', host: { displayName: 'Host' }, players: [
+    { displayName: 'Host', initialStack: 800, currentStack: 800 },
+    { displayName: 'Guest', initialStack: 400, currentStack: 400 },
+  ] });
+  assert.equal(JSON.stringify(result).includes('accessToken'), false);
+
+  await prisma.room.update({ where: { joinId: roomId }, data: { status: 'CANCELLED' } });
+  const unavailable = await globalThis.fetch(`${baseUrl}/rooms/${roomId}`);
+  assert.equal(unavailable.status, 404);
+  assert.deepEqual(await unavailable.json(), { error: { code: 'ROOM_NOT_FOUND' } });
 });
 
 test('POST /rooms hides actual PostgreSQL failures behind a generic server error', { skip: !integrationEnabled }, async () => {

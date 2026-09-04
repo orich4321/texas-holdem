@@ -21,6 +21,21 @@ type CreateRoomInput = {
   players?: PlayerInput[];
 };
 
+type PlayerWriter = Pick<PrismaClient, 'player'>;
+
+const MAX_ACCESS_TOKEN_ATTEMPTS = 5;
+const MAX_ROOM_PLAYERS = 9;
+
+function isAccessTokenHashCollision(error: unknown): boolean {
+  if (error === null || typeof error !== 'object' || !('code' in error) || error.code !== 'P2002') return false;
+  const target = 'meta' in error && error.meta !== null && typeof error.meta === 'object' && 'target' in error.meta
+    ? error.meta.target
+    : undefined;
+  return Array.isArray(target)
+    ? target.includes('accessTokenHash')
+    : typeof target === 'string' && target.includes('accessTokenHash');
+}
+
 const publicPlayerSelect = {
   id: true,
   roomId: true,
@@ -45,35 +60,63 @@ export class RoomRepository {
     private readonly hashAccessToken: PlayerAccessTokenHasher = hashPlayerAccessToken,
   ) {}
 
-  async createRoom({ status, host, players = [] }: CreateRoomInput) {
-    const allPlayers = [host, ...players].map((player) => {
+  private async createPlayerWithUniqueAccessToken(db: PlayerWriter, player: PlayerInput, roomId: string) {
+    for (let attempt = 0; attempt < MAX_ACCESS_TOKEN_ATTEMPTS; attempt += 1) {
       const accessToken = this.createAccessToken();
-      return { ...player, accessToken, accessTokenHash: this.hashAccessToken(accessToken).toString('hex') };
-    });
-    const hostAccessToken = allPlayers[0].accessToken;
+      try {
+        const persistedPlayer = await db.player.create({
+          data: {
+            id: player.id,
+            displayName: player.displayName,
+            initialStack: player.initialStack,
+            currentStack: player.initialStack,
+            accessTokenHash: this.hashAccessToken(accessToken).toString('hex'),
+            roomId,
+          },
+        });
+        return { player: persistedPlayer, accessToken };
+      } catch (error) {
+        if (!isAccessTokenHashCollision(error) || attempt === MAX_ACCESS_TOKEN_ATTEMPTS - 1) throw error;
+      }
+    }
+    throw new Error('Unable to create player access token');
+  }
 
+  async createRoom({ status, host, players = [] }: CreateRoomInput) {
     return this.db.$transaction(async (tx) => {
       const room = await tx.room.create({
         data: { id: randomUUID(), joinId: this.createJoinId(), status },
       });
-
-      await tx.player.createMany({
-        data: allPlayers.map(({ id, displayName, initialStack, accessTokenHash }) => ({
-          id,
-          displayName,
-          initialStack,
-          accessTokenHash,
-          roomId: room.id,
-          currentStack: initialStack,
-        })),
-      });
-
+      const persistedHost = await this.createPlayerWithUniqueAccessToken(tx, host, room.id);
+      await Promise.all(players.map((player) => this.createPlayerWithUniqueAccessToken(tx, player, room.id)));
       const persistedRoom = await tx.room.update({
         where: { id: room.id },
         data: { hostPlayerId: host.id },
         include: roomWithPlayers,
       });
-      return { ...persistedRoom, hostAccessToken };
+      return { ...persistedRoom, hostAccessToken: persistedHost.accessToken };
+    });
+  }
+
+  async joinWaitingRoom(joinId: string, player: PlayerInput) {
+    return this.db.$transaction(async (tx) => {
+      const room = await tx.room.findUnique({ where: { joinId } });
+      if (!room) return { kind: 'not-found' as const };
+      const lockedRoom = await tx.room.updateMany({
+        where: { id: room.id, status: 'WAITING' },
+        data: { updatedAt: new Date() },
+      });
+      if (lockedRoom.count !== 1) return { kind: 'not-joinable' as const };
+
+      const playerCount = await tx.player.count({ where: { roomId: room.id } });
+      if (playerCount >= MAX_ROOM_PLAYERS) return { kind: 'full' as const };
+
+      const createdPlayer = await this.createPlayerWithUniqueAccessToken(tx, player, room.id);
+      const persistedRoom = await tx.room.findUniqueOrThrow({
+        where: { id: room.id },
+        include: roomWithPlayers,
+      });
+      return { kind: 'joined' as const, room: persistedRoom, playerAccessToken: createdPlayer.accessToken };
     });
   }
 
