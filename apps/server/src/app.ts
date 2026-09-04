@@ -1,13 +1,17 @@
 import { randomUUID } from 'node:crypto';
-import express, { type ErrorRequestHandler } from 'express';
+import express, { type ErrorRequestHandler, type RequestHandler } from 'express';
+import { createOriginPolicy } from './origin-policy.js';
 import type { RoomRepository } from './persistence/room-repository.js';
 
 const MAX_REQUEST_BODY_SIZE = '16kb';
 const MAX_DISPLAY_NAME_CODE_POINTS = 24;
 const MAX_INITIAL_STACK = 1_000_000;
 
+type OriginPolicy = (origin: string | undefined) => boolean;
+
 type CreateAppDependencies = {
   roomRepository: RoomRepository;
+  isOriginAllowed?: OriginPolicy;
 };
 
 type CreateRoomRequest = {
@@ -53,8 +57,37 @@ const jsonErrorHandler: ErrorRequestHandler = (error, _request, response, next) 
   next(error);
 };
 
-export function createApp({ roomRepository }: CreateAppDependencies) {
+function createHttpCorsMiddleware(isOriginAllowed: OriginPolicy): RequestHandler {
+  return (request, response, next) => {
+    const origin = request.headers.origin;
+    if (!origin) {
+      next();
+      return;
+    }
+
+    if (!isOriginAllowed(origin)) {
+      response.status(403).json({ error: { code: 'ORIGIN_NOT_ALLOWED' } });
+      return;
+    }
+
+    response.setHeader('Access-Control-Allow-Origin', origin);
+    response.setHeader('Access-Control-Allow-Methods', 'POST');
+    response.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    response.setHeader('Vary', 'Origin');
+
+    if (request.method === 'OPTIONS') {
+      response.status(204).end();
+      return;
+    }
+
+    next();
+  };
+}
+
+export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy() }: CreateAppDependencies) {
   const app = express();
+
+  app.use(createHttpCorsMiddleware(isOriginAllowed));
 
   app.use(express.json({ limit: MAX_REQUEST_BODY_SIZE }));
 

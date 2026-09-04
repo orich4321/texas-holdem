@@ -128,6 +128,31 @@ test('POST /rooms ignores attacker-controlled persistence fields', { skip: !inte
   ]);
 });
 
+test('POST /rooms rejects unapproved browser origins and supports approved preflight', { skip: !integrationEnabled }, async () => {
+  const approvedOrigin = 'http://localhost:3000';
+  const preflight = await globalThis.fetch(`${baseUrl}/rooms`, {
+    method: 'OPTIONS',
+    headers: {
+      origin: approvedOrigin,
+      'access-control-request-method': 'POST',
+      'access-control-request-headers': 'content-type',
+    },
+  });
+
+  assert.equal(preflight.status, 204);
+  assert.equal(preflight.headers.get('access-control-allow-origin'), approvedOrigin);
+  assert.equal(preflight.headers.get('access-control-allow-methods'), 'POST');
+
+  const rejected = await globalThis.fetch(`${baseUrl}/rooms`, {
+    method: 'POST',
+    headers: { origin: 'https://unapproved.example', 'content-type': 'application/json' },
+    body: JSON.stringify({ displayName: 'Host', initialStack: 800 }),
+  });
+
+  assert.equal(rejected.status, 403);
+  assert.equal(await prisma.room.count(), 0);
+});
+
 test('POST /rooms hides actual PostgreSQL failures behind a generic server error', { skip: !integrationEnabled }, async () => {
   await prisma.$executeRawUnsafe('ALTER TABLE "Room" RENAME TO "Room_unavailable"');
 

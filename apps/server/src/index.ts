@@ -5,9 +5,12 @@ import { createOriginPolicy } from './origin-policy.js';
 import { prisma } from './persistence/prisma.js';
 import { RoomRepository } from './persistence/room-repository.js';
 
-const app = createApp({ roomRepository: new RoomRepository(prisma) });
-const httpServer = createServer(app);
 const isOriginAllowed = createOriginPolicy();
+const app = createApp({
+  roomRepository: new RoomRepository(prisma),
+  isOriginAllowed,
+});
+const httpServer = createServer(app);
 const io = new Server(httpServer, {
   cors: { origin: (origin, callback) => callback(null, isOriginAllowed(origin)) },
   allowRequest: (request, callback) => callback(null, isOriginAllowed(request.headers.origin)),
