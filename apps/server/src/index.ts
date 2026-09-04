@@ -1,9 +1,11 @@
 import { createServer } from 'node:http';
-import express from 'express';
 import { Server } from 'socket.io';
+import { createApp } from './app.js';
 import { createOriginPolicy } from './origin-policy.js';
+import { prisma } from './persistence/prisma.js';
+import { RoomRepository } from './persistence/room-repository.js';
 
-const app = express();
+const app = createApp({ roomRepository: new RoomRepository(prisma) });
 const httpServer = createServer(app);
 const isOriginAllowed = createOriginPolicy();
 const io = new Server(httpServer, {
