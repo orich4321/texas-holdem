@@ -355,6 +355,7 @@ export interface PreflopLegalActions {
   toCall: number;
   canCheck: boolean;
   canCall: boolean;
+  canFold: boolean;
   callAmount: number;
 }
 
@@ -371,7 +372,7 @@ export function getPreflopLegalActions(hand: StartedHand): PreflopLegalActions {
 
   const toCall = hand.currentBet - actor.currentBet;
   const callAmount = Math.min(toCall, actor.stack);
-  return Object.freeze({ actorSeat: actor.seatNumber, toCall, canCheck: toCall === 0, canCall: toCall > 0 && callAmount > 0, callAmount });
+  return Object.freeze({ actorSeat: actor.seatNumber, toCall, canCheck: toCall === 0, canCall: toCall > 0 && callAmount > 0, canFold: true, callAmount });
 }
 
 export interface Player {
