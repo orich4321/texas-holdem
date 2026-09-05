@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
+  compareBestFiveCardHands,
   compareFiveCardHands,
   evaluateBestFiveCardHand,
   evaluateFiveCardHand,
@@ -426,4 +427,31 @@ test('the seven-card evaluator rejects anything other than seven distinct valid 
     () => evaluateBestFiveCardHand([...highCard, card('A', 'clubs'), card('3', 'spades')]),
     /duplicate physical card/i,
   );
+});
+
+test('the seven-card comparator chooses each input best hand before comparing category and tie-break ranks', () => {
+  const straightFlush = [
+    card('A', 'clubs'), card('K', 'clubs'), card('Q', 'clubs'), card('J', 'clubs'),
+    card('10', 'clubs'), card('2', 'diamonds'), card('3', 'hearts'),
+  ];
+  const quads = [
+    card('A', 'diamonds'), card('A', 'hearts'), card('A', 'spades'), card('A', 'clubs'),
+    card('K', 'diamonds'), card('2', 'hearts'), card('3', 'spades'),
+  ];
+  const lowerFlush = [
+    card('A', 'hearts'), card('Q', 'hearts'), card('9', 'hearts'), card('6', 'hearts'),
+    card('3', 'hearts'), card('K', 'clubs'), card('2', 'diamonds'),
+  ];
+  const higherFlush = [
+    card('A', 'spades'), card('Q', 'spades'), card('10', 'spades'), card('6', 'spades'),
+    card('3', 'spades'), card('K', 'hearts'), card('2', 'clubs'),
+  ];
+  const equivalentHigherFlush = [
+    card('2', 'diamonds'), card('6', 'diamonds'), card('A', 'diamonds'), card('3', 'diamonds'),
+    card('Q', 'diamonds'), card('K', 'spades'), card('10', 'diamonds'),
+  ];
+
+  assert.equal(compareBestFiveCardHands(straightFlush, quads), 1);
+  assert.equal(compareBestFiveCardHands(higherFlush, lowerFlush), 1);
+  assert.equal(compareBestFiveCardHands(higherFlush, equivalentHigherFlush), 0);
 });

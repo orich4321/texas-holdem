@@ -182,6 +182,11 @@ export function evaluateBestFiveCardHand(cards: readonly Card[]): FiveCardHandEv
   return best!;
 }
 
+/** Compares the best legal five-card hand selected from each seven-card input. */
+export function compareBestFiveCardHands(left: readonly Card[], right: readonly Card[]): -1 | 0 | 1 {
+  return compareEvaluations(evaluateBestFiveCardHand(left), evaluateBestFiveCardHand(right));
+}
+
 export type RandomInt = (maxExclusive: number) => number;
 
 export class Deck {
