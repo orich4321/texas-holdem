@@ -394,6 +394,44 @@ export function getPreflopLegalActions(hand: StartedHand): PreflopLegalActions {
   });
 }
 
+/** Applies a legal preflop check and advances action without changing bets or stacks. */
+export function applyPreflopCheck(hand: StartedHand, actorSeat: number): StartedHand {
+  if (!Number.isSafeInteger(actorSeat)) {
+    throw new Error('Checking actor seat must be a safe integer');
+  }
+  if (hand.currentActorSeat !== actorSeat) {
+    throw new Error('Only the active actor may check');
+  }
+
+  const legalActions = getPreflopLegalActions(hand);
+  const actor = hand.seats.find((seat) => seat.seatNumber === actorSeat);
+  if (!actor?.holeCards || actor.stack <= 0) {
+    throw new Error('A preflop check requires an eligible actor');
+  }
+  if (!legalActions.canCheck) {
+    throw new Error('A player cannot check while chips are owed');
+  }
+
+  const actorIndex = hand.seats.findIndex((seat) => seat.seatNumber === actorSeat);
+  const nextActorIndex = hand.seats.findIndex((seat, index) => index > actorIndex && seat.holeCards && seat.stack > 0)
+    ?? -1;
+  const wrappedActorIndex = nextActorIndex === -1
+    ? hand.seats.findIndex((seat, index) => index < actorIndex && seat.holeCards && seat.stack > 0)
+    : nextActorIndex;
+  if (wrappedActorIndex === -1) {
+    throw new Error('A preflop check requires another eligible actor');
+  }
+
+  return {
+    ...hand,
+    currentActorSeat: hand.seats[wrappedActorIndex].seatNumber,
+    seats: hand.seats.map((seat) => ({
+      ...seat,
+      holeCards: seat.holeCards && [{ ...seat.holeCards[0] }, { ...seat.holeCards[1] }] as [Card, Card],
+    })),
+  };
+}
+
 export interface Player {
   id: string;
   name: string;

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { getPreflopLegalActions, startHand } from '../packages/poker-core/src/index.ts';
+import { applyPreflopCheck, getPreflopLegalActions, startHand } from '../packages/poker-core/src/index.ts';
 
 const unshuffledRandomInt = (maxExclusive) => maxExclusive - 1;
 
@@ -116,4 +116,31 @@ test('preflop legal actions expose the first full raise range as total bet targe
   assert.equal(legalActions.maxRaiseTo, 100);
   assert.equal(hand.seats[0].stack, 100);
   assert.equal(hand.seats[0].currentBet, 0);
+});
+
+test('preflop check is accepted only for the active actor with nothing to call', () => {
+  const hand = startedThreePlayerHand();
+  hand.currentActorSeat = 3;
+
+  const checkedHand = applyPreflopCheck(hand, 3);
+
+  assert.notEqual(checkedHand, hand);
+  assert.equal(checkedHand.currentActorSeat, 1);
+  assert.equal(checkedHand.currentBet, 10);
+  assert.equal(checkedHand.pot, 15);
+  assert.deepEqual(checkedHand.seats, hand.seats);
+  assert.equal(hand.currentActorSeat, 3);
+  assert.throws(() => applyPreflopCheck(hand, 1), /active actor/);
+  hand.currentActorSeat = 1;
+  assert.throws(() => applyPreflopCheck(hand, 1), /cannot check while chips are owed/);
+});
+
+test('preflop check rejects an active actor without chips', () => {
+  const hand = startedThreePlayerHand();
+  hand.currentActorSeat = 3;
+  hand.seats[2].stack = 0;
+
+  assert.throws(() => applyPreflopCheck(hand, 3), /eligible actor/);
+  assert.equal(hand.currentActorSeat, 3);
+  assert.equal(hand.seats[2].stack, 0);
 });
