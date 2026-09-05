@@ -8,8 +8,102 @@ export interface Card {
   suit: Suit;
 }
 
+export type FiveCardHandCategory = 'high-card' | 'one-pair';
+
+export interface FiveCardHandEvaluation {
+  category: FiveCardHandCategory;
+  tieBreakRanks: readonly Rank[];
+}
+
 const ranks: readonly Rank[] = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
 const suits: readonly Suit[] = ['clubs', 'diamonds', 'hearts', 'spades'];
+const rankValues = new Map(ranks.map((rank, index) => [rank, index + 2]));
+
+function rankValue(rank: Rank): number {
+  return rankValues.get(rank)!;
+}
+
+function compareRanksDescending(left: Rank, right: Rank): number {
+  return rankValue(right) - rankValue(left);
+}
+
+function isStraight(uniqueRanks: readonly Rank[]): boolean {
+  if (uniqueRanks.length !== 5) {
+    return false;
+  }
+
+  const values = uniqueRanks.map(rankValue).sort((left, right) => left - right);
+  const isWheel = values.join(',') === '2,3,4,5,14';
+  return isWheel || values.every((value, index) => index === 0 || value === values[index - 1] + 1);
+}
+
+function compareTieBreakRanks(left: readonly Rank[], right: readonly Rank[]): number {
+  for (let index = 0; index < left.length; index += 1) {
+    const difference = rankValue(left[index]) - rankValue(right[index]);
+    if (difference !== 0) {
+      return difference > 0 ? 1 : -1;
+    }
+  }
+  return 0;
+}
+
+/** Evaluates exactly five distinct cards in the deliberately narrow supported categories. */
+export function evaluateFiveCardHand(cards: readonly Card[]): FiveCardHandEvaluation {
+  if (cards.length !== 5) {
+    throw new Error('A five-card hand must contain exactly five cards');
+  }
+
+  for (const card of cards) {
+    if (!card || typeof card !== 'object') {
+      throw new Error('Invalid card');
+    }
+    if (!rankValues.has(card.rank)) {
+      throw new Error('Invalid card rank');
+    }
+    if (!suits.includes(card.suit)) {
+      throw new Error('Invalid card suit');
+    }
+  }
+
+  const physicalCards = new Set(cards.map((card) => `${card.rank}-${card.suit}`));
+  if (physicalCards.size !== cards.length) {
+    throw new Error('A five-card hand cannot contain a duplicate physical card');
+  }
+
+  const ranksByFrequency = new Map<Rank, number>();
+  for (const card of cards) {
+    ranksByFrequency.set(card.rank, (ranksByFrequency.get(card.rank) ?? 0) + 1);
+  }
+
+  const ranksDescending = [...ranksByFrequency.keys()].sort(compareRanksDescending);
+  const frequencies = [...ranksByFrequency.values()].sort((left, right) => right - left);
+  const isFlush = cards.every((card) => card.suit === cards[0].suit);
+
+  if (frequencies.join(',') === '2,1,1,1') {
+    const pairRank = ranksDescending.find((rank) => ranksByFrequency.get(rank) === 2)!;
+    const kickers = ranksDescending.filter((rank) => rank !== pairRank);
+    return Object.freeze({ category: 'one-pair', tieBreakRanks: Object.freeze([pairRank, ...kickers]) });
+  }
+
+  if (frequencies.join(',') === '1,1,1,1,1' && !isFlush && !isStraight(ranksDescending)) {
+    return Object.freeze({ category: 'high-card', tieBreakRanks: Object.freeze([...ranksDescending]) });
+  }
+
+  throw new Error('Unsupported hand category: only high-card and one-pair are supported');
+}
+
+/** Compares two supported five-card hands: 1 when left wins, -1 when right wins, 0 when tied. */
+export function compareFiveCardHands(left: readonly Card[], right: readonly Card[]): -1 | 0 | 1 {
+  const leftEvaluation = evaluateFiveCardHand(left);
+  const rightEvaluation = evaluateFiveCardHand(right);
+  const categoryDifference = (leftEvaluation.category === 'one-pair' ? 1 : 0) - (rightEvaluation.category === 'one-pair' ? 1 : 0);
+
+  if (categoryDifference !== 0) {
+    return categoryDifference > 0 ? 1 : -1;
+  }
+
+  return compareTieBreakRanks(leftEvaluation.tieBreakRanks, rightEvaluation.tieBreakRanks) as -1 | 0 | 1;
+}
 
 export type RandomInt = (maxExclusive: number) => number;
 
