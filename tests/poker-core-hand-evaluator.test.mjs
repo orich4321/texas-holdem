@@ -254,16 +254,6 @@ test('the first three-of-a-kind kicker decides before the second kicker', () => 
   assert.equal(compareFiveCardHands(higherFirstKicker, lowerFirstKicker), 1);
 });
 
-test('four-of-a-kind remains unsupported before its category is added', () => {
-  const unsupportedHands = [
-    [card('9', 'clubs'), card('9', 'diamonds'), card('9', 'hearts'), card('9', 'spades'), card('A', 'clubs')],
-  ];
-
-  for (const hand of unsupportedHands) {
-    assert.throws(() => evaluateFiveCardHand(hand), /unsupported hand category/i);
-  }
-});
-
 test('flush evaluation returns all ranks in descending order without mutating input', () => {
   const hand = [
     card('2', 'hearts'), card('A', 'hearts'), card('9', 'hearts'), card('K', 'hearts'), card('5', 'hearts'),
@@ -305,17 +295,6 @@ test('a flush beats a straight and compares every descending rank', () => {
   assert.equal(compareFiveCardHands(higherFinalRank, equivalentFlush), 0);
 });
 
-test('four-of-a-kind and straight flushes remain unsupported while flushes are added', () => {
-  const unsupportedHands = [
-    [card('9', 'clubs'), card('9', 'diamonds'), card('9', 'hearts'), card('9', 'spades'), card('A', 'clubs')],
-    [card('6', 'clubs'), card('5', 'clubs'), card('4', 'clubs'), card('3', 'clubs'), card('2', 'clubs')],
-  ];
-
-  for (const hand of unsupportedHands) {
-    assert.throws(() => evaluateFiveCardHand(hand), /unsupported hand category/i);
-  }
-});
-
 test('full-house evaluation returns trip rank then pair rank without mutating input', () => {
   const hand = [
     card('K', 'clubs'), card('2', 'diamonds'), card('K', 'hearts'), card('2', 'spades'), card('K', 'spades'),
@@ -352,11 +331,45 @@ test('a full house beats a flush and compares trip rank before pair rank', () =>
   assert.equal(compareFiveCardHands(higherPair, flush), 1);
 });
 
-test('four-of-a-kind and straight flushes remain unsupported while full houses are added', () => {
-  for (const hand of [
-    [card('9', 'clubs'), card('9', 'diamonds'), card('9', 'hearts'), card('9', 'spades'), card('A', 'clubs')],
-    [card('6', 'clubs'), card('5', 'clubs'), card('4', 'clubs'), card('3', 'clubs'), card('2', 'clubs')],
-  ]) {
-    assert.throws(() => evaluateFiveCardHand(hand), /unsupported hand category/i);
-  }
+test('four-of-a-kind evaluation returns quad rank then kicker without mutating input', () => {
+  const hand = [
+    card('9', 'clubs'), card('A', 'diamonds'), card('9', 'hearts'), card('9', 'spades'), card('9', 'diamonds'),
+  ];
+  const before = hand.map((value) => ({ ...value }));
+
+  const result = evaluateFiveCardHand(hand);
+
+  assert.deepEqual(result, { category: 'four-of-a-kind', tieBreakRanks: ['9', 'A'] });
+  assert.equal(Object.isFrozen(result), true);
+  assert.equal(Object.isFrozen(result.tieBreakRanks), true);
+  assert.deepEqual(hand, before);
+});
+
+test('four-of-a-kind beats a full house and compares quad rank then kicker', () => {
+  const lowerQuads = [
+    card('8', 'clubs'), card('8', 'diamonds'), card('8', 'hearts'), card('8', 'spades'), card('A', 'clubs'),
+  ];
+  const higherQuads = [
+    card('9', 'clubs'), card('9', 'diamonds'), card('9', 'hearts'), card('9', 'spades'), card('2', 'clubs'),
+  ];
+  const lowerKicker = [
+    card('K', 'clubs'), card('K', 'diamonds'), card('K', 'hearts'), card('K', 'spades'), card('2', 'clubs'),
+  ];
+  const higherKicker = [
+    card('K', 'clubs'), card('K', 'diamonds'), card('K', 'hearts'), card('K', 'spades'), card('A', 'clubs'),
+  ];
+  const fullHouse = [
+    card('A', 'clubs'), card('A', 'diamonds'), card('A', 'hearts'), card('K', 'spades'), card('K', 'clubs'),
+  ];
+
+  assert.equal(compareFiveCardHands(higherQuads, lowerQuads), 1);
+  assert.equal(compareFiveCardHands(higherKicker, lowerKicker), 1);
+  assert.equal(compareFiveCardHands(lowerQuads, fullHouse), 1);
+});
+
+test('straight flushes remain unsupported while four-of-a-kind is added', () => {
+  assert.throws(
+    () => evaluateFiveCardHand([card('6', 'clubs'), card('5', 'clubs'), card('4', 'clubs'), card('3', 'clubs'), card('2', 'clubs')]),
+    /unsupported hand category/i,
+  );
 });
