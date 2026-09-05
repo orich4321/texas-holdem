@@ -204,6 +204,48 @@ test('three-of-a-kind rank then kickers decide comparison, with equivalent hands
   assert.equal(compareFiveCardHands(higherKicker, equivalent), 0);
 });
 
+test('straight evaluation returns its high card, treating the ace-low wheel as five-high', () => {
+  const sixHighStraight = [
+    card('4', 'clubs'), card('6', 'diamonds'), card('2', 'hearts'), card('5', 'spades'), card('3', 'clubs'),
+  ];
+  const wheel = [
+    card('A', 'clubs'), card('2', 'diamonds'), card('3', 'hearts'), card('4', 'spades'), card('5', 'clubs'),
+  ];
+
+  assert.deepEqual(evaluateFiveCardHand(sixHighStraight), {
+    category: 'straight', tieBreakRanks: ['6'],
+  });
+  assert.deepEqual(evaluateFiveCardHand(wheel), {
+    category: 'straight', tieBreakRanks: ['5'],
+  });
+});
+
+test('a straight beats three-of-a-kind and compares by its high card', () => {
+  const sixHighStraight = [
+    card('2', 'clubs'), card('3', 'diamonds'), card('4', 'hearts'), card('5', 'spades'), card('6', 'clubs'),
+  ];
+  const sevenHighStraight = [
+    card('3', 'clubs'), card('4', 'diamonds'), card('5', 'hearts'), card('6', 'spades'), card('7', 'clubs'),
+  ];
+  const trips = [
+    card('9', 'clubs'), card('9', 'diamonds'), card('9', 'hearts'), card('A', 'spades'), card('2', 'clubs'),
+  ];
+
+  assert.equal(compareFiveCardHands(sixHighStraight, trips), 1);
+  assert.equal(compareFiveCardHands(sevenHighStraight, sixHighStraight), 1);
+});
+
+test('flushes and straight flushes remain unsupported while straights are added', () => {
+  const unsupportedHands = [
+    [card('A', 'hearts'), card('J', 'hearts'), card('8', 'hearts'), card('5', 'hearts'), card('2', 'hearts')],
+    [card('6', 'clubs'), card('5', 'clubs'), card('4', 'clubs'), card('3', 'clubs'), card('2', 'clubs')],
+  ];
+
+  for (const hand of unsupportedHands) {
+    assert.throws(() => evaluateFiveCardHand(hand), /unsupported hand category/i);
+  }
+});
+
 test('the first three-of-a-kind kicker decides before the second kicker', () => {
   const higherFirstKicker = [
     card('J', 'clubs'), card('J', 'diamonds'), card('A', 'hearts'), card('2', 'spades'), card('J', 'hearts'),
@@ -215,9 +257,8 @@ test('the first three-of-a-kind kicker decides before the second kicker', () => 
   assert.equal(compareFiveCardHands(higherFirstKicker, lowerFirstKicker), 1);
 });
 
-test('straight, flush, full-house, and four-of-a-kind remain unsupported', () => {
+test('flush, full-house, and four-of-a-kind remain unsupported', () => {
   const unsupportedHands = [
-    [card('2', 'clubs'), card('3', 'diamonds'), card('4', 'hearts'), card('5', 'spades'), card('6', 'clubs')],
     [card('A', 'hearts'), card('J', 'hearts'), card('8', 'hearts'), card('5', 'hearts'), card('2', 'hearts')],
     [card('K', 'clubs'), card('K', 'diamonds'), card('K', 'hearts'), card('2', 'spades'), card('2', 'clubs')],
     [card('9', 'clubs'), card('9', 'diamonds'), card('9', 'hearts'), card('9', 'spades'), card('A', 'clubs')],
