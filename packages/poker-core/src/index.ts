@@ -8,7 +8,7 @@ export interface Card {
   suit: Suit;
 }
 
-export type FiveCardHandCategory = 'high-card' | 'one-pair';
+export type FiveCardHandCategory = 'high-card' | 'one-pair' | 'two-pair';
 
 export interface FiveCardHandEvaluation {
   category: FiveCardHandCategory;
@@ -79,6 +79,12 @@ export function evaluateFiveCardHand(cards: readonly Card[]): FiveCardHandEvalua
   const frequencies = [...ranksByFrequency.values()].sort((left, right) => right - left);
   const isFlush = cards.every((card) => card.suit === cards[0].suit);
 
+  if (frequencies.join(',') === '2,2,1') {
+    const pairRanks = ranksDescending.filter((rank) => ranksByFrequency.get(rank) === 2);
+    const kicker = ranksDescending.find((rank) => ranksByFrequency.get(rank) === 1)!;
+    return Object.freeze({ category: 'two-pair', tieBreakRanks: Object.freeze([...pairRanks, kicker]) });
+  }
+
   if (frequencies.join(',') === '2,1,1,1') {
     const pairRank = ranksDescending.find((rank) => ranksByFrequency.get(rank) === 2)!;
     const kickers = ranksDescending.filter((rank) => rank !== pairRank);
@@ -89,14 +95,16 @@ export function evaluateFiveCardHand(cards: readonly Card[]): FiveCardHandEvalua
     return Object.freeze({ category: 'high-card', tieBreakRanks: Object.freeze([...ranksDescending]) });
   }
 
-  throw new Error('Unsupported hand category: only high-card and one-pair are supported');
+  throw new Error('Unsupported hand category: only high-card, one-pair, and two-pair are supported');
 }
 
 /** Compares two supported five-card hands: 1 when left wins, -1 when right wins, 0 when tied. */
 export function compareFiveCardHands(left: readonly Card[], right: readonly Card[]): -1 | 0 | 1 {
   const leftEvaluation = evaluateFiveCardHand(left);
   const rightEvaluation = evaluateFiveCardHand(right);
-  const categoryDifference = (leftEvaluation.category === 'one-pair' ? 1 : 0) - (rightEvaluation.category === 'one-pair' ? 1 : 0);
+  const categoryDifference =
+    (leftEvaluation.category === 'two-pair' ? 2 : leftEvaluation.category === 'one-pair' ? 1 : 0)
+    - (rightEvaluation.category === 'two-pair' ? 2 : rightEvaluation.category === 'one-pair' ? 1 : 0);
 
   if (categoryDifference !== 0) {
     return categoryDifference > 0 ? 1 : -1;

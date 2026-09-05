@@ -92,10 +92,68 @@ test('the evaluator rejects malformed runtime card ranks and suits', () => {
   );
 });
 
-test('hands outside the narrow high-card and one-pair slice are rejected', () => {
+test('two-pair evaluation returns ranked pairs and a kicker without mutating input', () => {
+  const hand = [
+    card('K', 'clubs'), card('A', 'diamonds'), card('K', 'hearts'), card('2', 'spades'), card('A', 'clubs'),
+  ];
+  const before = hand.map((value) => ({ ...value }));
+
+  assert.deepEqual(evaluateFiveCardHand(hand), {
+    category: 'two-pair', tieBreakRanks: ['A', 'K', '2'],
+  });
+  assert.deepEqual(hand, before);
+});
+
+test('two-pair beats one-pair and high-card hands', () => {
   const twoPair = [
     card('A', 'clubs'), card('A', 'diamonds'), card('K', 'hearts'), card('K', 'spades'), card('2', 'clubs'),
   ];
 
-  assert.throws(() => evaluateFiveCardHand(twoPair), /unsupported hand category/i);
+  assert.equal(compareFiveCardHands(twoPair, onePair), 1);
+  assert.equal(compareFiveCardHands(twoPair, highCard), 1);
+});
+
+test('a higher two-pair rank wins', () => {
+  const lowerHighPair = [
+    card('K', 'clubs'), card('K', 'diamonds'), card('Q', 'hearts'), card('Q', 'spades'), card('A', 'clubs'),
+  ];
+  const higherHighPair = [
+    card('A', 'hearts'), card('A', 'spades'), card('2', 'hearts'), card('2', 'spades'), card('3', 'clubs'),
+  ];
+
+  assert.equal(compareFiveCardHands(higherHighPair, lowerHighPair), 1);
+});
+
+test('the lower pair decides when two-pair high ranks are equal', () => {
+  const lowerSecondPair = [
+    card('A', 'clubs'), card('A', 'diamonds'), card('J', 'hearts'), card('J', 'spades'), card('K', 'clubs'),
+  ];
+  const higherSecondPair = [
+    card('A', 'hearts'), card('A', 'spades'), card('Q', 'hearts'), card('Q', 'spades'), card('2', 'clubs'),
+  ];
+
+  assert.equal(compareFiveCardHands(higherSecondPair, lowerSecondPair), 1);
+});
+
+test('the kicker decides when both two-pair ranks are equal', () => {
+  const lowerKicker = [
+    card('A', 'clubs'), card('A', 'diamonds'), card('K', 'hearts'), card('K', 'spades'), card('2', 'clubs'),
+  ];
+  const higherKicker = [
+    card('A', 'hearts'), card('A', 'spades'), card('K', 'clubs'), card('K', 'diamonds'), card('Q', 'clubs'),
+  ];
+
+  assert.equal(compareFiveCardHands(higherKicker, lowerKicker), 1);
+});
+
+test('equivalent two-pair hands compare as tied regardless of card order or suits', () => {
+  const first = [
+    card('A', 'clubs'), card('A', 'diamonds'), card('K', 'hearts'), card('K', 'spades'), card('2', 'clubs'),
+  ];
+  const equivalent = [
+    card('K', 'diamonds'), card('2', 'hearts'), card('A', 'spades'), card('K', 'clubs'), card('A', 'hearts'),
+  ];
+
+  assert.equal(compareFiveCardHands(first, first), 0);
+  assert.equal(compareFiveCardHands(first, equivalent), 0);
 });
