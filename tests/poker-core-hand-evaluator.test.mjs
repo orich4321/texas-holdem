@@ -235,15 +235,12 @@ test('a straight beats three-of-a-kind and compares by its high card', () => {
   assert.equal(compareFiveCardHands(sevenHighStraight, sixHighStraight), 1);
 });
 
-test('flushes and straight flushes remain unsupported while straights are added', () => {
-  const unsupportedHands = [
-    [card('A', 'hearts'), card('J', 'hearts'), card('8', 'hearts'), card('5', 'hearts'), card('2', 'hearts')],
-    [card('6', 'clubs'), card('5', 'clubs'), card('4', 'clubs'), card('3', 'clubs'), card('2', 'clubs')],
+test('straight flushes remain unsupported while straights are added', () => {
+  const straightFlush = [
+    card('6', 'clubs'), card('5', 'clubs'), card('4', 'clubs'), card('3', 'clubs'), card('2', 'clubs'),
   ];
 
-  for (const hand of unsupportedHands) {
-    assert.throws(() => evaluateFiveCardHand(hand), /unsupported hand category/i);
-  }
+  assert.throws(() => evaluateFiveCardHand(straightFlush), /unsupported hand category/i);
 });
 
 test('the first three-of-a-kind kicker decides before the second kicker', () => {
@@ -257,11 +254,63 @@ test('the first three-of-a-kind kicker decides before the second kicker', () => 
   assert.equal(compareFiveCardHands(higherFirstKicker, lowerFirstKicker), 1);
 });
 
-test('flush, full-house, and four-of-a-kind remain unsupported', () => {
+test('full houses and four-of-a-kind remain unsupported', () => {
   const unsupportedHands = [
-    [card('A', 'hearts'), card('J', 'hearts'), card('8', 'hearts'), card('5', 'hearts'), card('2', 'hearts')],
     [card('K', 'clubs'), card('K', 'diamonds'), card('K', 'hearts'), card('2', 'spades'), card('2', 'clubs')],
     [card('9', 'clubs'), card('9', 'diamonds'), card('9', 'hearts'), card('9', 'spades'), card('A', 'clubs')],
+  ];
+
+  for (const hand of unsupportedHands) {
+    assert.throws(() => evaluateFiveCardHand(hand), /unsupported hand category/i);
+  }
+});
+
+test('flush evaluation returns all ranks in descending order without mutating input', () => {
+  const hand = [
+    card('2', 'hearts'), card('A', 'hearts'), card('9', 'hearts'), card('K', 'hearts'), card('5', 'hearts'),
+  ];
+  const before = hand.map((value) => ({ ...value }));
+
+  const result = evaluateFiveCardHand(hand);
+  assert.deepEqual(result, {
+    category: 'flush', tieBreakRanks: ['A', 'K', '9', '5', '2'],
+  });
+  assert.equal(Object.isFrozen(result), true);
+  assert.equal(Object.isFrozen(result.tieBreakRanks), true);
+  assert.deepEqual(hand, before);
+});
+
+test('a flush beats a straight and compares every descending rank', () => {
+  const lowerFlush = [
+    card('A', 'clubs'), card('J', 'clubs'), card('8', 'clubs'), card('5', 'clubs'), card('2', 'clubs'),
+  ];
+  const higherSecondRank = [
+    card('A', 'hearts'), card('Q', 'hearts'), card('7', 'hearts'), card('4', 'hearts'), card('3', 'hearts'),
+  ];
+  const higherFinalRank = [
+    card('A', 'diamonds'), card('K', 'diamonds'), card('9', 'diamonds'), card('5', 'diamonds'), card('3', 'diamonds'),
+  ];
+  const lowerFinalRank = [
+    card('A', 'spades'), card('K', 'spades'), card('9', 'spades'), card('5', 'spades'), card('2', 'spades'),
+  ];
+  const equivalentFlush = [
+    card('5', 'diamonds'), card('A', 'diamonds'), card('3', 'diamonds'), card('9', 'diamonds'), card('K', 'diamonds'),
+  ];
+  const straight = [
+    card('2', 'clubs'), card('3', 'diamonds'), card('4', 'hearts'), card('5', 'spades'), card('6', 'clubs'),
+  ];
+
+  assert.equal(compareFiveCardHands(lowerFlush, straight), 1);
+  assert.equal(compareFiveCardHands(higherSecondRank, lowerFlush), 1);
+  assert.equal(compareFiveCardHands(higherFinalRank, lowerFinalRank), 1);
+  assert.equal(compareFiveCardHands(higherFinalRank, equivalentFlush), 0);
+});
+
+test('full houses, four-of-a-kind, and straight flushes remain unsupported while flushes are added', () => {
+  const unsupportedHands = [
+    [card('K', 'clubs'), card('K', 'diamonds'), card('K', 'hearts'), card('2', 'spades'), card('2', 'clubs')],
+    [card('9', 'clubs'), card('9', 'diamonds'), card('9', 'hearts'), card('9', 'spades'), card('A', 'clubs')],
+    [card('6', 'clubs'), card('5', 'clubs'), card('4', 'clubs'), card('3', 'clubs'), card('2', 'clubs')],
   ];
 
   for (const hand of unsupportedHands) {
