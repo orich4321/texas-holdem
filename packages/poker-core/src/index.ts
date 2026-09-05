@@ -432,6 +432,58 @@ export function applyPreflopCheck(hand: StartedHand, actorSeat: number): Started
   };
 }
 
+/** Applies a legal preflop call, including a short all-in call, then advances action. */
+export function applyPreflopCall(hand: StartedHand, actorSeat: number): StartedHand {
+  if (!Number.isSafeInteger(actorSeat)) {
+    throw new Error('Calling actor seat must be a safe integer');
+  }
+  if (hand.currentActorSeat !== actorSeat) {
+    throw new Error('Only the active actor may call');
+  }
+  if (!Number.isSafeInteger(hand.pot) || hand.pot < 0) {
+    throw new Error('Started hand must contain a non-negative safe pot');
+  }
+
+  const legalActions = getPreflopLegalActions(hand);
+  const actorIndex = hand.seats.findIndex((seat) => seat.seatNumber === actorSeat);
+  const actor = hand.seats[actorIndex];
+  if (!actor?.holeCards || actor.stack <= 0 || !legalActions.canCall) {
+    throw new Error('A preflop call requires an eligible actor with chips owed');
+  }
+  const nextStack = actor.stack - legalActions.callAmount;
+  const nextCurrentBet = actor.currentBet + legalActions.callAmount;
+  const nextPot = hand.pot + legalActions.callAmount;
+  if (!Number.isSafeInteger(nextStack) || !Number.isSafeInteger(nextCurrentBet) || !Number.isSafeInteger(nextPot)) {
+    throw new Error('Preflop call results must be safe integers');
+  }
+
+  const seats = hand.seats.map((seat, index) => {
+    const clone: StartedHandSeat = {
+      ...seat,
+      holeCards: seat.holeCards && [{ ...seat.holeCards[0] }, { ...seat.holeCards[1] }] as [Card, Card],
+    };
+    if (index === actorIndex) {
+      clone.stack = nextStack;
+      clone.currentBet = nextCurrentBet;
+    }
+    return clone;
+  });
+  const nextActorIndex = seats.findIndex((seat, index) => index > actorIndex && seat.holeCards && seat.stack > 0);
+  const wrappedActorIndex = nextActorIndex === -1
+    ? seats.findIndex((seat, index) => index < actorIndex && seat.holeCards && seat.stack > 0)
+    : nextActorIndex;
+  if (wrappedActorIndex === -1) {
+    throw new Error('A preflop call requires another eligible actor');
+  }
+
+  return {
+    ...hand,
+    pot: nextPot,
+    currentActorSeat: seats[wrappedActorIndex].seatNumber,
+    seats,
+  };
+}
+
 export interface Player {
   id: string;
   name: string;

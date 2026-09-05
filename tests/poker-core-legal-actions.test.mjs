@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { applyPreflopCheck, getPreflopLegalActions, startHand } from '../packages/poker-core/src/index.ts';
+import { applyPreflopCall, applyPreflopCheck, getPreflopLegalActions, startHand } from '../packages/poker-core/src/index.ts';
 
 const unshuffledRandomInt = (maxExclusive) => maxExclusive - 1;
 
@@ -143,4 +143,62 @@ test('preflop check rejects an active actor without chips', () => {
   assert.throws(() => applyPreflopCheck(hand, 3), /eligible actor/);
   assert.equal(hand.currentActorSeat, 3);
   assert.equal(hand.seats[2].stack, 0);
+});
+
+test('preflop call commits the full amount owed and advances to the next eligible actor', () => {
+  const hand = startedThreePlayerHand();
+
+  const calledHand = applyPreflopCall(hand, 1);
+
+  assert.notEqual(calledHand, hand);
+  assert.equal(calledHand.currentActorSeat, 2);
+  assert.equal(calledHand.currentBet, 10);
+  assert.equal(calledHand.pot, 25);
+  assert.deepEqual(calledHand.seats.map((seat) => ({ seatNumber: seat.seatNumber, stack: seat.stack, currentBet: seat.currentBet })), [
+    { seatNumber: 1, stack: 90, currentBet: 10 },
+    { seatNumber: 2, stack: 95, currentBet: 5 },
+    { seatNumber: 3, stack: 90, currentBet: 10 },
+  ]);
+  assert.equal(hand.seats[0].stack, 100);
+  assert.equal(hand.pot, 15);
+});
+
+test('preflop call permits a short all-in call and skips the all-in actor afterward', () => {
+  const hand = startHand({
+    seats: [
+      { seatNumber: 1, playerId: 'ada', stack: 7 },
+      { seatNumber: 2, playerId: 'ben', stack: 100 },
+      { seatNumber: 3, playerId: 'cy', stack: 100 },
+    ],
+    dealerSeat: 1,
+    smallBlind: 5,
+    bigBlind: 10,
+    randomInt: unshuffledRandomInt,
+  });
+
+  const calledHand = applyPreflopCall(hand, 1);
+
+  assert.equal(calledHand.currentActorSeat, 2);
+  assert.equal(calledHand.currentBet, 10);
+  assert.equal(calledHand.pot, 22);
+  assert.deepEqual(calledHand.seats.map((seat) => ({ seatNumber: seat.seatNumber, stack: seat.stack, currentBet: seat.currentBet })), [
+    { seatNumber: 1, stack: 0, currentBet: 7 },
+    { seatNumber: 2, stack: 95, currentBet: 5 },
+    { seatNumber: 3, stack: 90, currentBet: 10 },
+  ]);
+  assert.equal(hand.seats[0].stack, 7);
+  assert.equal(hand.pot, 15);
+});
+
+test('preflop call rejects malformed pots without changing the hand', () => {
+  for (const pot of [-20, Number.MAX_SAFE_INTEGER, Number.NaN]) {
+    const hand = startedThreePlayerHand();
+    hand.pot = pot;
+
+    assert.throws(() => applyPreflopCall(hand, 1), /safe|pot/);
+    assert.equal(hand.pot, pot);
+    assert.equal(hand.currentActorSeat, 1);
+    assert.equal(hand.seats[0].stack, 100);
+    assert.equal(hand.seats[0].currentBet, 0);
+  }
 });
