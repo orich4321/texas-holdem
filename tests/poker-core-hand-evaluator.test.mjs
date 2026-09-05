@@ -235,13 +235,6 @@ test('a straight beats three-of-a-kind and compares by its high card', () => {
   assert.equal(compareFiveCardHands(sevenHighStraight, sixHighStraight), 1);
 });
 
-test('straight flushes remain unsupported while straights are added', () => {
-  const straightFlush = [
-    card('6', 'clubs'), card('5', 'clubs'), card('4', 'clubs'), card('3', 'clubs'), card('2', 'clubs'),
-  ];
-
-  assert.throws(() => evaluateFiveCardHand(straightFlush), /unsupported hand category/i);
-});
 
 test('the first three-of-a-kind kicker decides before the second kicker', () => {
   const higherFirstKicker = [
@@ -367,9 +360,39 @@ test('four-of-a-kind beats a full house and compares quad rank then kicker', () 
   assert.equal(compareFiveCardHands(lowerQuads, fullHouse), 1);
 });
 
-test('straight flushes remain unsupported while four-of-a-kind is added', () => {
-  assert.throws(
-    () => evaluateFiveCardHand([card('6', 'clubs'), card('5', 'clubs'), card('4', 'clubs'), card('3', 'clubs'), card('2', 'clubs')]),
-    /unsupported hand category/i,
-  );
+test('straight-flush evaluation returns its high card, treating the ace-low wheel as five-high', () => {
+  const royalFlush = [
+    card('A', 'hearts'), card('K', 'hearts'), card('Q', 'hearts'), card('J', 'hearts'), card('10', 'hearts'),
+  ];
+  const wheel = [
+    card('A', 'clubs'), card('2', 'clubs'), card('3', 'clubs'), card('4', 'clubs'), card('5', 'clubs'),
+  ];
+  const before = royalFlush.map((value) => ({ ...value }));
+
+  const result = evaluateFiveCardHand(royalFlush);
+
+  assert.deepEqual(result, { category: 'straight-flush', tieBreakRanks: ['A'] });
+  assert.equal(Object.isFrozen(result), true);
+  assert.equal(Object.isFrozen(result.tieBreakRanks), true);
+  assert.deepEqual(evaluateFiveCardHand(wheel), { category: 'straight-flush', tieBreakRanks: ['5'] });
+  assert.deepEqual(royalFlush, before);
+});
+
+test('a straight flush beats four-of-a-kind and compares by high card', () => {
+  const sixHighStraightFlush = [
+    card('2', 'clubs'), card('3', 'clubs'), card('4', 'clubs'), card('5', 'clubs'), card('6', 'clubs'),
+  ];
+  const sevenHighStraightFlush = [
+    card('3', 'hearts'), card('4', 'hearts'), card('5', 'hearts'), card('6', 'hearts'), card('7', 'hearts'),
+  ];
+  const equivalentSixHigh = [
+    card('6', 'spades'), card('2', 'spades'), card('5', 'spades'), card('3', 'spades'), card('4', 'spades'),
+  ];
+  const quads = [
+    card('A', 'clubs'), card('A', 'diamonds'), card('A', 'hearts'), card('A', 'spades'), card('K', 'clubs'),
+  ];
+
+  assert.equal(compareFiveCardHands(sixHighStraightFlush, quads), 1);
+  assert.equal(compareFiveCardHands(sevenHighStraightFlush, sixHighStraightFlush), 1);
+  assert.equal(compareFiveCardHands(sixHighStraightFlush, equivalentSixHigh), 0);
 });
