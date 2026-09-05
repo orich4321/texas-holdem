@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { applyPreflopCall, applyPreflopCheck, getPreflopLegalActions, startHand } from '../packages/poker-core/src/index.ts';
+import { applyPreflopCall, applyPreflopCheck, applyPreflopFold, getPreflopLegalActions, startHand } from '../packages/poker-core/src/index.ts';
 
 const unshuffledRandomInt = (maxExclusive) => maxExclusive - 1;
 
@@ -201,4 +201,53 @@ test('preflop call rejects malformed pots without changing the hand', () => {
     assert.equal(hand.seats[0].stack, 100);
     assert.equal(hand.seats[0].currentBet, 0);
   }
+});
+
+test('preflop fold marks only the active eligible actor as folded and advances action', () => {
+  const hand = startedThreePlayerHand();
+
+  const foldedHand = applyPreflopFold(hand, 1);
+
+  assert.notEqual(foldedHand, hand);
+  assert.equal(foldedHand.currentActorSeat, 2);
+  assert.equal(foldedHand.pot, 15);
+  assert.equal(foldedHand.currentBet, 10);
+  assert.deepEqual(foldedHand.seats.map((seat) => ({ seatNumber: seat.seatNumber, stack: seat.stack, currentBet: seat.currentBet, isFolded: seat.isFolded })), [
+    { seatNumber: 1, stack: 100, currentBet: 0, isFolded: true },
+    { seatNumber: 2, stack: 95, currentBet: 5, isFolded: false },
+    { seatNumber: 3, stack: 90, currentBet: 10, isFolded: false },
+  ]);
+  assert.equal(hand.currentActorSeat, 1);
+  assert.equal(hand.seats[0].isFolded, undefined);
+  assert.throws(() => applyPreflopFold(hand, 2), /active actor/);
+});
+
+test('preflop fold rejects malformed pots without changing the hand', () => {
+  for (const pot of [-20, Number.MAX_SAFE_INTEGER + 1, Number.NaN]) {
+    const hand = startedThreePlayerHand();
+    hand.pot = pot;
+
+    assert.throws(() => applyPreflopFold(hand, 1), /safe|pot/);
+    assert.equal(hand.pot, pot);
+    assert.equal(hand.currentActorSeat, 1);
+    assert.equal(hand.seats[0].isFolded, undefined);
+  }
+});
+
+test('preflop fold is not advertised when it would leave no further betting decision', () => {
+  const hand = startHand({
+    seats: [
+      { seatNumber: 1, playerId: 'ada', stack: 100 },
+      { seatNumber: 2, playerId: 'ben', stack: 100 },
+    ],
+    dealerSeat: 1,
+    smallBlind: 5,
+    bigBlind: 10,
+    randomInt: unshuffledRandomInt,
+  });
+
+  assert.equal(getPreflopLegalActions(hand).canFold, false);
+  assert.throws(() => applyPreflopFold(hand, 1), /cannot fold/);
+  assert.equal(hand.currentActorSeat, 1);
+  assert.equal(hand.seats[0].isFolded, undefined);
 });

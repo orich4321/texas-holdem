@@ -256,6 +256,7 @@ export interface StartHandInput {
 export interface StartedHandSeat extends StartHandSeat {
   currentBet: number;
   holeCards?: readonly [Card, Card];
+  isFolded?: boolean;
 }
 
 export interface StartedHand {
@@ -369,7 +370,7 @@ export function getPreflopLegalActions(hand: StartedHand): PreflopLegalActions {
   }
 
   const actor = hand.seats.find((seat) => seat?.seatNumber === hand.currentActorSeat);
-  if (!actor || !Number.isSafeInteger(actor.currentBet) || actor.currentBet < 0 || actor.currentBet > hand.currentBet || !Number.isSafeInteger(actor.stack) || actor.stack < 0) {
+  if (!actor || actor.isFolded === true || !Number.isSafeInteger(actor.currentBet) || actor.currentBet < 0 || actor.currentBet > hand.currentBet || !Number.isSafeInteger(actor.stack) || actor.stack < 0) {
     throw new Error('Current actor must have a valid current bet');
   }
 
@@ -381,12 +382,13 @@ export function getPreflopLegalActions(hand: StartedHand): PreflopLegalActions {
     throw new Error('Preflop raise targets must be safe integers');
   }
   const canRaise = maxRaiseTo >= minRaiseTo;
+  const otherEligiblePlayers = hand.seats.filter((seat) => seat.seatNumber !== actor.seatNumber && seat.holeCards && seat.stack > 0 && !seat.isFolded).length;
   return Object.freeze({
     actorSeat: actor.seatNumber,
     toCall,
     canCheck: toCall === 0,
     canCall: toCall > 0 && callAmount > 0,
-    canFold: true,
+    canFold: otherEligiblePlayers > 1,
     callAmount,
     canRaise,
     minRaiseTo: canRaise ? minRaiseTo : null,
@@ -413,10 +415,10 @@ export function applyPreflopCheck(hand: StartedHand, actorSeat: number): Started
   }
 
   const actorIndex = hand.seats.findIndex((seat) => seat.seatNumber === actorSeat);
-  const nextActorIndex = hand.seats.findIndex((seat, index) => index > actorIndex && seat.holeCards && seat.stack > 0)
+  const nextActorIndex = hand.seats.findIndex((seat, index) => index > actorIndex && seat.holeCards && seat.stack > 0 && !seat.isFolded)
     ?? -1;
   const wrappedActorIndex = nextActorIndex === -1
-    ? hand.seats.findIndex((seat, index) => index < actorIndex && seat.holeCards && seat.stack > 0)
+    ? hand.seats.findIndex((seat, index) => index < actorIndex && seat.holeCards && seat.stack > 0 && !seat.isFolded)
     : nextActorIndex;
   if (wrappedActorIndex === -1) {
     throw new Error('A preflop check requires another eligible actor');
@@ -468,9 +470,9 @@ export function applyPreflopCall(hand: StartedHand, actorSeat: number): StartedH
     }
     return clone;
   });
-  const nextActorIndex = seats.findIndex((seat, index) => index > actorIndex && seat.holeCards && seat.stack > 0);
+  const nextActorIndex = seats.findIndex((seat, index) => index > actorIndex && seat.holeCards && seat.stack > 0 && !seat.isFolded);
   const wrappedActorIndex = nextActorIndex === -1
-    ? seats.findIndex((seat, index) => index < actorIndex && seat.holeCards && seat.stack > 0)
+    ? seats.findIndex((seat, index) => index < actorIndex && seat.holeCards && seat.stack > 0 && !seat.isFolded)
     : nextActorIndex;
   if (wrappedActorIndex === -1) {
     throw new Error('A preflop call requires another eligible actor');
@@ -479,6 +481,48 @@ export function applyPreflopCall(hand: StartedHand, actorSeat: number): StartedH
   return {
     ...hand,
     pot: nextPot,
+    currentActorSeat: seats[wrappedActorIndex].seatNumber,
+    seats,
+  };
+}
+
+/** Applies a legal preflop fold, preserving committed chips and advancing past folded seats. */
+export function applyPreflopFold(hand: StartedHand, actorSeat: number): StartedHand {
+  if (!Number.isSafeInteger(actorSeat)) {
+    throw new Error('Folding actor seat must be a safe integer');
+  }
+  if (hand.currentActorSeat !== actorSeat) {
+    throw new Error('Only the active actor may fold');
+  }
+  if (!Number.isSafeInteger(hand.pot) || hand.pot < 0) {
+    throw new Error('Started hand must contain a non-negative safe pot');
+  }
+
+  const legalActions = getPreflopLegalActions(hand);
+  if (!legalActions.canFold) {
+    throw new Error('A player cannot fold when no further betting decision remains');
+  }
+  const actorIndex = hand.seats.findIndex((seat) => seat.seatNumber === actorSeat);
+  const actor = hand.seats[actorIndex];
+  if (!actor?.holeCards || actor.stack <= 0 || actor.isFolded) {
+    throw new Error('A preflop fold requires an eligible actor');
+  }
+
+  const seats = hand.seats.map((seat, index) => ({
+    ...seat,
+    isFolded: index === actorIndex ? true : seat.isFolded === true,
+    holeCards: seat.holeCards && [{ ...seat.holeCards[0] }, { ...seat.holeCards[1] }] as [Card, Card],
+  }));
+  const nextActorIndex = seats.findIndex((seat, index) => index > actorIndex && seat.holeCards && seat.stack > 0 && !seat.isFolded);
+  const wrappedActorIndex = nextActorIndex === -1
+    ? seats.findIndex((seat, index) => index < actorIndex && seat.holeCards && seat.stack > 0 && !seat.isFolded)
+    : nextActorIndex;
+  if (wrappedActorIndex === -1) {
+    throw new Error('A preflop fold requires another eligible actor');
+  }
+
+  return {
+    ...hand,
     currentActorSeat: seats[wrappedActorIndex].seatNumber,
     seats,
   };
