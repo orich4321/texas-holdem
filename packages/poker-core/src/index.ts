@@ -269,6 +269,59 @@ export interface StartedHand {
   minimumRaiseIncrement: number;
   pot: number;
   seats: StartedHandSeat[];
+  /** Server-private betting state; intentionally omitted from JSON/table views. */
+  street: Street;
+  communityCards: readonly Card[];
+  remainingDeck: readonly Card[];
+  bigBlindAmount: number;
+  pendingActorSeats: readonly number[];
+}
+
+function cloneCard(card: Card): Card {
+  return { rank: card.rank, suit: card.suit };
+}
+
+function frozenCards(cards: readonly Card[]): readonly Card[] {
+  return Object.freeze(cards.map((card) => Object.freeze(cloneCard(card))));
+}
+
+function attachPrivateHandState<T extends Omit<StartedHand, 'street' | 'communityCards' | 'remainingDeck' | 'bigBlindAmount' | 'pendingActorSeats'>>(
+  hand: T,
+  state: Pick<StartedHand, 'street' | 'communityCards' | 'remainingDeck' | 'bigBlindAmount' | 'pendingActorSeats'>,
+): StartedHand {
+  return Object.defineProperties(hand, {
+    street: { value: state.street, enumerable: false },
+    communityCards: { value: frozenCards(state.communityCards), enumerable: false },
+    remainingDeck: { value: frozenCards(state.remainingDeck), enumerable: false },
+    bigBlindAmount: { value: state.bigBlindAmount, enumerable: false },
+    pendingActorSeats: { value: Object.freeze([...state.pendingActorSeats]), enumerable: false },
+  }) as unknown as StartedHand;
+}
+
+function preservePrivateHandState(
+  source: StartedHand,
+  next: Omit<StartedHand, 'street' | 'communityCards' | 'remainingDeck' | 'bigBlindAmount' | 'pendingActorSeats'>,
+  pendingActorSeats: readonly number[] = source.pendingActorSeats,
+): StartedHand {
+  if (!Array.isArray(source.communityCards) || !Array.isArray(source.remainingDeck) || !Array.isArray(pendingActorSeats)) {
+    throw new Error('Started hand must retain valid private state');
+  }
+  return attachPrivateHandState(next, {
+    street: source.street,
+    communityCards: source.communityCards,
+    remainingDeck: source.remainingDeck,
+    bigBlindAmount: source.bigBlindAmount,
+    pendingActorSeats,
+  });
+}
+
+function pendingAfterAction(hand: StartedHand, actorSeat: number, resetForRaise = false): number[] {
+  const activeSeats = hand.seats
+    .filter((seat) => seat.holeCards && !seat.isFolded && seat.stack > 0)
+    .map((seat) => seat.seatNumber);
+  return resetForRaise
+    ? activeSeats.filter((seatNumber) => seatNumber !== actorSeat)
+    : hand.pendingActorSeats.filter((seatNumber) => seatNumber !== actorSeat);
 }
 
 /** Starts a two- or three-player preflop round, skipping seated players with no chips. */
@@ -342,7 +395,7 @@ export function startHand(input: StartHandInput): StartedHand {
     return startedSeat;
   });
 
-  return {
+  return attachPrivateHandState({
     dealerSeat: input.seats[activeDealerIndex].seatNumber,
     smallBlindSeat: input.seats[smallBlindIndex].seatNumber,
     bigBlindSeat: input.seats[bigBlindIndex].seatNumber,
@@ -351,7 +404,13 @@ export function startHand(input: StartHandInput): StartedHand {
     minimumRaiseIncrement: input.bigBlind,
     pot: input.smallBlind + input.bigBlind,
     seats,
-  };
+  }, {
+    street: 'preflop',
+    communityCards: [],
+    remainingDeck: deck.deal(deck.remaining) as Card[],
+    bigBlindAmount: input.bigBlind,
+    pendingActorSeats: seats.filter((seat) => seat.holeCards && seat.stack > 0).map((seat) => seat.seatNumber),
+  });
 }
 
 export interface PreflopLegalActions {
@@ -368,8 +427,11 @@ export interface PreflopLegalActions {
 
 /** Returns the current preflop actor's legal action ranges without changing the hand. */
 export function getPreflopLegalActions(hand: StartedHand): PreflopLegalActions {
-  if (!hand || typeof hand !== 'object' || !Array.isArray(hand.seats) || !Number.isSafeInteger(hand.currentActorSeat) || !Number.isSafeInteger(hand.currentBet) || hand.currentBet < 0 || !Number.isSafeInteger(hand.minimumRaiseIncrement) || hand.minimumRaiseIncrement <= 0) {
+  if (!hand || typeof hand !== 'object' || hand.street !== 'preflop' || !Array.isArray(hand.seats) || !Array.isArray(hand.pendingActorSeats) || !Number.isSafeInteger(hand.currentActorSeat) || !Number.isSafeInteger(hand.currentBet) || hand.currentBet < 0 || !Number.isSafeInteger(hand.minimumRaiseIncrement) || hand.minimumRaiseIncrement <= 0) {
     throw new Error('Started hand must contain safe preflop betting state');
+  }
+  if (!hand.pendingActorSeats.includes(hand.currentActorSeat)) {
+    throw new Error('Preflop betting is settled or the current actor has already acted');
   }
 
   const actor = hand.seats.find((seat) => seat?.seatNumber === hand.currentActorSeat);
@@ -427,14 +489,14 @@ export function applyPreflopCheck(hand: StartedHand, actorSeat: number): Started
     throw new Error('A preflop check requires another eligible actor');
   }
 
-  return {
+  return preservePrivateHandState(hand, {
     ...hand,
     currentActorSeat: hand.seats[wrappedActorIndex].seatNumber,
     seats: hand.seats.map((seat) => ({
       ...seat,
       holeCards: seat.holeCards && [{ ...seat.holeCards[0] }, { ...seat.holeCards[1] }] as [Card, Card],
     })),
-  };
+  }, pendingAfterAction(hand, actorSeat));
 }
 
 /** Applies a legal preflop call, including a short all-in call, then advances action. */
@@ -477,16 +539,16 @@ export function applyPreflopCall(hand: StartedHand, actorSeat: number): StartedH
   const wrappedActorIndex = nextActorIndex === -1
     ? seats.findIndex((seat, index) => index < actorIndex && seat.holeCards && seat.stack > 0 && !seat.isFolded)
     : nextActorIndex;
-  if (wrappedActorIndex === -1) {
+  if (wrappedActorIndex === -1 && pendingAfterAction(hand, actorSeat).length > 0) {
     throw new Error('A preflop call requires another eligible actor');
   }
 
-  return {
+  return preservePrivateHandState(hand, {
     ...hand,
     pot: nextPot,
-    currentActorSeat: seats[wrappedActorIndex].seatNumber,
+    currentActorSeat: wrappedActorIndex === -1 ? actorSeat : seats[wrappedActorIndex].seatNumber,
     seats,
-  };
+  }, pendingAfterAction(hand, actorSeat));
 }
 
 /** Applies a legal preflop fold, preserving committed chips and advancing past folded seats. */
@@ -524,11 +586,11 @@ export function applyPreflopFold(hand: StartedHand, actorSeat: number): StartedH
     throw new Error('A preflop fold requires another eligible actor');
   }
 
-  return {
+  return preservePrivateHandState(hand, {
     ...hand,
     currentActorSeat: seats[wrappedActorIndex].seatNumber,
     seats,
-  };
+  }, pendingAfterAction(hand, actorSeat));
 }
 
 /** Applies a legal full preflop raise to a total committed-bet target and advances action. */
@@ -582,14 +644,14 @@ export function applyPreflopRaise(hand: StartedHand, actorSeat: number, raiseTo:
     throw new Error('A preflop raise requires another eligible actor');
   }
 
-  return {
+  return preservePrivateHandState(hand, {
     ...hand,
     currentBet: raiseTo,
     minimumRaiseIncrement: raiseTo - hand.currentBet,
     pot: nextPot,
     currentActorSeat: seats[wrappedActorIndex].seatNumber,
     seats,
-  };
+  }, pendingAfterAction(hand, actorSeat, true));
 }
 
 /** Applies an all-in preflop raise; a full raise reopens the full-raise increment. */
@@ -638,7 +700,7 @@ export function applyPreflopAllIn(hand: StartedHand, actorSeat: number): Started
     throw new Error('A preflop all-in requires another eligible actor');
   }
 
-  return {
+  return preservePrivateHandState(hand, {
     ...hand,
     currentBet: allInTo,
     minimumRaiseIncrement: allInTo >= (legalActions.minRaiseTo ?? Number.MAX_SAFE_INTEGER)
@@ -647,7 +709,66 @@ export function applyPreflopAllIn(hand: StartedHand, actorSeat: number): Started
     pot: nextPot,
     currentActorSeat: seats[wrappedActorIndex].seatNumber,
     seats,
-  };
+  }, pendingAfterAction(hand, actorSeat, true));
+}
+
+/** Advances a settled preflop round to the flop using the server-shuffled deck retained at hand start. */
+export function advancePreflopToFlop(hand: StartedHand): StartedHand {
+  if (!hand || typeof hand !== 'object' || hand.street !== 'preflop' || !Array.isArray(hand.communityCards) || hand.communityCards.length !== 0 || !Array.isArray(hand.remainingDeck) || !Array.isArray(hand.pendingActorSeats) || !Number.isSafeInteger(hand.bigBlindAmount) || hand.bigBlindAmount <= 0 || !Number.isSafeInteger(hand.currentBet) || hand.currentBet < 0) {
+    throw new Error('A preflop hand must contain valid private deck state');
+  }
+  const dealtSeats = hand.seats.filter((seat) => seat?.holeCards);
+  const contestingSeats = dealtSeats.filter((seat) => !seat.isFolded);
+  if (contestingSeats.length < 2 || contestingSeats.some((seat) => !Number.isSafeInteger(seat.currentBet) || seat.currentBet < 0 || !Number.isSafeInteger(seat.stack) || seat.stack < 0)) {
+    throw new Error('A flop requires at least two valid contesting players');
+  }
+  if (hand.pendingActorSeats.length > 0 || contestingSeats.some((seat) => seat.stack > 0 && seat.currentBet !== hand.currentBet)) {
+    throw new Error('Preflop betting must be settled and every player must have acted before advancing to the flop');
+  }
+  const committedPot = hand.seats.reduce((total, seat) => total + seat.currentBet, 0);
+  if (!Number.isSafeInteger(committedPot) || hand.pot !== committedPot) {
+    throw new Error('Preflop pot must equal all committed bets before advancing to the flop');
+  }
+  const allDealtCards = dealtSeats.flatMap((seat) => seat.holeCards!);
+  const allCards = [...hand.remainingDeck, ...allDealtCards];
+  if (hand.remainingDeck.length !== 52 - allDealtCards.length || allCards.length !== 52 || new Set(allCards.map((card) => `${card?.rank}-${card?.suit}`)).size !== 52 || allCards.some((card) => !card || !rankValues.has(card.rank) || !suits.includes(card.suit))) {
+    throw new Error('Private deck state must contain 52 distinct valid cards');
+  }
+  const dealerIndex = hand.seats.findIndex((seat) => seat.seatNumber === hand.dealerSeat);
+  let currentActorSeat: number | undefined;
+  for (let offset = 1; offset <= hand.seats.length; offset += 1) {
+    const seat = hand.seats[(dealerIndex + offset) % hand.seats.length];
+    if (seat.holeCards && !seat.isFolded && seat.stack > 0) {
+      currentActorSeat = seat.seatNumber;
+      break;
+    }
+  }
+  if (dealerIndex === -1) {
+    throw new Error('A flop requires a valid dealer');
+  }
+  // With every contesting player all-in, no betting actor exists; retain the
+  // dealer as an inert cursor until the automatic runout/showdown slice.
+  if (currentActorSeat === undefined) {
+    currentActorSeat = hand.dealerSeat;
+  }
+  const [, ...afterBurn] = hand.remainingDeck;
+  return attachPrivateHandState({
+    ...hand,
+    currentActorSeat,
+    currentBet: 0,
+    minimumRaiseIncrement: hand.bigBlindAmount,
+    seats: hand.seats.map((seat) => ({
+      ...seat,
+      currentBet: 0,
+      holeCards: seat.holeCards && [cloneCard(seat.holeCards[0]), cloneCard(seat.holeCards[1])] as [Card, Card],
+    })),
+  }, {
+    street: 'flop',
+    communityCards: afterBurn.slice(0, 3),
+    remainingDeck: afterBurn.slice(3),
+    bigBlindAmount: hand.bigBlindAmount,
+    pendingActorSeats: hand.seats.filter((seat) => seat.holeCards && !seat.isFolded && seat.stack > 0).map((seat) => seat.seatNumber),
+  });
 }
 
 export interface Player {

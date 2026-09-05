@@ -41,6 +41,9 @@ importers:
       '@prisma/client':
         specifier: 7.10.0
         version: 7.10.0(prisma@7.10.0(@types/node@22.20.1)(@types/react-dom@19.2.7(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)(typescript@5.9.3))(typescript@5.9.3)
+      '@texas-holdem/poker-core':
+        specifier: workspace:*
+        version: link:../../packages/poker-core
       express:
         specifier: ^4.21.2
         version: 4.22.2
