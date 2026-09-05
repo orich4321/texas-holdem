@@ -250,10 +250,12 @@ export interface StartHandInput {
   dealerSeat: number;
   smallBlind: number;
   bigBlind: number;
+  randomInt: RandomInt;
 }
 
 export interface StartedHandSeat extends StartHandSeat {
   currentBet: number;
+  holeCards: readonly [Card, Card];
 }
 
 export interface StartedHand {
@@ -277,6 +279,9 @@ export function startHand(input: StartHandInput): StartedHand {
   if (!Number.isSafeInteger(input.smallBlind) || !Number.isSafeInteger(input.bigBlind) || input.smallBlind <= 0 || input.bigBlind < input.smallBlind || !Number.isSafeInteger(input.smallBlind + input.bigBlind)) {
     throw new Error('Blinds and their total pot must be safe integers with big blind at least the small blind');
   }
+  if (typeof input.randomInt !== 'function') {
+    throw new Error('Start hand input must include a randomInt function');
+  }
 
   const seatNumbers = new Set<number>();
   const playerIds = new Set<string>();
@@ -297,12 +302,26 @@ export function startHand(input: StartHandInput): StartedHand {
 
   const smallBlindIndex = input.seats.length === 2 ? dealerIndex : (dealerIndex + 1) % input.seats.length;
   const bigBlindIndex = (smallBlindIndex + 1) % input.seats.length;
-  const seats = input.seats.map((seat, index) => {
+  for (const [index, seat] of input.seats.entries()) {
     const blind = index === smallBlindIndex ? input.smallBlind : index === bigBlindIndex ? input.bigBlind : 0;
     if (seat.stack < blind) {
       throw new Error('A player must have enough chips to post their blind');
     }
-    return { ...seat, stack: seat.stack - blind, currentBet: blind };
+  }
+  const deck = new Deck();
+  deck.shuffle(input.randomInt);
+  const firstHoleCards = new Map<number, Card>();
+  const holeCards = new Map<number, [Card, Card]>();
+  const dealingOrder = Array.from({ length: input.seats.length }, (_, offset) => (smallBlindIndex + offset) % input.seats.length);
+  for (const index of dealingOrder) {
+    firstHoleCards.set(index, deck.deal() as Card);
+  }
+  for (const index of dealingOrder) {
+    holeCards.set(index, [firstHoleCards.get(index)!, deck.deal() as Card]);
+  }
+  const seats = input.seats.map((seat, index) => {
+    const blind = index === smallBlindIndex ? input.smallBlind : index === bigBlindIndex ? input.bigBlind : 0;
+    return { ...seat, stack: seat.stack - blind, currentBet: blind, holeCards: holeCards.get(index)! };
   });
 
   return {
