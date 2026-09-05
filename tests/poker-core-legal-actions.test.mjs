@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { applyPreflopCall, applyPreflopCheck, applyPreflopFold, applyPreflopRaise, getPreflopLegalActions, startHand } from '../packages/poker-core/src/index.ts';
+import { applyPreflopAllIn, applyPreflopCall, applyPreflopCheck, applyPreflopFold, applyPreflopRaise, getPreflopLegalActions, startHand } from '../packages/poker-core/src/index.ts';
 
 const unshuffledRandomInt = (maxExclusive) => maxExclusive - 1;
 
@@ -260,6 +260,7 @@ test('preflop full raise commits to its total target, updates the current bet, a
   assert.notEqual(raisedHand, hand);
   assert.equal(raisedHand.currentActorSeat, 2);
   assert.equal(raisedHand.currentBet, 20);
+  assert.equal(raisedHand.minimumRaiseIncrement, 10);
   assert.equal(raisedHand.pot, 35);
   assert.deepEqual(raisedHand.seats.map((seat) => ({ seatNumber: seat.seatNumber, stack: seat.stack, currentBet: seat.currentBet })), [
     { seatNumber: 1, stack: 80, currentBet: 20 },
@@ -313,4 +314,90 @@ test('preflop raise rejects malformed or overflowing pots before changing the ha
     assert.equal(hand.seats[0].stack, 100);
     assert.equal(hand.seats[0].currentBet, 0);
   }
+});
+
+test('preflop all-in permits a short raise without changing the minimum full-raise increment', () => {
+  const hand = startHand({
+    seats: [
+      { seatNumber: 1, playerId: 'ada', stack: 15 },
+      { seatNumber: 2, playerId: 'ben', stack: 100 },
+      { seatNumber: 3, playerId: 'cy', stack: 100 },
+    ],
+    dealerSeat: 1,
+    smallBlind: 5,
+    bigBlind: 10,
+    randomInt: unshuffledRandomInt,
+  });
+
+  const allInHand = applyPreflopAllIn(hand, 1);
+
+  assert.equal(allInHand.currentActorSeat, 2);
+  assert.equal(allInHand.currentBet, 15);
+  assert.equal(allInHand.minimumRaiseIncrement, 10);
+  assert.equal(allInHand.pot, 30);
+  assert.deepEqual(allInHand.seats.map((seat) => ({ seatNumber: seat.seatNumber, stack: seat.stack, currentBet: seat.currentBet })), [
+    { seatNumber: 1, stack: 0, currentBet: 15 },
+    { seatNumber: 2, stack: 95, currentBet: 5 },
+    { seatNumber: 3, stack: 90, currentBet: 10 },
+  ]);
+  assert.equal(getPreflopLegalActions(allInHand).minRaiseTo, 25);
+  assert.equal(hand.currentBet, 10);
+  assert.equal(hand.minimumRaiseIncrement, 10);
+  assert.equal(hand.pot, 15);
+});
+
+test('preflop all-in rejects a non-raising stack and malformed pots without changing the hand', () => {
+  const shortCallHand = startHand({
+    seats: [
+      { seatNumber: 1, playerId: 'ada', stack: 7 },
+      { seatNumber: 2, playerId: 'ben', stack: 100 },
+      { seatNumber: 3, playerId: 'cy', stack: 100 },
+    ],
+    dealerSeat: 1,
+    smallBlind: 5,
+    bigBlind: 10,
+    randomInt: unshuffledRandomInt,
+  });
+  assert.throws(() => applyPreflopAllIn(shortCallHand, 1), /short raise/);
+  assert.equal(shortCallHand.seats[0].stack, 7);
+
+  const malformedPotHand = startHand({
+    seats: [
+      { seatNumber: 1, playerId: 'ada', stack: 15 },
+      { seatNumber: 2, playerId: 'ben', stack: 100 },
+      { seatNumber: 3, playerId: 'cy', stack: 100 },
+    ],
+    dealerSeat: 1,
+    smallBlind: 5,
+    bigBlind: 10,
+    randomInt: unshuffledRandomInt,
+  });
+  malformedPotHand.pot = Number.MAX_SAFE_INTEGER;
+  assert.throws(() => applyPreflopAllIn(malformedPotHand, 1), /safe pot|safe integers/);
+  assert.equal(malformedPotHand.currentActorSeat, 1);
+  assert.equal(malformedPotHand.pot, Number.MAX_SAFE_INTEGER);
+  assert.equal(malformedPotHand.seats[0].stack, 15);
+});
+
+test('coverage only: a short all-in preserves a larger prior full-raise increment', () => {
+  const hand = startHand({
+    seats: [
+      { seatNumber: 1, playerId: 'ada', stack: 100 },
+      { seatNumber: 2, playerId: 'ben', stack: 100 },
+      { seatNumber: 3, playerId: 'cy', stack: 33 },
+    ],
+    dealerSeat: 1,
+    smallBlind: 5,
+    bigBlind: 10,
+    randomInt: unshuffledRandomInt,
+  });
+
+  const fullRaise = applyPreflopRaise(hand, 1, 30);
+  const calledRaise = applyPreflopCall(fullRaise, 2);
+  const allInHand = applyPreflopAllIn(calledRaise, 3);
+
+  assert.equal(fullRaise.minimumRaiseIncrement, 20);
+  assert.equal(allInHand.currentBet, 33);
+  assert.equal(allInHand.minimumRaiseIncrement, 20);
+  assert.equal(getPreflopLegalActions(allInHand).minRaiseTo, 53);
 });

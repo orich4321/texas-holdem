@@ -265,6 +265,8 @@ export interface StartedHand {
   bigBlindSeat: number;
   currentActorSeat: number;
   currentBet: number;
+  /** The last full-raise size; short all-ins do not change it. */
+  minimumRaiseIncrement: number;
   pot: number;
   seats: StartedHandSeat[];
 }
@@ -346,6 +348,7 @@ export function startHand(input: StartHandInput): StartedHand {
     bigBlindSeat: input.seats[bigBlindIndex].seatNumber,
     currentActorSeat: input.seats[eligibleIndexes[(bigBlindEligiblePosition + 1) % eligibleIndexes.length]].seatNumber,
     currentBet: input.bigBlind,
+    minimumRaiseIncrement: input.bigBlind,
     pot: input.smallBlind + input.bigBlind,
     seats,
   };
@@ -365,7 +368,7 @@ export interface PreflopLegalActions {
 
 /** Returns the current preflop actor's legal action ranges without changing the hand. */
 export function getPreflopLegalActions(hand: StartedHand): PreflopLegalActions {
-  if (!hand || typeof hand !== 'object' || !Array.isArray(hand.seats) || !Number.isSafeInteger(hand.currentActorSeat) || !Number.isSafeInteger(hand.currentBet) || hand.currentBet < 0) {
+  if (!hand || typeof hand !== 'object' || !Array.isArray(hand.seats) || !Number.isSafeInteger(hand.currentActorSeat) || !Number.isSafeInteger(hand.currentBet) || hand.currentBet < 0 || !Number.isSafeInteger(hand.minimumRaiseIncrement) || hand.minimumRaiseIncrement <= 0) {
     throw new Error('Started hand must contain safe preflop betting state');
   }
 
@@ -376,7 +379,7 @@ export function getPreflopLegalActions(hand: StartedHand): PreflopLegalActions {
 
   const toCall = hand.currentBet - actor.currentBet;
   const callAmount = Math.min(toCall, actor.stack);
-  const minRaiseTo = hand.currentBet * 2;
+  const minRaiseTo = hand.currentBet + hand.minimumRaiseIncrement;
   const maxRaiseTo = actor.currentBet + actor.stack;
   if (!Number.isSafeInteger(minRaiseTo) || !Number.isSafeInteger(maxRaiseTo)) {
     throw new Error('Preflop raise targets must be safe integers');
@@ -582,6 +585,62 @@ export function applyPreflopRaise(hand: StartedHand, actorSeat: number, raiseTo:
   return {
     ...hand,
     currentBet: raiseTo,
+    minimumRaiseIncrement: raiseTo - hand.currentBet,
+    pot: nextPot,
+    currentActorSeat: seats[wrappedActorIndex].seatNumber,
+    seats,
+  };
+}
+
+/** Applies a short all-in preflop raise without reopening the full-raise increment. */
+export function applyPreflopAllIn(hand: StartedHand, actorSeat: number): StartedHand {
+  if (!Number.isSafeInteger(actorSeat)) {
+    throw new Error('All-in actor seat must be a safe integer');
+  }
+  if (hand.currentActorSeat !== actorSeat) {
+    throw new Error('Only the active actor may go all-in');
+  }
+  if (!Number.isSafeInteger(hand.pot) || hand.pot < 0) {
+    throw new Error('Started hand must contain a non-negative safe pot');
+  }
+
+  const legalActions = getPreflopLegalActions(hand);
+  const actorIndex = hand.seats.findIndex((seat) => seat.seatNumber === actorSeat);
+  const actor = hand.seats[actorIndex];
+  if (!actor?.holeCards || actor.stack <= 0) {
+    throw new Error('A preflop all-in requires an eligible actor');
+  }
+  const allInTo = actor.currentBet + actor.stack;
+  if (!Number.isSafeInteger(allInTo) || allInTo <= hand.currentBet || allInTo >= (legalActions.minRaiseTo ?? Number.MAX_SAFE_INTEGER)) {
+    throw new Error('A preflop all-in must be a short raise');
+  }
+  const nextPot = hand.pot + actor.stack;
+  if (!Number.isSafeInteger(nextPot)) {
+    throw new Error('Preflop all-in results must be safe integers');
+  }
+
+  const seats = hand.seats.map((seat, index) => {
+    const clone: StartedHandSeat = {
+      ...seat,
+      holeCards: seat.holeCards && [{ ...seat.holeCards[0] }, { ...seat.holeCards[1] }] as [Card, Card],
+    };
+    if (index === actorIndex) {
+      clone.stack = 0;
+      clone.currentBet = allInTo;
+    }
+    return clone;
+  });
+  const nextActorIndex = seats.findIndex((seat, index) => index > actorIndex && seat.holeCards && seat.stack > 0 && !seat.isFolded);
+  const wrappedActorIndex = nextActorIndex === -1
+    ? seats.findIndex((seat, index) => index < actorIndex && seat.holeCards && seat.stack > 0 && !seat.isFolded)
+    : nextActorIndex;
+  if (wrappedActorIndex === -1) {
+    throw new Error('A preflop all-in requires another eligible actor');
+  }
+
+  return {
+    ...hand,
+    currentBet: allInTo,
     pot: nextPot,
     currentActorSeat: seats[wrappedActorIndex].seatNumber,
     seats,

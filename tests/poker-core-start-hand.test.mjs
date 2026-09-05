@@ -20,6 +20,7 @@ test('a three-player hand posts blinds and opens preflop action left of the big 
     bigBlindSeat: 3,
     currentActorSeat: 1,
     currentBet: 10,
+    minimumRaiseIncrement: 10,
     pot: 15,
     seats: [
       { seatNumber: 1, playerId: 'ada', stack: 100, currentBet: 0, holeCards: [{ rank: '4', suit: 'clubs' }, { rank: '7', suit: 'clubs' }] },
@@ -48,6 +49,7 @@ test('a heads-up hand makes the dealer the small blind and opens preflop action 
     bigBlindSeat: 9,
     currentActorSeat: 4,
     currentBet: 10,
+    minimumRaiseIncrement: 10,
     pot: 15,
     seats: [
       { seatNumber: 4, playerId: 'ada', stack: 95, currentBet: 5, holeCards: [{ rank: '2', suit: 'clubs' }, { rank: '4', suit: 'clubs' }] },
@@ -120,6 +122,7 @@ test('startHand skips a zero-stack seat for dealer, blinds, action, and hole-car
     bigBlindSeat: 3,
     currentActorSeat: 2,
     currentBet: 10,
+    minimumRaiseIncrement: 10,
     pot: 15,
     seats: [
       { seatNumber: 1, playerId: 'ada', stack: 0, currentBet: 0 },
