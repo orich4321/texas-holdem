@@ -101,6 +101,34 @@ test('startHand rejects an unaffordable blind before consuming injected randomne
   assert.equal(randomCalls, 0);
 });
 
+test('startHand skips a zero-stack seat for dealer, blinds, action, and hole-card dealing', () => {
+  const hand = startHand({
+    seats: [
+      { seatNumber: 1, playerId: 'ada', stack: 0 },
+      { seatNumber: 2, playerId: 'ben', stack: 100 },
+      { seatNumber: 3, playerId: 'cy', stack: 100 },
+    ],
+    dealerSeat: 1,
+    smallBlind: 5,
+    bigBlind: 10,
+    randomInt: unshuffledRandomInt,
+  });
+
+  assert.deepEqual(hand, {
+    dealerSeat: 2,
+    smallBlindSeat: 2,
+    bigBlindSeat: 3,
+    currentActorSeat: 2,
+    currentBet: 10,
+    pot: 15,
+    seats: [
+      { seatNumber: 1, playerId: 'ada', stack: 0, currentBet: 0 },
+      { seatNumber: 2, playerId: 'ben', stack: 95, currentBet: 5, holeCards: [{ rank: '2', suit: 'clubs' }, { rank: '4', suit: 'clubs' }] },
+      { seatNumber: 3, playerId: 'cy', stack: 90, currentBet: 10, holeCards: [{ rank: '3', suit: 'clubs' }, { rank: '5', suit: 'clubs' }] },
+    ],
+  });
+});
+
 test('startHand rejects malformed runtime values and unsafe chip arithmetic without mutating valid inputs', () => {
   assert.throws(() => startHand(null), /input must be an object/i);
   assert.throws(() => startHand({

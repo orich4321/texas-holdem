@@ -255,7 +255,7 @@ export interface StartHandInput {
 
 export interface StartedHandSeat extends StartHandSeat {
   currentBet: number;
-  holeCards: readonly [Card, Card];
+  holeCards?: readonly [Card, Card];
 }
 
 export interface StartedHand {
@@ -268,7 +268,7 @@ export interface StartedHand {
   seats: StartedHandSeat[];
 }
 
-/** Starts a heads-up or three-player preflop round, posting blinds clockwise from the dealer. */
+/** Starts a two- or three-player preflop round, skipping seated players with no chips. */
 export function startHand(input: StartHandInput): StartedHand {
   if (!input || typeof input !== 'object' || !Array.isArray(input.seats)) {
     throw new Error('Start hand input must be an object with seats');
@@ -289,8 +289,8 @@ export function startHand(input: StartHandInput): StartedHand {
     if (!seat || typeof seat !== 'object') {
       throw new Error('Each seat must be an object');
     }
-    if (!Number.isSafeInteger(seat.seatNumber) || seatNumbers.has(seat.seatNumber) || typeof seat.playerId !== 'string' || seat.playerId.length === 0 || playerIds.has(seat.playerId) || !Number.isSafeInteger(seat.stack) || seat.stack <= 0) {
-      throw new Error('Seats must have unique numbers, unique player IDs, and positive safe integer stacks');
+    if (!Number.isSafeInteger(seat.seatNumber) || seatNumbers.has(seat.seatNumber) || typeof seat.playerId !== 'string' || seat.playerId.length === 0 || playerIds.has(seat.playerId) || !Number.isSafeInteger(seat.stack) || seat.stack < 0) {
+      throw new Error('Seats must have unique numbers, unique player IDs, and non-negative safe integer stacks');
     }
     seatNumbers.add(seat.seatNumber);
     playerIds.add(seat.playerId);
@@ -300,9 +300,19 @@ export function startHand(input: StartHandInput): StartedHand {
     throw new Error('Dealer seat must be seated');
   }
 
-  const smallBlindIndex = input.seats.length === 2 ? dealerIndex : (dealerIndex + 1) % input.seats.length;
-  const bigBlindIndex = (smallBlindIndex + 1) % input.seats.length;
-  for (const [index, seat] of input.seats.entries()) {
+  const eligibleIndexes = input.seats.flatMap((seat, index) => seat.stack > 0 ? [index] : []);
+  if (eligibleIndexes.length < 2) {
+    throw new Error('A hand must contain at least two players with chips');
+  }
+  const dealerPosition = eligibleIndexes.findIndex((index) => index >= dealerIndex);
+  const activeDealerIndex = eligibleIndexes[dealerPosition === -1 ? 0 : dealerPosition];
+  const dealerEligiblePosition = eligibleIndexes.indexOf(activeDealerIndex);
+  const smallBlindEligiblePosition = eligibleIndexes.length === 2 ? dealerEligiblePosition : (dealerEligiblePosition + 1) % eligibleIndexes.length;
+  const bigBlindEligiblePosition = (smallBlindEligiblePosition + 1) % eligibleIndexes.length;
+  const smallBlindIndex = eligibleIndexes[smallBlindEligiblePosition];
+  const bigBlindIndex = eligibleIndexes[bigBlindEligiblePosition];
+  for (const index of eligibleIndexes) {
+    const seat = input.seats[index];
     const blind = index === smallBlindIndex ? input.smallBlind : index === bigBlindIndex ? input.bigBlind : 0;
     if (seat.stack < blind) {
       throw new Error('A player must have enough chips to post their blind');
@@ -312,7 +322,7 @@ export function startHand(input: StartHandInput): StartedHand {
   deck.shuffle(input.randomInt);
   const firstHoleCards = new Map<number, Card>();
   const holeCards = new Map<number, [Card, Card]>();
-  const dealingOrder = Array.from({ length: input.seats.length }, (_, offset) => (smallBlindIndex + offset) % input.seats.length);
+  const dealingOrder = Array.from({ length: eligibleIndexes.length }, (_, offset) => eligibleIndexes[(smallBlindEligiblePosition + offset) % eligibleIndexes.length]);
   for (const index of dealingOrder) {
     firstHoleCards.set(index, deck.deal() as Card);
   }
@@ -321,14 +331,19 @@ export function startHand(input: StartHandInput): StartedHand {
   }
   const seats = input.seats.map((seat, index) => {
     const blind = index === smallBlindIndex ? input.smallBlind : index === bigBlindIndex ? input.bigBlind : 0;
-    return { ...seat, stack: seat.stack - blind, currentBet: blind, holeCards: holeCards.get(index)! };
+    const startedSeat: StartedHandSeat = { ...seat, stack: seat.stack - blind, currentBet: blind };
+    const dealtCards = holeCards.get(index);
+    if (dealtCards) {
+      startedSeat.holeCards = dealtCards;
+    }
+    return startedSeat;
   });
 
   return {
-    dealerSeat: input.dealerSeat,
+    dealerSeat: input.seats[activeDealerIndex].seatNumber,
     smallBlindSeat: input.seats[smallBlindIndex].seatNumber,
     bigBlindSeat: input.seats[bigBlindIndex].seatNumber,
-    currentActorSeat: input.seats[(bigBlindIndex + 1) % input.seats.length].seatNumber,
+    currentActorSeat: input.seats[eligibleIndexes[(bigBlindEligiblePosition + 1) % eligibleIndexes.length]].seatNumber,
     currentBet: input.bigBlind,
     pot: input.smallBlind + input.bigBlind,
     seats,
