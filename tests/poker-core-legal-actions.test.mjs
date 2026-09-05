@@ -358,7 +358,7 @@ test('preflop all-in rejects a non-raising stack and malformed pots without chan
     bigBlind: 10,
     randomInt: unshuffledRandomInt,
   });
-  assert.throws(() => applyPreflopAllIn(shortCallHand, 1), /short raise/);
+  assert.throws(() => applyPreflopAllIn(shortCallHand, 1), /must be a raise/);
   assert.equal(shortCallHand.seats[0].stack, 7);
 
   const malformedPotHand = startHand({
@@ -400,4 +400,24 @@ test('coverage only: a short all-in preserves a larger prior full-raise incremen
   assert.equal(allInHand.currentBet, 33);
   assert.equal(allInHand.minimumRaiseIncrement, 20);
   assert.equal(getPreflopLegalActions(allInHand).minRaiseTo, 53);
+});
+
+test('preflop all-in permits a full raise, consumes the actor stack, and reopens the raise increment', () => {
+  const hand = startedThreePlayerHand();
+
+  const allInHand = applyPreflopAllIn(hand, 1);
+
+  assert.equal(allInHand.currentActorSeat, 2);
+  assert.equal(allInHand.currentBet, 100);
+  assert.equal(allInHand.minimumRaiseIncrement, 90);
+  assert.equal(allInHand.pot, 115);
+  assert.deepEqual(allInHand.seats.map((seat) => ({ seatNumber: seat.seatNumber, stack: seat.stack, currentBet: seat.currentBet })), [
+    { seatNumber: 1, stack: 0, currentBet: 100 },
+    { seatNumber: 2, stack: 95, currentBet: 5 },
+    { seatNumber: 3, stack: 90, currentBet: 10 },
+  ]);
+  assert.equal(getPreflopLegalActions(allInHand).minRaiseTo, null);
+  assert.equal(hand.currentBet, 10);
+  assert.equal(hand.minimumRaiseIncrement, 10);
+  assert.equal(hand.pot, 15);
 });

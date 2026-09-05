@@ -592,7 +592,7 @@ export function applyPreflopRaise(hand: StartedHand, actorSeat: number, raiseTo:
   };
 }
 
-/** Applies a short all-in preflop raise without reopening the full-raise increment. */
+/** Applies an all-in preflop raise; a full raise reopens the full-raise increment. */
 export function applyPreflopAllIn(hand: StartedHand, actorSeat: number): StartedHand {
   if (!Number.isSafeInteger(actorSeat)) {
     throw new Error('All-in actor seat must be a safe integer');
@@ -611,8 +611,8 @@ export function applyPreflopAllIn(hand: StartedHand, actorSeat: number): Started
     throw new Error('A preflop all-in requires an eligible actor');
   }
   const allInTo = actor.currentBet + actor.stack;
-  if (!Number.isSafeInteger(allInTo) || allInTo <= hand.currentBet || allInTo >= (legalActions.minRaiseTo ?? Number.MAX_SAFE_INTEGER)) {
-    throw new Error('A preflop all-in must be a short raise');
+  if (!Number.isSafeInteger(allInTo) || allInTo <= hand.currentBet) {
+    throw new Error('A preflop all-in must be a raise');
   }
   const nextPot = hand.pot + actor.stack;
   if (!Number.isSafeInteger(nextPot)) {
@@ -641,6 +641,9 @@ export function applyPreflopAllIn(hand: StartedHand, actorSeat: number): Started
   return {
     ...hand,
     currentBet: allInTo,
+    minimumRaiseIncrement: allInTo >= (legalActions.minRaiseTo ?? Number.MAX_SAFE_INTEGER)
+      ? allInTo - hand.currentBet
+      : hand.minimumRaiseIncrement,
     pot: nextPot,
     currentActorSeat: seats[wrappedActorIndex].seatNumber,
     seats,
