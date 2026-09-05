@@ -528,6 +528,66 @@ export function applyPreflopFold(hand: StartedHand, actorSeat: number): StartedH
   };
 }
 
+/** Applies a legal full preflop raise to a total committed-bet target and advances action. */
+export function applyPreflopRaise(hand: StartedHand, actorSeat: number, raiseTo: number): StartedHand {
+  if (!Number.isSafeInteger(actorSeat)) {
+    throw new Error('Raising actor seat must be a safe integer');
+  }
+  if (!Number.isSafeInteger(raiseTo) || raiseTo < 0) {
+    throw new Error('Preflop raise target must be a non-negative safe integer');
+  }
+  if (hand.currentActorSeat !== actorSeat) {
+    throw new Error('Only the active actor may raise');
+  }
+  if (!Number.isSafeInteger(hand.pot) || hand.pot < 0) {
+    throw new Error('Started hand must contain a non-negative safe pot');
+  }
+
+  const legalActions = getPreflopLegalActions(hand);
+  const actorIndex = hand.seats.findIndex((seat) => seat.seatNumber === actorSeat);
+  const actor = hand.seats[actorIndex];
+  if (!actor?.holeCards || actor.stack <= 0 || !legalActions.canRaise || legalActions.minRaiseTo === null || legalActions.maxRaiseTo === null) {
+    throw new Error('A preflop raise requires an eligible actor with a full raise available');
+  }
+  if (raiseTo < legalActions.minRaiseTo || raiseTo > legalActions.maxRaiseTo) {
+    throw new Error('Preflop raise target is outside the legal full raise range');
+  }
+
+  const raiseAmount = raiseTo - actor.currentBet;
+  const nextStack = actor.stack - raiseAmount;
+  const nextPot = hand.pot + raiseAmount;
+  if (!Number.isSafeInteger(raiseAmount) || !Number.isSafeInteger(nextStack) || !Number.isSafeInteger(nextPot)) {
+    throw new Error('Preflop raise results must be safe integers');
+  }
+
+  const seats = hand.seats.map((seat, index) => {
+    const clone: StartedHandSeat = {
+      ...seat,
+      holeCards: seat.holeCards && [{ ...seat.holeCards[0] }, { ...seat.holeCards[1] }] as [Card, Card],
+    };
+    if (index === actorIndex) {
+      clone.stack = nextStack;
+      clone.currentBet = raiseTo;
+    }
+    return clone;
+  });
+  const nextActorIndex = seats.findIndex((seat, index) => index > actorIndex && seat.holeCards && seat.stack > 0 && !seat.isFolded);
+  const wrappedActorIndex = nextActorIndex === -1
+    ? seats.findIndex((seat, index) => index < actorIndex && seat.holeCards && seat.stack > 0 && !seat.isFolded)
+    : nextActorIndex;
+  if (wrappedActorIndex === -1) {
+    throw new Error('A preflop raise requires another eligible actor');
+  }
+
+  return {
+    ...hand,
+    currentBet: raiseTo,
+    pot: nextPot,
+    currentActorSeat: seats[wrappedActorIndex].seatNumber,
+    seats,
+  };
+}
+
 export interface Player {
   id: string;
   name: string;

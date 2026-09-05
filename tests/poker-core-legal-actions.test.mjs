@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { applyPreflopCall, applyPreflopCheck, applyPreflopFold, getPreflopLegalActions, startHand } from '../packages/poker-core/src/index.ts';
+import { applyPreflopCall, applyPreflopCheck, applyPreflopFold, applyPreflopRaise, getPreflopLegalActions, startHand } from '../packages/poker-core/src/index.ts';
 
 const unshuffledRandomInt = (maxExclusive) => maxExclusive - 1;
 
@@ -250,4 +250,67 @@ test('preflop fold is not advertised when it would leave no further betting deci
   assert.throws(() => applyPreflopFold(hand, 1), /cannot fold/);
   assert.equal(hand.currentActorSeat, 1);
   assert.equal(hand.seats[0].isFolded, undefined);
+});
+
+test('preflop full raise commits to its total target, updates the current bet, and advances action', () => {
+  const hand = startedThreePlayerHand();
+
+  const raisedHand = applyPreflopRaise(hand, 1, 20);
+
+  assert.notEqual(raisedHand, hand);
+  assert.equal(raisedHand.currentActorSeat, 2);
+  assert.equal(raisedHand.currentBet, 20);
+  assert.equal(raisedHand.pot, 35);
+  assert.deepEqual(raisedHand.seats.map((seat) => ({ seatNumber: seat.seatNumber, stack: seat.stack, currentBet: seat.currentBet })), [
+    { seatNumber: 1, stack: 80, currentBet: 20 },
+    { seatNumber: 2, stack: 95, currentBet: 5 },
+    { seatNumber: 3, stack: 90, currentBet: 10 },
+  ]);
+  assert.equal(hand.currentBet, 10);
+  assert.equal(hand.pot, 15);
+  assert.equal(hand.seats[0].stack, 100);
+});
+
+test('preflop raise rejects non-full, over-stack, and malformed targets without changing the hand', () => {
+  for (const raiseTo of [19, 101, -20, Number.NaN, Number.POSITIVE_INFINITY]) {
+    const hand = startedThreePlayerHand();
+
+    assert.throws(() => applyPreflopRaise(hand, 1, raiseTo), /raise|safe integer|target/i);
+    assert.equal(hand.currentActorSeat, 1);
+    assert.equal(hand.currentBet, 10);
+    assert.equal(hand.pot, 15);
+    assert.equal(hand.seats[0].stack, 100);
+    assert.equal(hand.seats[0].currentBet, 0);
+  }
+});
+
+test('preflop raise charges only the additional commitment when a blind raises', () => {
+  const hand = applyPreflopCall(startedThreePlayerHand(), 1);
+
+  const raisedHand = applyPreflopRaise(hand, 2, 20);
+
+  assert.equal(raisedHand.currentActorSeat, 3);
+  assert.equal(raisedHand.currentBet, 20);
+  assert.equal(raisedHand.pot, 40);
+  assert.deepEqual(raisedHand.seats.map((seat) => ({ seatNumber: seat.seatNumber, stack: seat.stack, currentBet: seat.currentBet })), [
+    { seatNumber: 1, stack: 90, currentBet: 10 },
+    { seatNumber: 2, stack: 80, currentBet: 20 },
+    { seatNumber: 3, stack: 90, currentBet: 10 },
+  ]);
+  assert.equal(hand.pot, 25);
+  assert.equal(hand.seats[1].stack, 95);
+});
+
+test('preflop raise rejects malformed or overflowing pots before changing the hand', () => {
+  for (const pot of [-1, Number.NaN, Number.MAX_SAFE_INTEGER]) {
+    const hand = startedThreePlayerHand();
+    hand.pot = pot;
+
+    assert.throws(() => applyPreflopRaise(hand, 1, 20), /safe pot|safe integers/);
+    assert.equal(hand.currentActorSeat, 1);
+    assert.equal(hand.currentBet, 10);
+    assert.equal(hand.pot, pot);
+    assert.equal(hand.seats[0].stack, 100);
+    assert.equal(hand.seats[0].currentBet, 0);
+  }
 });
