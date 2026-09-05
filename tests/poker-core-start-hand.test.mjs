@@ -37,6 +37,37 @@ test('a three-player hand posts blinds and opens preflop action left of the big 
   ]);
 });
 
+test('a heads-up hand makes the dealer the small blind and opens preflop action on the dealer', () => {
+  const seats = [
+    { seatNumber: 4, playerId: 'ada', stack: 100 },
+    { seatNumber: 9, playerId: 'ben', stack: 100 },
+  ];
+
+  const hand = startHand({
+    seats,
+    dealerSeat: 4,
+    smallBlind: 5,
+    bigBlind: 10,
+  });
+
+  assert.deepEqual(hand, {
+    dealerSeat: 4,
+    smallBlindSeat: 4,
+    bigBlindSeat: 9,
+    currentActorSeat: 4,
+    currentBet: 10,
+    pot: 15,
+    seats: [
+      { seatNumber: 4, playerId: 'ada', stack: 95, currentBet: 5 },
+      { seatNumber: 9, playerId: 'ben', stack: 90, currentBet: 10 },
+    ],
+  });
+  assert.deepEqual(seats, [
+    { seatNumber: 4, playerId: 'ada', stack: 100 },
+    { seatNumber: 9, playerId: 'ben', stack: 100 },
+  ]);
+});
+
 test('startHand rejects malformed runtime values and unsafe chip arithmetic without mutating valid inputs', () => {
   assert.throws(() => startHand(null), /input must be an object/i);
   assert.throws(() => startHand({

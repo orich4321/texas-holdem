@@ -266,13 +266,13 @@ export interface StartedHand {
   seats: StartedHandSeat[];
 }
 
-/** Starts a three-player preflop round, posting blinds clockwise from the dealer. */
+/** Starts a heads-up or three-player preflop round, posting blinds clockwise from the dealer. */
 export function startHand(input: StartHandInput): StartedHand {
   if (!input || typeof input !== 'object' || !Array.isArray(input.seats)) {
     throw new Error('Start hand input must be an object with seats');
   }
-  if (input.seats.length !== 3) {
-    throw new Error('A three-player hand must contain exactly three seats');
+  if (input.seats.length !== 2 && input.seats.length !== 3) {
+    throw new Error('A hand must contain exactly two or three seats');
   }
   if (!Number.isSafeInteger(input.smallBlind) || !Number.isSafeInteger(input.bigBlind) || input.smallBlind <= 0 || input.bigBlind < input.smallBlind || !Number.isSafeInteger(input.smallBlind + input.bigBlind)) {
     throw new Error('Blinds and their total pot must be safe integers with big blind at least the small blind');
@@ -295,7 +295,7 @@ export function startHand(input: StartHandInput): StartedHand {
     throw new Error('Dealer seat must be seated');
   }
 
-  const smallBlindIndex = (dealerIndex + 1) % input.seats.length;
+  const smallBlindIndex = input.seats.length === 2 ? dealerIndex : (dealerIndex + 1) % input.seats.length;
   const bigBlindIndex = (smallBlindIndex + 1) % input.seats.length;
   const seats = input.seats.map((seat, index) => {
     const blind = index === smallBlindIndex ? input.smallBlind : index === bigBlindIndex ? input.bigBlind : 0;
