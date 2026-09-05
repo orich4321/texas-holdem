@@ -3,6 +3,7 @@ import { test } from 'node:test';
 
 import {
   compareFiveCardHands,
+  evaluateBestFiveCardHand,
   evaluateFiveCardHand,
 } from '../packages/poker-core/src/index.ts';
 
@@ -395,4 +396,34 @@ test('a straight flush beats four-of-a-kind and compares by high card', () => {
   assert.equal(compareFiveCardHands(sixHighStraightFlush, quads), 1);
   assert.equal(compareFiveCardHands(sevenHighStraightFlush, sixHighStraightFlush), 1);
   assert.equal(compareFiveCardHands(sixHighStraightFlush, equivalentSixHigh), 0);
+});
+
+test('the seven-card evaluator selects the single best five-card hand from all 21 combinations', () => {
+  const cards = [
+    card('A', 'clubs'), card('K', 'clubs'), card('Q', 'clubs'), card('J', 'clubs'),
+    card('10', 'clubs'), card('A', 'diamonds'), card('A', 'hearts'),
+  ];
+
+  assert.deepEqual(evaluateBestFiveCardHand(cards), {
+    category: 'straight-flush', tieBreakRanks: ['A'],
+  });
+});
+
+test('the seven-card evaluator chooses the higher of multiple legal five-card hands', () => {
+  const cards = [
+    card('A', 'clubs'), card('A', 'diamonds'), card('K', 'hearts'), card('K', 'spades'),
+    card('K', 'clubs'), card('Q', 'diamonds'), card('2', 'hearts'),
+  ];
+
+  assert.deepEqual(evaluateBestFiveCardHand(cards), {
+    category: 'full-house', tieBreakRanks: ['K', 'A'],
+  });
+});
+
+test('the seven-card evaluator rejects anything other than seven distinct valid physical cards', () => {
+  assert.throws(() => evaluateBestFiveCardHand(highCard), /exactly seven cards/i);
+  assert.throws(
+    () => evaluateBestFiveCardHand([...highCard, card('A', 'clubs'), card('3', 'spades')]),
+    /duplicate physical card/i,
+  );
 });

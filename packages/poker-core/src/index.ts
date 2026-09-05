@@ -47,6 +47,18 @@ function compareTieBreakRanks(left: readonly Rank[], right: readonly Rank[]): nu
   return 0;
 }
 
+function categoryValue(category: FiveCardHandCategory): number {
+  return category === 'straight-flush' ? 8 : category === 'four-of-a-kind' ? 7 : category === 'full-house' ? 6 : category === 'flush' ? 5 : category === 'straight' ? 4 : category === 'three-of-a-kind' ? 3 : category === 'two-pair' ? 2 : category === 'one-pair' ? 1 : 0;
+}
+
+function compareEvaluations(left: FiveCardHandEvaluation, right: FiveCardHandEvaluation): -1 | 0 | 1 {
+  const categoryDifference = categoryValue(left.category) - categoryValue(right.category);
+  if (categoryDifference !== 0) {
+    return categoryDifference > 0 ? 1 : -1;
+  }
+  return compareTieBreakRanks(left.tieBreakRanks, right.tieBreakRanks) as -1 | 0 | 1;
+}
+
 /** Evaluates exactly five distinct cards in the deliberately narrow supported categories. */
 export function evaluateFiveCardHand(cards: readonly Card[]): FiveCardHandEvaluation {
   if (cards.length !== 5) {
@@ -137,15 +149,37 @@ export function evaluateFiveCardHand(cards: readonly Card[]): FiveCardHandEvalua
 export function compareFiveCardHands(left: readonly Card[], right: readonly Card[]): -1 | 0 | 1 {
   const leftEvaluation = evaluateFiveCardHand(left);
   const rightEvaluation = evaluateFiveCardHand(right);
-  const categoryDifference =
-    (leftEvaluation.category === 'straight-flush' ? 8 : leftEvaluation.category === 'four-of-a-kind' ? 7 : leftEvaluation.category === 'full-house' ? 6 : leftEvaluation.category === 'flush' ? 5 : leftEvaluation.category === 'straight' ? 4 : leftEvaluation.category === 'three-of-a-kind' ? 3 : leftEvaluation.category === 'two-pair' ? 2 : leftEvaluation.category === 'one-pair' ? 1 : 0)
-    - (rightEvaluation.category === 'straight-flush' ? 8 : rightEvaluation.category === 'four-of-a-kind' ? 7 : rightEvaluation.category === 'full-house' ? 6 : rightEvaluation.category === 'flush' ? 5 : rightEvaluation.category === 'straight' ? 4 : rightEvaluation.category === 'three-of-a-kind' ? 3 : rightEvaluation.category === 'two-pair' ? 2 : rightEvaluation.category === 'one-pair' ? 1 : 0);
+  return compareEvaluations(leftEvaluation, rightEvaluation);
+}
 
-  if (categoryDifference !== 0) {
-    return categoryDifference > 0 ? 1 : -1;
+/** Evaluates the strongest legal five-card hand among exactly seven distinct cards. */
+export function evaluateBestFiveCardHand(cards: readonly Card[]): FiveCardHandEvaluation {
+  if (cards.length !== 7) {
+    throw new Error('A seven-card hand must contain exactly seven cards');
   }
 
-  return compareTieBreakRanks(leftEvaluation.tieBreakRanks, rightEvaluation.tieBreakRanks) as -1 | 0 | 1;
+  const physicalCards = new Set(cards.map((card) => `${card?.rank}-${card?.suit}`));
+  if (physicalCards.size !== cards.length) {
+    throw new Error('A seven-card hand cannot contain a duplicate physical card');
+  }
+
+  let best: FiveCardHandEvaluation | undefined;
+  for (let first = 0; first < cards.length - 4; first += 1) {
+    for (let second = first + 1; second < cards.length - 3; second += 1) {
+      for (let third = second + 1; third < cards.length - 2; third += 1) {
+        for (let fourth = third + 1; fourth < cards.length - 1; fourth += 1) {
+          for (let fifth = fourth + 1; fifth < cards.length; fifth += 1) {
+            const evaluation = evaluateFiveCardHand([cards[first], cards[second], cards[third], cards[fourth], cards[fifth]]);
+            if (!best || compareEvaluations(evaluation, best) === 1) {
+              best = evaluation;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return best!;
 }
 
 export type RandomInt = (maxExclusive: number) => number;
