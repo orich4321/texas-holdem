@@ -354,21 +354,24 @@ export interface PreflopLegalActions {
   actorSeat: number;
   toCall: number;
   canCheck: boolean;
+  canCall: boolean;
+  callAmount: number;
 }
 
-/** Returns the current preflop actor's call amount and whether checking is legal. */
+/** Returns the current preflop actor's check/call options without changing the hand. */
 export function getPreflopLegalActions(hand: StartedHand): PreflopLegalActions {
   if (!hand || typeof hand !== 'object' || !Array.isArray(hand.seats) || !Number.isSafeInteger(hand.currentActorSeat) || !Number.isSafeInteger(hand.currentBet) || hand.currentBet < 0) {
     throw new Error('Started hand must contain safe preflop betting state');
   }
 
   const actor = hand.seats.find((seat) => seat?.seatNumber === hand.currentActorSeat);
-  if (!actor || !Number.isSafeInteger(actor.currentBet) || actor.currentBet < 0 || actor.currentBet > hand.currentBet) {
+  if (!actor || !Number.isSafeInteger(actor.currentBet) || actor.currentBet < 0 || actor.currentBet > hand.currentBet || !Number.isSafeInteger(actor.stack) || actor.stack < 0) {
     throw new Error('Current actor must have a valid current bet');
   }
 
   const toCall = hand.currentBet - actor.currentBet;
-  return Object.freeze({ actorSeat: actor.seatNumber, toCall, canCheck: toCall === 0 });
+  const callAmount = Math.min(toCall, actor.stack);
+  return Object.freeze({ actorSeat: actor.seatNumber, toCall, canCheck: toCall === 0, canCall: toCall > 0 && callAmount > 0, callAmount });
 }
 
 export interface Player {

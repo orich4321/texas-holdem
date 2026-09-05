@@ -26,6 +26,8 @@ test('preflop legal actions calculate the actor toCall and withhold check while 
     actorSeat: 1,
     toCall: 10,
     canCheck: false,
+    canCall: true,
+    callAmount: 10,
   });
   assert.equal(hand.seats[0].currentBet, 0);
 });
@@ -38,5 +40,42 @@ test('preflop legal actions expose check exactly when the current actor has matc
     actorSeat: 3,
     toCall: 0,
     canCheck: true,
+    canCall: false,
+    callAmount: 0,
   });
+});
+
+test('preflop legal actions expose a call for the full amount owed when the actor can cover it', () => {
+  const hand = startedThreePlayerHand();
+
+  assert.deepEqual(getPreflopLegalActions(hand), {
+    actorSeat: 1,
+    toCall: 10,
+    canCheck: false,
+    canCall: true,
+    callAmount: 10,
+  });
+});
+
+test('preflop legal actions cap a legal call at the actor stack for a short all-in call', () => {
+  const hand = startHand({
+    seats: [
+      { seatNumber: 1, playerId: 'ada', stack: 7 },
+      { seatNumber: 2, playerId: 'ben', stack: 100 },
+      { seatNumber: 3, playerId: 'cy', stack: 100 },
+    ],
+    dealerSeat: 1,
+    smallBlind: 5,
+    bigBlind: 10,
+    randomInt: unshuffledRandomInt,
+  });
+
+  assert.deepEqual(getPreflopLegalActions(hand), {
+    actorSeat: 1,
+    toCall: 10,
+    canCheck: false,
+    canCall: true,
+    callAmount: 7,
+  });
+  assert.equal(hand.seats[0].stack, 7);
 });
