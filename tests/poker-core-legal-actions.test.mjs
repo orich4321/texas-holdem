@@ -29,6 +29,9 @@ test('preflop legal actions calculate the actor toCall and withhold check while 
     canCall: true,
     canFold: true,
     callAmount: 10,
+    canRaise: true,
+    minRaiseTo: 20,
+    maxRaiseTo: 100,
   });
   assert.equal(hand.seats[0].currentBet, 0);
 });
@@ -44,6 +47,9 @@ test('preflop legal actions expose check exactly when the current actor has matc
     canCall: false,
     canFold: true,
     callAmount: 0,
+    canRaise: true,
+    minRaiseTo: 20,
+    maxRaiseTo: 100,
   });
 });
 
@@ -57,6 +63,9 @@ test('preflop legal actions expose a call for the full amount owed when the acto
     canCall: true,
     canFold: true,
     callAmount: 10,
+    canRaise: true,
+    minRaiseTo: 20,
+    maxRaiseTo: 100,
   });
 });
 
@@ -80,6 +89,9 @@ test('preflop legal actions cap a legal call at the actor stack for a short all-
     canCall: true,
     canFold: true,
     callAmount: 7,
+    canRaise: false,
+    minRaiseTo: null,
+    maxRaiseTo: null,
   });
   assert.equal(hand.seats[0].stack, 7);
 });
@@ -92,4 +104,16 @@ test('preflop legal actions always expose fold to the current actor, including w
 
   assert.equal(legalActions.canFold, true);
   assert.equal(hand.seats[2].currentBet, 10);
+});
+
+test('preflop legal actions expose the first full raise range as total bet targets', () => {
+  const hand = startedThreePlayerHand();
+
+  const legalActions = getPreflopLegalActions(hand);
+
+  assert.equal(legalActions.canRaise, true);
+  assert.equal(legalActions.minRaiseTo, 20);
+  assert.equal(legalActions.maxRaiseTo, 100);
+  assert.equal(hand.seats[0].stack, 100);
+  assert.equal(hand.seats[0].currentBet, 0);
 });

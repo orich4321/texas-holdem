@@ -357,9 +357,12 @@ export interface PreflopLegalActions {
   canCall: boolean;
   canFold: boolean;
   callAmount: number;
+  canRaise: boolean;
+  minRaiseTo: number | null;
+  maxRaiseTo: number | null;
 }
 
-/** Returns the current preflop actor's check/call options without changing the hand. */
+/** Returns the current preflop actor's legal action ranges without changing the hand. */
 export function getPreflopLegalActions(hand: StartedHand): PreflopLegalActions {
   if (!hand || typeof hand !== 'object' || !Array.isArray(hand.seats) || !Number.isSafeInteger(hand.currentActorSeat) || !Number.isSafeInteger(hand.currentBet) || hand.currentBet < 0) {
     throw new Error('Started hand must contain safe preflop betting state');
@@ -372,7 +375,23 @@ export function getPreflopLegalActions(hand: StartedHand): PreflopLegalActions {
 
   const toCall = hand.currentBet - actor.currentBet;
   const callAmount = Math.min(toCall, actor.stack);
-  return Object.freeze({ actorSeat: actor.seatNumber, toCall, canCheck: toCall === 0, canCall: toCall > 0 && callAmount > 0, canFold: true, callAmount });
+  const minRaiseTo = hand.currentBet * 2;
+  const maxRaiseTo = actor.currentBet + actor.stack;
+  if (!Number.isSafeInteger(minRaiseTo) || !Number.isSafeInteger(maxRaiseTo)) {
+    throw new Error('Preflop raise targets must be safe integers');
+  }
+  const canRaise = maxRaiseTo >= minRaiseTo;
+  return Object.freeze({
+    actorSeat: actor.seatNumber,
+    toCall,
+    canCheck: toCall === 0,
+    canCall: toCall > 0 && callAmount > 0,
+    canFold: true,
+    callAmount,
+    canRaise,
+    minRaiseTo: canRaise ? minRaiseTo : null,
+    maxRaiseTo: canRaise ? maxRaiseTo : null,
+  });
 }
 
 export interface Player {
