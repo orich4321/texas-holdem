@@ -254,9 +254,8 @@ test('the first three-of-a-kind kicker decides before the second kicker', () => 
   assert.equal(compareFiveCardHands(higherFirstKicker, lowerFirstKicker), 1);
 });
 
-test('full houses and four-of-a-kind remain unsupported', () => {
+test('four-of-a-kind remains unsupported before its category is added', () => {
   const unsupportedHands = [
-    [card('K', 'clubs'), card('K', 'diamonds'), card('K', 'hearts'), card('2', 'spades'), card('2', 'clubs')],
     [card('9', 'clubs'), card('9', 'diamonds'), card('9', 'hearts'), card('9', 'spades'), card('A', 'clubs')],
   ];
 
@@ -306,14 +305,58 @@ test('a flush beats a straight and compares every descending rank', () => {
   assert.equal(compareFiveCardHands(higherFinalRank, equivalentFlush), 0);
 });
 
-test('full houses, four-of-a-kind, and straight flushes remain unsupported while flushes are added', () => {
+test('four-of-a-kind and straight flushes remain unsupported while flushes are added', () => {
   const unsupportedHands = [
-    [card('K', 'clubs'), card('K', 'diamonds'), card('K', 'hearts'), card('2', 'spades'), card('2', 'clubs')],
     [card('9', 'clubs'), card('9', 'diamonds'), card('9', 'hearts'), card('9', 'spades'), card('A', 'clubs')],
     [card('6', 'clubs'), card('5', 'clubs'), card('4', 'clubs'), card('3', 'clubs'), card('2', 'clubs')],
   ];
 
   for (const hand of unsupportedHands) {
+    assert.throws(() => evaluateFiveCardHand(hand), /unsupported hand category/i);
+  }
+});
+
+test('full-house evaluation returns trip rank then pair rank without mutating input', () => {
+  const hand = [
+    card('K', 'clubs'), card('2', 'diamonds'), card('K', 'hearts'), card('2', 'spades'), card('K', 'spades'),
+  ];
+  const before = hand.map((value) => ({ ...value }));
+
+  const result = evaluateFiveCardHand(hand);
+
+  assert.deepEqual(result, { category: 'full-house', tieBreakRanks: ['K', '2'] });
+  assert.equal(Object.isFrozen(result), true);
+  assert.equal(Object.isFrozen(result.tieBreakRanks), true);
+  assert.deepEqual(hand, before);
+});
+
+test('a full house beats a flush and compares trip rank before pair rank', () => {
+  const lowerTrips = [
+    card('Q', 'clubs'), card('Q', 'diamonds'), card('Q', 'hearts'), card('A', 'spades'), card('A', 'clubs'),
+  ];
+  const higherTrips = [
+    card('K', 'clubs'), card('K', 'diamonds'), card('K', 'hearts'), card('2', 'spades'), card('2', 'clubs'),
+  ];
+  const lowerPair = [
+    card('K', 'spades'), card('K', 'hearts'), card('K', 'diamonds'), card('2', 'hearts'), card('2', 'diamonds'),
+  ];
+  const higherPair = [
+    card('K', 'clubs'), card('K', 'diamonds'), card('K', 'hearts'), card('A', 'spades'), card('A', 'clubs'),
+  ];
+  const flush = [
+    card('A', 'clubs'), card('J', 'clubs'), card('8', 'clubs'), card('5', 'clubs'), card('2', 'clubs'),
+  ];
+
+  assert.equal(compareFiveCardHands(higherTrips, lowerTrips), 1);
+  assert.equal(compareFiveCardHands(higherPair, lowerPair), 1);
+  assert.equal(compareFiveCardHands(higherPair, flush), 1);
+});
+
+test('four-of-a-kind and straight flushes remain unsupported while full houses are added', () => {
+  for (const hand of [
+    [card('9', 'clubs'), card('9', 'diamonds'), card('9', 'hearts'), card('9', 'spades'), card('A', 'clubs')],
+    [card('6', 'clubs'), card('5', 'clubs'), card('4', 'clubs'), card('3', 'clubs'), card('2', 'clubs')],
+  ]) {
     assert.throws(() => evaluateFiveCardHand(hand), /unsupported hand category/i);
   }
 });

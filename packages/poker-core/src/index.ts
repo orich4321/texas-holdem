@@ -8,7 +8,7 @@ export interface Card {
   suit: Suit;
 }
 
-export type FiveCardHandCategory = 'high-card' | 'one-pair' | 'two-pair' | 'three-of-a-kind' | 'straight' | 'flush';
+export type FiveCardHandCategory = 'high-card' | 'one-pair' | 'two-pair' | 'three-of-a-kind' | 'straight' | 'flush' | 'full-house';
 
 export interface FiveCardHandEvaluation {
   category: FiveCardHandCategory;
@@ -79,6 +79,12 @@ export function evaluateFiveCardHand(cards: readonly Card[]): FiveCardHandEvalua
   const frequencies = [...ranksByFrequency.values()].sort((left, right) => right - left);
   const isFlush = cards.every((card) => card.suit === cards[0].suit);
 
+  if (frequencies.join(',') === '3,2') {
+    const tripRank = ranksDescending.find((rank) => ranksByFrequency.get(rank) === 3)!;
+    const pairRank = ranksDescending.find((rank) => ranksByFrequency.get(rank) === 2)!;
+    return Object.freeze({ category: 'full-house', tieBreakRanks: Object.freeze([tripRank, pairRank]) });
+  }
+
   if (frequencies.join(',') === '2,2,1') {
     const pairRanks = ranksDescending.filter((rank) => ranksByFrequency.get(rank) === 2);
     const kicker = ranksDescending.find((rank) => ranksByFrequency.get(rank) === 1)!;
@@ -111,7 +117,7 @@ export function evaluateFiveCardHand(cards: readonly Card[]): FiveCardHandEvalua
     return Object.freeze({ category: 'high-card', tieBreakRanks: Object.freeze([...ranksDescending]) });
   }
 
-  throw new Error('Unsupported hand category: only high-card, one-pair, two-pair, three-of-a-kind, straight, and flush are supported');
+  throw new Error('Unsupported hand category: only high-card, one-pair, two-pair, three-of-a-kind, straight, flush, and full-house are supported');
 }
 
 /** Compares two supported five-card hands: 1 when left wins, -1 when right wins, 0 when tied. */
@@ -119,8 +125,8 @@ export function compareFiveCardHands(left: readonly Card[], right: readonly Card
   const leftEvaluation = evaluateFiveCardHand(left);
   const rightEvaluation = evaluateFiveCardHand(right);
   const categoryDifference =
-    (leftEvaluation.category === 'flush' ? 5 : leftEvaluation.category === 'straight' ? 4 : leftEvaluation.category === 'three-of-a-kind' ? 3 : leftEvaluation.category === 'two-pair' ? 2 : leftEvaluation.category === 'one-pair' ? 1 : 0)
-    - (rightEvaluation.category === 'flush' ? 5 : rightEvaluation.category === 'straight' ? 4 : rightEvaluation.category === 'three-of-a-kind' ? 3 : rightEvaluation.category === 'two-pair' ? 2 : rightEvaluation.category === 'one-pair' ? 1 : 0);
+    (leftEvaluation.category === 'full-house' ? 6 : leftEvaluation.category === 'flush' ? 5 : leftEvaluation.category === 'straight' ? 4 : leftEvaluation.category === 'three-of-a-kind' ? 3 : leftEvaluation.category === 'two-pair' ? 2 : leftEvaluation.category === 'one-pair' ? 1 : 0)
+    - (rightEvaluation.category === 'full-house' ? 6 : rightEvaluation.category === 'flush' ? 5 : rightEvaluation.category === 'straight' ? 4 : rightEvaluation.category === 'three-of-a-kind' ? 3 : rightEvaluation.category === 'two-pair' ? 2 : rightEvaluation.category === 'one-pair' ? 1 : 0);
 
   if (categoryDifference !== 0) {
     return categoryDifference > 0 ? 1 : -1;
