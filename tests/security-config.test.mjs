@@ -76,3 +76,10 @@ test('dependency safety configuration aligns Express 4 types and pins vulnerable
   assert.equal(rootPackage.pnpm?.overrides?.postcss, '8.5.23');
   assert.equal(rootPackage.pnpm?.overrides?.qs, '6.16.0');
 });
+
+test('Socket.IO enables credentialed CORS while retaining the origin allowlist', async () => {
+  const serverEntry = await readFile(resolve(root, 'apps/server/src/index.ts'), 'utf8');
+
+  assert.match(serverEntry, /cors:\s*\{\s*origin:\s*\(origin, callback\) => callback\(null, isOriginAllowed\(origin\)\),\s*credentials:\s*true,?\s*\}/s);
+  assert.match(serverEntry, /allowRequest:\s*\(request, callback\) => callback\(null, isOriginAllowed\(request\.headers\.origin\)\)/);
+});
