@@ -273,7 +273,11 @@ export interface StartedHand {
   street: Street;
   communityCards: readonly Card[];
   remainingDeck: readonly Card[];
+  /** Server-private burn pile; retained to preserve the complete 52-card invariant. */
+  burnedCards: readonly Card[];
   bigBlindAmount: number;
+  /** Pot at the start of this street; prevents forged cross-street pot changes. */
+  streetPot: number;
   pendingActorSeats: readonly number[];
 }
 
@@ -285,32 +289,36 @@ function frozenCards(cards: readonly Card[]): readonly Card[] {
   return Object.freeze(cards.map((card) => Object.freeze(cloneCard(card))));
 }
 
-function attachPrivateHandState<T extends Omit<StartedHand, 'street' | 'communityCards' | 'remainingDeck' | 'bigBlindAmount' | 'pendingActorSeats'>>(
+function attachPrivateHandState<T extends Omit<StartedHand, 'street' | 'communityCards' | 'remainingDeck' | 'burnedCards' | 'bigBlindAmount' | 'streetPot' | 'pendingActorSeats'>>(
   hand: T,
-  state: Pick<StartedHand, 'street' | 'communityCards' | 'remainingDeck' | 'bigBlindAmount' | 'pendingActorSeats'>,
+  state: Pick<StartedHand, 'street' | 'communityCards' | 'remainingDeck' | 'burnedCards' | 'bigBlindAmount' | 'streetPot' | 'pendingActorSeats'>,
 ): StartedHand {
   return Object.defineProperties(hand, {
     street: { value: state.street, enumerable: false },
     communityCards: { value: frozenCards(state.communityCards), enumerable: false },
     remainingDeck: { value: frozenCards(state.remainingDeck), enumerable: false },
+    burnedCards: { value: frozenCards(state.burnedCards), enumerable: false },
     bigBlindAmount: { value: state.bigBlindAmount, enumerable: false },
+    streetPot: { value: state.streetPot, enumerable: false },
     pendingActorSeats: { value: Object.freeze([...state.pendingActorSeats]), enumerable: false },
   }) as unknown as StartedHand;
 }
 
 function preservePrivateHandState(
   source: StartedHand,
-  next: Omit<StartedHand, 'street' | 'communityCards' | 'remainingDeck' | 'bigBlindAmount' | 'pendingActorSeats'>,
+  next: Omit<StartedHand, 'street' | 'communityCards' | 'remainingDeck' | 'burnedCards' | 'bigBlindAmount' | 'streetPot' | 'pendingActorSeats'>,
   pendingActorSeats: readonly number[] = source.pendingActorSeats,
 ): StartedHand {
-  if (!Array.isArray(source.communityCards) || !Array.isArray(source.remainingDeck) || !Array.isArray(pendingActorSeats)) {
+  if (!Array.isArray(source.communityCards) || !Array.isArray(source.remainingDeck) || !Array.isArray(source.burnedCards) || !Array.isArray(pendingActorSeats)) {
     throw new Error('Started hand must retain valid private state');
   }
   return attachPrivateHandState(next, {
     street: source.street,
     communityCards: source.communityCards,
     remainingDeck: source.remainingDeck,
+    burnedCards: source.burnedCards,
     bigBlindAmount: source.bigBlindAmount,
+    streetPot: source.streetPot,
     pendingActorSeats,
   });
 }
@@ -408,7 +416,9 @@ export function startHand(input: StartHandInput): StartedHand {
     street: 'preflop',
     communityCards: [],
     remainingDeck: deck.deal(deck.remaining) as Card[],
+    burnedCards: [],
     bigBlindAmount: input.bigBlind,
+    streetPot: input.smallBlind + input.bigBlind,
     pendingActorSeats: seats.filter((seat) => seat.holeCards && seat.stack > 0).map((seat) => seat.seatNumber),
   });
 }
@@ -751,7 +761,7 @@ export function advancePreflopToFlop(hand: StartedHand): StartedHand {
   if (currentActorSeat === undefined) {
     currentActorSeat = hand.dealerSeat;
   }
-  const [, ...afterBurn] = hand.remainingDeck;
+  const [flopBurn, ...afterBurn] = hand.remainingDeck;
   return attachPrivateHandState({
     ...hand,
     currentActorSeat,
@@ -766,9 +776,81 @@ export function advancePreflopToFlop(hand: StartedHand): StartedHand {
     street: 'flop',
     communityCards: afterBurn.slice(0, 3),
     remainingDeck: afterBurn.slice(3),
+    burnedCards: [flopBurn],
     bigBlindAmount: hand.bigBlindAmount,
+    streetPot: hand.pot,
     pendingActorSeats: hand.seats.filter((seat) => seat.holeCards && !seat.isFolded && seat.stack > 0).map((seat) => seat.seatNumber),
   });
+}
+
+/** Legal flop actions use the same total-bet targets as preflop after round bets reset. */
+export type FlopLegalActions = PreflopLegalActions;
+
+export function getFlopLegalActions(hand: StartedHand): FlopLegalActions {
+  if (!hand || typeof hand !== 'object' || hand.street !== 'flop' || !Array.isArray(hand.seats) || !Array.isArray(hand.pendingActorSeats) || !Number.isSafeInteger(hand.currentActorSeat) || !Number.isSafeInteger(hand.currentBet) || hand.currentBet < 0 || !Number.isSafeInteger(hand.minimumRaiseIncrement) || hand.minimumRaiseIncrement <= 0) {
+    throw new Error('Started hand must contain safe flop betting state');
+  }
+  if (!hand.pendingActorSeats.includes(hand.currentActorSeat)) throw new Error('Flop betting is settled or the current actor has already acted');
+  const actor = hand.seats.find((seat) => seat?.seatNumber === hand.currentActorSeat);
+  if (!actor || actor.isFolded === true || !Number.isSafeInteger(actor.currentBet) || actor.currentBet < 0 || actor.currentBet > hand.currentBet || !Number.isSafeInteger(actor.stack) || actor.stack < 0) throw new Error('Current flop actor must have a valid current bet');
+  const toCall = hand.currentBet - actor.currentBet;
+  const callAmount = Math.min(toCall, actor.stack);
+  const minRaiseTo = hand.currentBet + hand.minimumRaiseIncrement;
+  const maxRaiseTo = actor.currentBet + actor.stack;
+  if (!Number.isSafeInteger(minRaiseTo) || !Number.isSafeInteger(maxRaiseTo)) throw new Error('Flop raise targets must be safe integers');
+  const canRaise = maxRaiseTo >= minRaiseTo;
+  const otherEligiblePlayers = hand.seats.filter((seat) => seat.seatNumber !== actor.seatNumber && seat.holeCards && !seat.isFolded).length;
+  return Object.freeze({ actorSeat: actor.seatNumber, toCall, canCheck: toCall === 0, canCall: toCall > 0 && callAmount > 0, canFold: otherEligiblePlayers > 0, callAmount, canRaise, minRaiseTo: canRaise ? minRaiseTo : null, maxRaiseTo: canRaise ? maxRaiseTo : null });
+}
+
+/** Applies a legal flop check and advances only the still-pending postflop actor. */
+export function applyFlopCheck(hand: StartedHand, actorSeat: number): StartedHand {
+  if (!Number.isSafeInteger(actorSeat)) throw new Error('Checking actor seat must be a safe integer');
+  if (hand.currentActorSeat !== actorSeat) throw new Error('Only the active actor may check');
+  const legalActions = getFlopLegalActions(hand);
+  const actorIndex = hand.seats.findIndex((seat) => seat.seatNumber === actorSeat);
+  const actor = hand.seats[actorIndex];
+  if (!actor?.holeCards || actor.stack <= 0 || actor.isFolded || !legalActions.canCheck) throw new Error('A flop check requires an eligible actor with nothing owed');
+  const pending = pendingAfterAction(hand, actorSeat);
+  let nextActorIndex = -1;
+  if (pending.length > 0) {
+    for (let offset = 1; offset <= hand.seats.length; offset += 1) {
+      const index = (actorIndex + offset) % hand.seats.length;
+      if (pending.includes(hand.seats[index].seatNumber)) { nextActorIndex = index; break; }
+    }
+    if (nextActorIndex === -1) throw new Error('A flop check requires another pending actor');
+  }
+  return preservePrivateHandState(hand, {
+    ...hand,
+    currentActorSeat: nextActorIndex === -1 ? actorSeat : hand.seats[nextActorIndex].seatNumber,
+    seats: hand.seats.map((seat) => ({ ...seat, holeCards: seat.holeCards && [cloneCard(seat.holeCards[0]), cloneCard(seat.holeCards[1])] as [Card, Card] })),
+  }, pending);
+}
+
+/** Advances a settled flop to the turn, burning one server-private card then dealing one. */
+export function advanceFlopToTurn(hand: StartedHand): StartedHand {
+  if (!hand || typeof hand !== 'object' || hand.street !== 'flop' || !Array.isArray(hand.communityCards) || hand.communityCards.length !== 3 || !Array.isArray(hand.remainingDeck) || !Array.isArray(hand.burnedCards) || hand.burnedCards.length !== 1 || !Array.isArray(hand.pendingActorSeats) || !Number.isSafeInteger(hand.pot) || hand.pot < 0 || !Number.isSafeInteger(hand.streetPot) || hand.streetPot !== hand.pot || !Number.isSafeInteger(hand.bigBlindAmount) || hand.bigBlindAmount <= 0) throw new Error('A flop hand must contain valid private deck and betting state');
+  const contestingSeats = hand.seats.filter((seat) => seat?.holeCards && !seat.isFolded);
+  if (contestingSeats.length < 2 || hand.pendingActorSeats.length > 0 || !Number.isSafeInteger(hand.currentBet) || hand.currentBet < 0 || contestingSeats.some((seat) => !Number.isSafeInteger(seat.currentBet) || seat.currentBet < 0 || seat.currentBet !== hand.currentBet || !Number.isSafeInteger(seat.stack) || seat.stack < 0)) throw new Error('Flop betting must be settled before advancing to the turn');
+  if (hand.remainingDeck.length < 2) throw new Error('A flop requires private cards for a turn burn and deal');
+  const allDealtCards = hand.seats.filter((seat) => seat?.holeCards).flatMap((seat) => seat.holeCards!);
+  const allPrivateCards = [...allDealtCards, ...hand.communityCards, ...hand.remainingDeck, ...hand.burnedCards];
+  if (allPrivateCards.length !== 52 || new Set(allPrivateCards.map((card) => `${card?.rank}-${card?.suit}`)).size !== 52 || allPrivateCards.some((card) => !card || !rankValues.has(card.rank) || !suits.includes(card.suit))) {
+    throw new Error('Flop private state must contain 52 distinct valid cards');
+  }
+  const dealerIndex = hand.seats.findIndex((seat) => seat.seatNumber === hand.dealerSeat);
+  if (dealerIndex === -1) throw new Error('A turn requires a valid dealer');
+  let currentActorSeat = hand.dealerSeat;
+  for (let offset = 1; offset <= hand.seats.length; offset += 1) {
+    const seat = hand.seats[(dealerIndex + offset) % hand.seats.length];
+    if (seat.holeCards && !seat.isFolded && seat.stack > 0) { currentActorSeat = seat.seatNumber; break; }
+  }
+  const [turnBurn, turnCard, ...remainingDeck] = hand.remainingDeck;
+  const pendingActorSeats = hand.seats.filter((seat) => seat.holeCards && !seat.isFolded && seat.stack > 0).map((seat) => seat.seatNumber);
+  return attachPrivateHandState({
+    ...hand, currentActorSeat, currentBet: 0, minimumRaiseIncrement: hand.bigBlindAmount,
+    seats: hand.seats.map((seat) => ({ ...seat, currentBet: 0, holeCards: seat.holeCards && [cloneCard(seat.holeCards[0]), cloneCard(seat.holeCards[1])] as [Card, Card] })),
+  }, { street: 'turn', communityCards: [...hand.communityCards, turnCard], remainingDeck, burnedCards: [...hand.burnedCards, turnBurn], bigBlindAmount: hand.bigBlindAmount, streetPot: hand.pot, pendingActorSeats });
 }
 
 export interface Player {
