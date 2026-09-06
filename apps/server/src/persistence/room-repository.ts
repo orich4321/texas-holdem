@@ -52,6 +52,30 @@ const roomWithPlayers = {
 
 export type RoomJoinIdFactory = () => string;
 
+export type GameStartEvent = Readonly<{
+  dealerSeat: number;
+  smallBlind: number;
+  bigBlind: number;
+}>;
+
+export type StartGameAtomicallyInput = Readonly<{
+  joinId: string;
+  hostPlayerId: string;
+  /** Private, server-only recovery state. Never send this through a socket. */
+  snapshot: Prisma.InputJsonValue;
+  /** Deliberately small public audit metadata; cards and deck state do not belong here. */
+  event: unknown;
+}>;
+
+function publicGameStartEvent(event: unknown): GameStartEvent {
+  if (!event || typeof event !== 'object') throw new Error('Invalid game-start event');
+  const { dealerSeat, smallBlind, bigBlind } = event as Record<string, unknown>;
+  if (![dealerSeat, smallBlind, bigBlind].every((value) => Number.isSafeInteger(value) && (value as number) > 0)) {
+    throw new Error('Invalid game-start event');
+  }
+  return { dealerSeat: dealerSeat as number, smallBlind: smallBlind as number, bigBlind: bigBlind as number };
+}
+
 export class RoomRepository {
   constructor(
     private readonly db: PrismaClient,
@@ -156,5 +180,47 @@ export class RoomRepository {
       createdAt: player.createdAt,
       updatedAt: player.updatedAt,
     };
+  }
+
+  /**
+   * Makes room state durable before a hand can be exposed to a transport.
+   * The guarded status update is the concurrency gate: only the persisted host
+   * can turn one WAITING room into IN_PROGRESS, and event/snapshot writes share
+   * that transaction so a failed write rolls the status change back.
+   */
+  async startGameAtomically({ joinId, hostPlayerId, snapshot, event }: StartGameAtomicallyInput) {
+    const publicEvent = publicGameStartEvent(event);
+    return this.db.$transaction(async (tx) => {
+      const claimed = await tx.room.updateMany({
+        where: { joinId, hostPlayerId, status: 'WAITING' },
+        data: { status: 'IN_PROGRESS' },
+      });
+      if (claimed.count !== 1) throw new Error('Room is not startable by this host');
+
+      const room = await tx.room.findUnique({
+        where: { joinId },
+        select: { id: true },
+      });
+      if (!room) throw new Error('Started room disappeared during transaction');
+
+      const sequence = 0;
+      await tx.gameEvent.create({
+        data: { roomId: room.id, sequence, type: 'GAME_STARTED', payload: publicEvent },
+      });
+      await tx.gameSnapshot.create({
+        data: { roomId: room.id, sequence, state: snapshot },
+      });
+      return { roomId: room.id, sequence };
+    });
+  }
+
+  /** Server-only restart path, scoped to a participant proven by session auth. */
+  async findLatestGameSnapshotForPlayer(roomId: string, playerId: string) {
+    const snapshot = await this.db.gameSnapshot.findFirst({
+      where: { roomId, room: { players: { some: { id: playerId } } } },
+      orderBy: { sequence: 'desc' },
+      select: { sequence: true, state: true },
+    });
+    return snapshot ? { sequence: snapshot.sequence, state: snapshot.state } : null;
   }
 }
