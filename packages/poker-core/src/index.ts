@@ -997,6 +997,56 @@ export function advanceFlopToTurn(hand: StartedHand): StartedHand { return advan
 /** Advances a settled turn to the river, burning one server-private card then dealing one. */
 export function advanceTurnToRiver(hand: StartedHand): StartedHand { return advancePostflopToNext(hand, 'turn'); }
 
+/**
+ * Runs the remaining board only after postflop betting is settled and every
+ * non-folded player is all-in. The server-private shuffled deck stays inside
+ * the authoritative hand capability; payout resolution remains a separate
+ * showdown concern.
+ */
+export function runOutAllInToShowdown(hand: StartedHand): StartedHand {
+  if (!authoritativeHands.has(hand)) throw new Error('An all-in runout requires authoritative private state');
+  if (hand.street !== 'flop' && hand.street !== 'turn' && hand.street !== 'river') {
+    throw new Error('An all-in runout requires a postflop hand');
+  }
+  const expectedCommunityCards = hand.street === 'flop' ? 3 : hand.street === 'turn' ? 4 : 5;
+  const expectedBurnedCards = hand.street === 'flop' ? 1 : hand.street === 'turn' ? 2 : 3;
+  const contestingSeats = hand.seats.filter((seat) => seat?.holeCards && !seat.isFolded);
+  if (contestingSeats.length < 2 || hand.pendingActorSeats.length !== 0 || contestingSeats.some((seat) => !Number.isSafeInteger(seat.stack) || seat.stack !== 0 || !Number.isSafeInteger(seat.currentBet) || seat.currentBet < 0 || seat.currentBet > hand.currentBet)) {
+    throw new Error('An all-in runout requires a settled round with only all-in contestants');
+  }
+  if (!Array.isArray(hand.communityCards) || hand.communityCards.length !== expectedCommunityCards || !Array.isArray(hand.burnedCards) || hand.burnedCards.length !== expectedBurnedCards || !Array.isArray(hand.remainingDeck) || !Number.isSafeInteger(hand.pot) || hand.pot < 0 || !Number.isSafeInteger(hand.streetPot) || hand.streetPot < 0 || hand.pot !== hand.streetPot + hand.seats.reduce((total, seat) => total + seat.currentBet, 0)) {
+    throw new Error('An all-in runout requires consistent postflop betting state');
+  }
+  const dealtCards = hand.seats.filter((seat) => seat?.holeCards).flatMap((seat) => seat.holeCards!);
+  const allCards = [...dealtCards, ...hand.communityCards, ...hand.burnedCards, ...hand.remainingDeck];
+  if (allCards.length !== 52 || new Set(allCards.map((card) => `${card?.rank}-${card?.suit}`)).size !== 52 || allCards.some((card) => !card || !rankValues.has(card.rank) || !suits.includes(card.suit))) {
+    throw new Error('An all-in runout requires 52 distinct valid private cards');
+  }
+
+  const cardsNeeded = 5 - hand.communityCards.length;
+  const burnsNeeded = cardsNeeded;
+  if (hand.remainingDeck.length < cardsNeeded + burnsNeeded) throw new Error('An all-in runout requires enough private deck cards');
+  const communityCards = [...hand.communityCards];
+  const burnedCards = [...hand.burnedCards];
+  let remainingDeck = [...hand.remainingDeck];
+  for (let index = 0; index < cardsNeeded; index += 1) {
+    const [burn, communityCard, ...afterDeal] = remainingDeck;
+    burnedCards.push(burn);
+    communityCards.push(communityCard);
+    remainingDeck = afterDeal;
+  }
+  return attachPrivateHandState({
+    ...hand,
+    currentActorSeat: hand.dealerSeat,
+    currentBet: 0,
+    minimumRaiseIncrement: hand.bigBlindAmount,
+    seats: hand.seats.map((seat) => ({ ...seat, currentBet: 0, holeCards: seat.holeCards && [cloneCard(seat.holeCards[0]), cloneCard(seat.holeCards[1])] as [Card, Card] })),
+  }, {
+    street: 'showdown', communityCards, remainingDeck, burnedCards,
+    bigBlindAmount: hand.bigBlindAmount, streetPot: hand.pot, pendingActorSeats: [], raiseLockedSeats: [],
+  });
+}
+
 export interface Player {
   id: string;
   name: string;
