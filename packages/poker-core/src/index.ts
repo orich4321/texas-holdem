@@ -255,6 +255,8 @@ export interface StartHandInput {
 
 export interface StartedHandSeat extends StartHandSeat {
   currentBet: number;
+  /** Chips committed across every street; retained for authoritative payout construction. */
+  totalCommitted: number;
   holeCards?: readonly [Card, Card];
   isFolded?: boolean;
 }
@@ -422,7 +424,7 @@ export function startHand(input: StartHandInput): StartedHand {
   }
   const seats = input.seats.map((seat, index) => {
     const blind = index === smallBlindIndex ? input.smallBlind : index === bigBlindIndex ? input.bigBlind : 0;
-    const startedSeat: StartedHandSeat = { ...seat, stack: seat.stack - blind, currentBet: blind };
+    const startedSeat: StartedHandSeat = { ...seat, stack: seat.stack - blind, currentBet: blind, totalCommitted: blind };
     const dealtCards = holeCards.get(index);
     if (dealtCards) {
       startedSeat.holeCards = dealtCards;
@@ -569,6 +571,7 @@ export function applyPreflopCall(hand: StartedHand, actorSeat: number): StartedH
     if (index === actorIndex) {
       clone.stack = nextStack;
       clone.currentBet = nextCurrentBet;
+      clone.totalCommitted += legalActions.callAmount;
     }
     return clone;
   });
@@ -670,6 +673,7 @@ export function applyPreflopRaise(hand: StartedHand, actorSeat: number, raiseTo:
     if (index === actorIndex) {
       clone.stack = nextStack;
       clone.currentBet = raiseTo;
+      clone.totalCommitted += raiseAmount;
     }
     return clone;
   });
@@ -726,6 +730,7 @@ export function applyPreflopAllIn(hand: StartedHand, actorSeat: number): Started
     if (index === actorIndex) {
       clone.stack = 0;
       clone.currentBet = allInTo;
+      clone.totalCommitted += actor.stack;
     }
     return clone;
   });
@@ -884,7 +889,7 @@ function applyPostflopCall(hand: StartedHand, actorSeat: number, street: 'flop' 
   const nextPot = hand.pot + legal.callAmount;
   if (!Number.isSafeInteger(nextStack) || !Number.isSafeInteger(nextBet) || !Number.isSafeInteger(nextPot)) throw new Error('Flop call results must be safe integers');
   const pending = pendingAfterAction(hand, actorSeat);
-  return preservePrivateHandState(hand, { ...hand, pot: nextPot, currentActorSeat: nextFlopActorSeat(hand, actorIndex, pending), seats: clonedFlopSeats(hand, actorIndex, (seat) => { seat.stack = nextStack; seat.currentBet = nextBet; }) }, pending);
+  return preservePrivateHandState(hand, { ...hand, pot: nextPot, currentActorSeat: nextFlopActorSeat(hand, actorIndex, pending), seats: clonedFlopSeats(hand, actorIndex, (seat) => { seat.stack = nextStack; seat.currentBet = nextBet; seat.totalCommitted += legal.callAmount; }) }, pending);
 }
 
 /** Applies a legal flop fold, retaining committed chips while removing the actor from action. */
@@ -915,7 +920,7 @@ function applyPostflopRaise(hand: StartedHand, actorSeat: number, raiseTo: numbe
   const nextPot = hand.pot + amount;
   if (!Number.isSafeInteger(nextStack) || !Number.isSafeInteger(nextPot)) throw new Error('Flop raise results must be safe integers');
   const pending = pendingAfterAction(hand, actorSeat, true);
-  return preservePrivateHandState(hand, { ...hand, currentBet: raiseTo, minimumRaiseIncrement: raiseTo - hand.currentBet, pot: nextPot, currentActorSeat: nextFlopActorSeat(hand, actorIndex, pending), seats: clonedFlopSeats(hand, actorIndex, (seat) => { seat.stack = nextStack; seat.currentBet = raiseTo; }) }, pending, []);
+  return preservePrivateHandState(hand, { ...hand, currentBet: raiseTo, minimumRaiseIncrement: raiseTo - hand.currentBet, pot: nextPot, currentActorSeat: nextFlopActorSeat(hand, actorIndex, pending), seats: clonedFlopSeats(hand, actorIndex, (seat) => { seat.stack = nextStack; seat.currentBet = raiseTo; seat.totalCommitted += amount; }) }, pending, []);
 }
 
 /** Applies a raising flop all-in; a short raise does not alter the full-raise increment. */
@@ -933,7 +938,7 @@ function applyPostflopAllIn(hand: StartedHand, actorSeat: number, street: 'flop'
   const isFullRaise = allInTo >= (legal.minRaiseTo ?? Number.MAX_SAFE_INTEGER);
   const pending = isFullRaise ? pendingAfterAction(hand, actorSeat, true) : hand.seats.filter((seat) => seat.seatNumber !== actorSeat && seat.holeCards && !seat.isFolded && seat.stack > 0 && seat.currentBet < allInTo).map((seat) => seat.seatNumber);
   const locked = isFullRaise ? [] : [...new Set([...(hand.raiseLockedSeats ?? []), ...hand.seats.filter((seat) => seat.seatNumber !== actorSeat && seat.holeCards && !seat.isFolded && seat.stack > 0 && seat.currentBet < allInTo && !hand.pendingActorSeats.includes(seat.seatNumber)).map((seat) => seat.seatNumber)])];
-  return preservePrivateHandState(hand, { ...hand, currentBet: allInTo, minimumRaiseIncrement: isFullRaise ? allInTo - hand.currentBet : hand.minimumRaiseIncrement, pot: nextPot, currentActorSeat: nextFlopActorSeat(hand, actorIndex, pending), seats: clonedFlopSeats(hand, actorIndex, (seat) => { seat.stack = 0; seat.currentBet = allInTo; }) }, pending, locked);
+  return preservePrivateHandState(hand, { ...hand, currentBet: allInTo, minimumRaiseIncrement: isFullRaise ? allInTo - hand.currentBet : hand.minimumRaiseIncrement, pot: nextPot, currentActorSeat: nextFlopActorSeat(hand, actorIndex, pending), seats: clonedFlopSeats(hand, actorIndex, (seat) => { seat.stack = 0; seat.currentBet = allInTo; seat.totalCommitted += actor.stack; }) }, pending, locked);
 }
 
 /** Advances a settled flop to the turn, burning one server-private card then dealing one. */
@@ -1044,6 +1049,72 @@ export function runOutAllInToShowdown(hand: StartedHand): StartedHand {
   }, {
     street: 'showdown', communityCards, remainingDeck, burnedCards,
     bigBlindAmount: hand.bigBlindAmount, streetPot: hand.pot, pendingActorSeats: [], raiseLockedSeats: [],
+  });
+}
+
+export interface ShowdownPot {
+  amount: number;
+  eligibleSeatNumbers: readonly number[];
+  winnerSeatNumbers: readonly number[];
+}
+
+export interface SettledShowdown {
+  pot: 0;
+  seats: readonly StartedHandSeat[];
+  pots: readonly ShowdownPot[];
+  uncalledReturns: readonly { seatNumber: number; amount: number }[];
+}
+
+/** Constructs main/side pots from total commitments and awards each eligible showdown winner. */
+export function settleShowdown(hand: StartedHand): SettledShowdown {
+  if (!authoritativeHands.has(hand) || hand.street !== 'showdown' || hand.communityCards.length !== 5 || hand.pendingActorSeats.length !== 0) {
+    throw new Error('Showdown settlement requires authoritative settled showdown state');
+  }
+  if (!Number.isSafeInteger(hand.pot) || hand.pot < 0 || hand.seats.some((seat) => (!seat.holeCards && seat.totalCommitted > 0) || !Number.isSafeInteger(seat.totalCommitted) || seat.totalCommitted < 0 || !Number.isSafeInteger(seat.stack) || seat.stack < 0)) {
+    throw new Error('Showdown settlement requires valid committed chips and hole cards');
+  }
+  const committed = hand.seats.reduce((total, seat) => total + seat.totalCommitted, 0);
+  if (!Number.isSafeInteger(committed) || committed !== hand.pot) throw new Error('Showdown pot must equal total committed chips');
+  const levels = [...new Set(hand.seats.map((seat) => seat.totalCommitted).filter((amount) => amount > 0))].sort((left, right) => left - right);
+  let priorLevel = 0;
+  const uncalledReturns: { seatNumber: number; amount: number }[] = [];
+  const pots = levels.flatMap((level) => {
+    const contributors = hand.seats.filter((seat) => seat.totalCommitted >= level);
+    const amount = (level - priorLevel) * contributors.length;
+    priorLevel = level;
+    if (contributors.length === 1) {
+      uncalledReturns.push({ seatNumber: contributors[0].seatNumber, amount });
+      return [];
+    }
+    const eligible = contributors.filter((seat) => !seat.isFolded);
+    if (!Number.isSafeInteger(amount) || amount <= 0 || eligible.length === 0) throw new Error('Showdown pots require eligible players and safe amounts');
+    let winners = [eligible[0]];
+    for (const contender of eligible.slice(1)) {
+      const comparison = compareBestFiveCardHands([...contender.holeCards!, ...hand.communityCards], [...winners[0].holeCards!, ...hand.communityCards]);
+      if (comparison === 1) winners = [contender];
+      else if (comparison === 0) winners.push(contender);
+    }
+    return [{ amount, eligibleSeatNumbers: eligible.map((seat) => seat.seatNumber), winnerSeatNumbers: winners.map((seat) => seat.seatNumber) }];
+  });
+  const stacks = new Map(hand.seats.map((seat) => [seat.seatNumber, seat.stack]));
+  for (const returned of uncalledReturns) stacks.set(returned.seatNumber, stacks.get(returned.seatNumber)! + returned.amount);
+  for (const pot of pots) {
+    const share = Math.floor(pot.amount / pot.winnerSeatNumbers.length);
+    let remainder = pot.amount % pot.winnerSeatNumbers.length;
+    const dealerIndex = hand.seats.findIndex((seat) => seat.seatNumber === hand.dealerSeat);
+    if (dealerIndex === -1) throw new Error('Showdown settlement requires a seated dealer');
+    const clockwiseWinners = [...pot.winnerSeatNumbers].sort((left, right) => {
+      const leftIndex = hand.seats.findIndex((seat) => seat.seatNumber === left);
+      const rightIndex = hand.seats.findIndex((seat) => seat.seatNumber === right);
+      return ((leftIndex - dealerIndex - 1 + hand.seats.length) % hand.seats.length) - ((rightIndex - dealerIndex - 1 + hand.seats.length) % hand.seats.length);
+    });
+    for (const seatNumber of clockwiseWinners) stacks.set(seatNumber, stacks.get(seatNumber)! + share + (remainder-- > 0 ? 1 : 0));
+  }
+  return Object.freeze({
+    pot: 0 as const,
+    seats: Object.freeze(hand.seats.map((seat) => Object.freeze({ ...seat, stack: stacks.get(seat.seatNumber)!, ...(seat.isFolded ? { holeCards: undefined } : {}) }))),
+    pots: Object.freeze(pots.map((pot) => Object.freeze({ ...pot, eligibleSeatNumbers: Object.freeze(pot.eligibleSeatNumbers), winnerSeatNumbers: Object.freeze(pot.winnerSeatNumbers) }))),
+    uncalledReturns: Object.freeze(uncalledReturns.map((returned) => Object.freeze({ ...returned }))),
   });
 }
 

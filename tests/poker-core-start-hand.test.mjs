@@ -23,9 +23,9 @@ test('a three-player hand posts blinds and opens preflop action left of the big 
     minimumRaiseIncrement: 10,
     pot: 15,
     seats: [
-      { seatNumber: 1, playerId: 'ada', stack: 100, currentBet: 0, holeCards: [{ rank: '4', suit: 'clubs' }, { rank: '7', suit: 'clubs' }] },
-      { seatNumber: 2, playerId: 'ben', stack: 95, currentBet: 5, holeCards: [{ rank: '2', suit: 'clubs' }, { rank: '5', suit: 'clubs' }] },
-      { seatNumber: 3, playerId: 'cy', stack: 90, currentBet: 10, holeCards: [{ rank: '3', suit: 'clubs' }, { rank: '6', suit: 'clubs' }] },
+      { seatNumber: 1, playerId: 'ada', stack: 100, currentBet: 0, totalCommitted: 0, holeCards: [{ rank: '4', suit: 'clubs' }, { rank: '7', suit: 'clubs' }] },
+      { seatNumber: 2, playerId: 'ben', stack: 95, currentBet: 5, totalCommitted: 5, holeCards: [{ rank: '2', suit: 'clubs' }, { rank: '5', suit: 'clubs' }] },
+      { seatNumber: 3, playerId: 'cy', stack: 90, currentBet: 10, totalCommitted: 10, holeCards: [{ rank: '3', suit: 'clubs' }, { rank: '6', suit: 'clubs' }] },
     ],
   });
   assert.deepEqual(seats, [
@@ -52,8 +52,8 @@ test('a heads-up hand makes the dealer the small blind and opens preflop action 
     minimumRaiseIncrement: 10,
     pot: 15,
     seats: [
-      { seatNumber: 4, playerId: 'ada', stack: 95, currentBet: 5, holeCards: [{ rank: '2', suit: 'clubs' }, { rank: '4', suit: 'clubs' }] },
-      { seatNumber: 9, playerId: 'ben', stack: 90, currentBet: 10, holeCards: [{ rank: '3', suit: 'clubs' }, { rank: '5', suit: 'clubs' }] },
+      { seatNumber: 4, playerId: 'ada', stack: 95, currentBet: 5, totalCommitted: 5, holeCards: [{ rank: '2', suit: 'clubs' }, { rank: '4', suit: 'clubs' }] },
+      { seatNumber: 9, playerId: 'ben', stack: 90, currentBet: 10, totalCommitted: 10, holeCards: [{ rank: '3', suit: 'clubs' }, { rank: '5', suit: 'clubs' }] },
     ],
   });
   assert.deepEqual(seats, [
@@ -125,9 +125,9 @@ test('startHand skips a zero-stack seat for dealer, blinds, action, and hole-car
     minimumRaiseIncrement: 10,
     pot: 15,
     seats: [
-      { seatNumber: 1, playerId: 'ada', stack: 0, currentBet: 0 },
-      { seatNumber: 2, playerId: 'ben', stack: 95, currentBet: 5, holeCards: [{ rank: '2', suit: 'clubs' }, { rank: '4', suit: 'clubs' }] },
-      { seatNumber: 3, playerId: 'cy', stack: 90, currentBet: 10, holeCards: [{ rank: '3', suit: 'clubs' }, { rank: '5', suit: 'clubs' }] },
+      { seatNumber: 1, playerId: 'ada', stack: 0, currentBet: 0, totalCommitted: 0 },
+      { seatNumber: 2, playerId: 'ben', stack: 95, currentBet: 5, totalCommitted: 5, holeCards: [{ rank: '2', suit: 'clubs' }, { rank: '4', suit: 'clubs' }] },
+      { seatNumber: 3, playerId: 'cy', stack: 90, currentBet: 10, totalCommitted: 10, holeCards: [{ rank: '3', suit: 'clubs' }, { rank: '5', suit: 'clubs' }] },
     ],
   });
 });
