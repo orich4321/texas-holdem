@@ -1002,6 +1002,45 @@ export function advanceFlopToTurn(hand: StartedHand): StartedHand { return advan
 /** Advances a settled turn to the river, burning one server-private card then dealing one. */
 export function advanceTurnToRiver(hand: StartedHand): StartedHand { return advancePostflopToNext(hand, 'turn'); }
 
+/** Advances a settled river to showdown without consuming any additional private cards. */
+export function advanceRiverToShowdown(hand: StartedHand): StartedHand {
+  if (!authoritativeHands.has(hand) || hand.street !== 'river') {
+    throw new Error('River showdown requires authoritative river state');
+  }
+  if (!Array.isArray(hand.communityCards) || hand.communityCards.length !== 5 || !Array.isArray(hand.burnedCards) || hand.burnedCards.length !== 3 || !Array.isArray(hand.remainingDeck) || !Array.isArray(hand.pendingActorSeats) || hand.pendingActorSeats.length !== 0 || !Number.isSafeInteger(hand.pot) || hand.pot < 0 || !Number.isSafeInteger(hand.streetPot) || hand.streetPot < 0 || !Number.isSafeInteger(hand.currentBet) || hand.currentBet < 0 || !Number.isSafeInteger(hand.bigBlindAmount) || hand.bigBlindAmount <= 0) {
+    throw new Error('River showdown requires settled private river state');
+  }
+  const contestingSeats = hand.seats.filter((seat) => seat?.holeCards && !seat.isFolded);
+  if (contestingSeats.length < 2 || !contestingSeats.some((seat) => seat.stack > 0) || contestingSeats.some((seat) => !Number.isSafeInteger(seat.currentBet) || seat.currentBet < 0 || !Number.isSafeInteger(seat.stack) || seat.stack < 0 || (seat.stack > 0 && seat.currentBet !== hand.currentBet))) {
+    throw new Error('River showdown requires at least two settled contesting players including a non-all-in contestant');
+  }
+  const streetCommitments = hand.seats.reduce((total, seat) => total + seat.currentBet, 0);
+  if (!Number.isSafeInteger(streetCommitments) || hand.pot !== hand.streetPot + streetCommitments) {
+    throw new Error('River showdown pot must equal its street-start pot plus committed bets');
+  }
+  const dealtCards = hand.seats.filter((seat) => seat?.holeCards).flatMap((seat) => seat.holeCards!);
+  const allCards = [...dealtCards, ...hand.communityCards, ...hand.burnedCards, ...hand.remainingDeck];
+  if (allCards.length !== 52 || new Set(allCards.map((card) => `${card?.rank}-${card?.suit}`)).size !== 52 || allCards.some((card) => !card || !rankValues.has(card.rank) || !suits.includes(card.suit))) {
+    throw new Error('River showdown requires 52 distinct valid private cards');
+  }
+  return attachPrivateHandState({
+    ...hand,
+    currentActorSeat: hand.dealerSeat,
+    currentBet: 0,
+    minimumRaiseIncrement: hand.bigBlindAmount,
+    seats: hand.seats.map((seat) => ({ ...seat, currentBet: 0, holeCards: seat.holeCards && [cloneCard(seat.holeCards[0]), cloneCard(seat.holeCards[1])] as [Card, Card] })),
+  }, {
+    street: 'showdown',
+    communityCards: hand.communityCards,
+    remainingDeck: hand.remainingDeck,
+    burnedCards: hand.burnedCards,
+    bigBlindAmount: hand.bigBlindAmount,
+    streetPot: hand.pot,
+    pendingActorSeats: [],
+    raiseLockedSeats: [],
+  });
+}
+
 /**
  * Runs the remaining board only after postflop betting is settled and every
  * non-folded player is all-in. The server-private shuffled deck stays inside

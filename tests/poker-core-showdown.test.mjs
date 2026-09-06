@@ -2,11 +2,18 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
+  advanceFlopToTurn,
   advancePreflopToFlop,
+  advanceRiverToShowdown,
+  advanceTurnToRiver,
   applyFlopAllIn,
   applyFlopCall,
+  applyFlopCheck,
+  applyPreflopAllIn,
   applyPreflopCall,
   applyPreflopCheck,
+  applyRiverCheck,
+  applyTurnCheck,
   runOutAllInToShowdown,
   settleShowdown,
   startHand,
@@ -50,4 +57,61 @@ test('showdown constructs main and side pots and awards each only to its eligibl
   assert.equal(result.pot, 0);
   assert.deepEqual(result.uncalledReturns, []);
   assert.equal(Object.isFrozen(result), true);
+});
+
+test('a settled river advances to authoritative showdown before settlement without dealing more cards', () => {
+  const preflop = startHand({
+    seats: [
+      { seatNumber: 1, playerId: 'ada', stack: 100 },
+      { seatNumber: 2, playerId: 'ben', stack: 100 },
+      { seatNumber: 3, playerId: 'cy', stack: 100 },
+    ],
+    dealerSeat: 1,
+    smallBlind: 5,
+    bigBlind: 10,
+    randomInt: unshuffledRandomInt,
+  });
+  const flop = advancePreflopToFlop(
+    applyPreflopCheck(applyPreflopCall(applyPreflopCall(preflop, 1), 2), 3),
+  );
+  const turn = advanceFlopToTurn(applyFlopCheck(applyFlopCheck(applyFlopCheck(flop, 2), 3), 1));
+  const river = advanceTurnToRiver(applyTurnCheck(applyTurnCheck(applyTurnCheck(turn, 2), 3), 1));
+  const settledRiver = applyRiverCheck(applyRiverCheck(applyRiverCheck(river, 2), 3), 1);
+  const beforeTransition = {
+    communityCards: settledRiver.communityCards.map((card) => ({ ...card })),
+    burnedCards: settledRiver.burnedCards.map((card) => ({ ...card })),
+    remainingDeck: settledRiver.remainingDeck.map((card) => ({ ...card })),
+    pot: settledRiver.pot,
+  };
+
+  const showdown = advanceRiverToShowdown(settledRiver);
+
+  assert.equal(showdown.street, 'showdown');
+  assert.deepEqual(showdown.communityCards, beforeTransition.communityCards);
+  assert.deepEqual(showdown.burnedCards, beforeTransition.burnedCards);
+  assert.deepEqual(showdown.remainingDeck, beforeTransition.remainingDeck);
+  assert.equal(showdown.pot, beforeTransition.pot);
+  assert.deepEqual(showdown.pendingActorSeats, []);
+  assert.equal(settleShowdown(showdown).pot, 0);
+});
+
+test('river showdown rejects an all-in board that belongs to the automatic runout path', () => {
+  const preflop = startHand({
+    seats: [
+      { seatNumber: 1, playerId: 'ada', stack: 25 },
+      { seatNumber: 2, playerId: 'ben', stack: 25 },
+      { seatNumber: 3, playerId: 'cy', stack: 25 },
+    ],
+    dealerSeat: 1,
+    smallBlind: 5,
+    bigBlind: 10,
+    randomInt: unshuffledRandomInt,
+  });
+  const flop = advancePreflopToFlop(
+    applyPreflopCall(applyPreflopCall(applyPreflopAllIn(preflop, 1), 2), 3),
+  );
+  const turn = advanceFlopToTurn(flop);
+  const allInRiver = advanceTurnToRiver(turn);
+
+  assert.throws(() => advanceRiverToShowdown(allInRiver), /non-all-in contestant/);
 });
