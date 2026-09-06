@@ -95,6 +95,22 @@ test('server lifecycle snapshots constructor input before callers can mutate it'
   assert.equal(view.seats.find((seat) => seat.playerId === 'ada').stack, 100);
 });
 
+test('server lifecycle supports the nine persisted lobby seats without exposing another seat’s private cards', () => {
+  const nineSeats = Array.from({ length: 9 }, (_, index) => ({
+    seatNumber: index + 1,
+    playerId: `player-${index + 1}`,
+    playerName: `שחקן ${index + 1}`,
+    stack: 100,
+  }));
+  const game = new ServerGameLifecycle({ seats: nineSeats, dealerSeat: 9, smallBlind: 5, bigBlind: 10 });
+  const view = game.start();
+
+  assert.equal(view.currentActorSeat, 3);
+  assert.equal(view.seats.length, 9);
+  assert.equal(JSON.stringify(view).match(/"holeCards"/g).length, 1);
+  assert.equal(view.holeCards.length, 2);
+});
+
 test('a settled preflop all-in runs out server-private board cards to showdown before emitting a view', () => {
   const game = new ServerGameLifecycle({
     seats: seats.map((seat) => ({ ...seat, stack: 25 })),

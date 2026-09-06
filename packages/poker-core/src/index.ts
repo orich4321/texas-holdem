@@ -361,13 +361,13 @@ function pendingAfterAction(hand: StartedHand, actorSeat: number, resetForRaise 
     : hand.pendingActorSeats.filter((seatNumber) => seatNumber !== actorSeat);
 }
 
-/** Starts a two- or three-player preflop round, skipping seated players with no chips. */
+/** Starts a two- through nine-player preflop round, skipping seated players with no chips. */
 export function startHand(input: StartHandInput): StartedHand {
   if (!input || typeof input !== 'object' || !Array.isArray(input.seats)) {
     throw new Error('Start hand input must be an object with seats');
   }
-  if (input.seats.length !== 2 && input.seats.length !== 3) {
-    throw new Error('A hand must contain exactly two or three seats');
+  if (input.seats.length < 2 || input.seats.length > 9) {
+    throw new Error('A hand must contain between two and nine seats');
   }
   if (!Number.isSafeInteger(input.smallBlind) || !Number.isSafeInteger(input.bigBlind) || input.smallBlind <= 0 || input.bigBlind < input.smallBlind || !Number.isSafeInteger(input.smallBlind + input.bigBlind)) {
     throw new Error('Blinds and their total pot must be safe integers with big blind at least the small blind');
@@ -431,12 +431,16 @@ export function startHand(input: StartHandInput): StartedHand {
     }
     return startedSeat;
   });
+  const preflopActionOrder = Array.from(
+    { length: eligibleIndexes.length },
+    (_, offset) => eligibleIndexes[(bigBlindEligiblePosition + 1 + offset) % eligibleIndexes.length],
+  );
 
   return attachPrivateHandState({
     dealerSeat: input.seats[activeDealerIndex].seatNumber,
     smallBlindSeat: input.seats[smallBlindIndex].seatNumber,
     bigBlindSeat: input.seats[bigBlindIndex].seatNumber,
-    currentActorSeat: input.seats[eligibleIndexes[(bigBlindEligiblePosition + 1) % eligibleIndexes.length]].seatNumber,
+    currentActorSeat: input.seats[preflopActionOrder[0]].seatNumber,
     currentBet: input.bigBlind,
     minimumRaiseIncrement: input.bigBlind,
     pot: input.smallBlind + input.bigBlind,
@@ -448,7 +452,7 @@ export function startHand(input: StartHandInput): StartedHand {
     burnedCards: [],
     bigBlindAmount: input.bigBlind,
     streetPot: input.smallBlind + input.bigBlind,
-    pendingActorSeats: seats.filter((seat) => seat.holeCards && seat.stack > 0).map((seat) => seat.seatNumber),
+    pendingActorSeats: preflopActionOrder.filter((index) => seats[index].stack > 0).map((index) => input.seats[index].seatNumber),
   });
 }
 

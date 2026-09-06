@@ -35,6 +35,41 @@ test('a three-player hand posts blinds and opens preflop action left of the big 
   ]);
 });
 
+test('a nine-player hand deals unique private cards, posts adjacent blinds, and opens left of the big blind', () => {
+  const seats = Array.from({ length: 9 }, (_, index) => ({
+    seatNumber: index + 1,
+    playerId: `player-${index + 1}`,
+    stack: 100,
+  }));
+
+  const hand = startHand({ seats, dealerSeat: 9, smallBlind: 5, bigBlind: 10, randomInt: unshuffledRandomInt });
+
+  assert.equal(hand.dealerSeat, 9);
+  assert.equal(hand.smallBlindSeat, 1);
+  assert.equal(hand.bigBlindSeat, 2);
+  assert.equal(hand.currentActorSeat, 3);
+  assert.equal(hand.pot, 15);
+  assert.equal(hand.remainingDeck.length, 34);
+  assert.equal(new Set(hand.seats.flatMap((seat) => seat.holeCards.map((card) => `${card.rank}${card.suit}`))).size, 18);
+  assert.deepEqual(hand.pendingActorSeats, [3, 4, 5, 6, 7, 8, 9, 1, 2]);
+});
+
+test('a blind that is all-in after posting is not asked to act preflop', () => {
+  const hand = startHand({
+    seats: [
+      { seatNumber: 1, playerId: 'small-blind', stack: 10 },
+      { seatNumber: 2, playerId: 'big-blind', stack: 10 },
+    ],
+    dealerSeat: 1,
+    smallBlind: 5,
+    bigBlind: 10,
+    randomInt: unshuffledRandomInt,
+  });
+
+  assert.deepEqual(hand.pendingActorSeats, [1]);
+  assert.equal(hand.currentActorSeat, 1);
+});
+
 test('a heads-up hand makes the dealer the small blind and opens preflop action on the dealer', () => {
   const seats = [
     { seatNumber: 4, playerId: 'ada', stack: 100 },

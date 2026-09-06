@@ -90,8 +90,8 @@ export class ServerGameLifecycle {
   }>;
 
   constructor(input: ServerGameLifecycleInput) {
-    if (!input || !Array.isArray(input.seats) || input.seats.length < 2 || input.seats.length > 3) {
-      throw new Error('A server game requires two or three seats');
+    if (!input || !Array.isArray(input.seats) || input.seats.length < 2 || input.seats.length > 9) {
+      throw new Error('A server game requires between two and nine seats');
     }
     const names = new Map<string, string>();
     const playerIds = new Map<number, string>();
