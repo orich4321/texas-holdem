@@ -2,6 +2,9 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { ServerGameLifecycle } from '../apps/server/src/game-lifecycle.ts';
+import { startHand } from '../packages/poker-core/src/index.ts';
+import { signPrivateHandSnapshot, hydrateSignedPrivateHandSnapshot } from '../apps/server/src/persistence/private-hand-snapshot.ts';
+import { Buffer } from 'node:buffer';
 
 const seats = [
   { seatNumber: 1, playerId: 'ada', playerName: 'עדה', stack: 100 },
@@ -126,4 +129,42 @@ test('a settled preflop all-in runs out server-private board cards to showdown b
   assert.equal(showdown.street, 'showdown');
   assert.equal(showdown.communityCards.length, 5);
   assert.equal(showdown.toCall, 0);
+});
+
+test('a verified recovered hand resumes without a fresh deal and cannot be started again', () => {
+  const recoveredHand = startHand({
+    seats: seats.map(({ seatNumber, playerId, stack }) => ({ seatNumber, playerId, stack })),
+    dealerSeat: 1,
+    smallBlind: 5,
+    bigBlind: 10,
+    randomInt: () => 0,
+  });
+  const key = Buffer.from('a server-only snapshot signing key with adequate length', 'utf8');
+  const context = { roomId: 'room-id', sequence: 0, keyId: 'test-key' };
+  const recovered = hydrateSignedPrivateHandSnapshot(
+    signPrivateHandSnapshot(recoveredHand, context, key),
+    context,
+    new Map([[context.keyId, key]]),
+  );
+  const game = ServerGameLifecycle.fromVerifiedRecoveredHand({ seats, dealerSeat: 1, smallBlind: 5, bigBlind: 10 }, recovered);
+
+  assert.equal(game.currentActorPlayerId(), 'ada');
+  assert.throws(() => game.start(), /already started/i);
+  const after = game.applyAction('ada', { type: 'call' });
+  assert.equal(after.playerId, 'ada');
+  assert.throws(() => game.applyAction('ada', { type: 'call' }), /active player/i);
+});
+
+test('lifecycle recovery rejects an unsigned hand even when its seats match', () => {
+  const unsignedHand = startHand({
+    seats: seats.map(({ seatNumber, playerId, stack }) => ({ seatNumber, playerId, stack })),
+    dealerSeat: 1,
+    smallBlind: 5,
+    bigBlind: 10,
+    randomInt: () => 0,
+  });
+  assert.throws(
+    () => ServerGameLifecycle.fromVerifiedRecoveredHand({ seats, dealerSeat: 1, smallBlind: 5, bigBlind: 10 }, { hand: unsignedHand }),
+    /verified/i,
+  );
 });

@@ -29,10 +29,11 @@ import {
   getTurnLegalActions,
   runOutAllInToShowdown,
   type Card,
-  type StartedHand,
 } from '@texas-holdem/poker-core';
+import type { StartedHand } from '../../../packages/poker-core/src/server-recovery.js';
 
 import { startServerHand } from './hand-start.js';
+import { isVerifiedPrivateHandRecovery, type VerifiedPrivateHandRecovery } from './persistence/private-hand-snapshot.js';
 
 export interface GameSeatInput {
   seatNumber: number;
@@ -88,6 +89,26 @@ export class ServerGameLifecycle {
     smallBlind: number;
     bigBlind: number;
   }>;
+
+  /**
+   * Installs a hand only after the repository has verified its context-bound
+   * signed envelope. It never deals, shuffles, or accepts client state.
+   */
+  static fromVerifiedRecoveredHand(input: ServerGameLifecycleInput, recovery: VerifiedPrivateHandRecovery): ServerGameLifecycle {
+    const lifecycle = new ServerGameLifecycle(input);
+    if (!isVerifiedPrivateHandRecovery(recovery)) throw new Error('Recovered hand must be verified by the private snapshot boundary');
+    const hand = recovery.hand;
+    if (!hand || !Array.isArray(hand.seats) || hand.seats.length !== lifecycle.playerIdBySeat.size) {
+      throw new Error('Recovered hand does not match the persisted game seats');
+    }
+    for (const seat of hand.seats) {
+      if (lifecycle.playerIdBySeat.get(seat.seatNumber) !== seat.playerId) {
+        throw new Error('Recovered hand does not match the persisted game seats');
+      }
+    }
+    lifecycle.hand = hand;
+    return lifecycle;
+  }
 
   constructor(input: ServerGameLifecycleInput) {
     if (!input || !Array.isArray(input.seats) || input.seats.length < 2 || input.seats.length > 9) {

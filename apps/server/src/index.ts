@@ -4,11 +4,13 @@ import { createApp } from './app.js';
 import { createOriginPolicy } from './origin-policy.js';
 import { prisma } from './persistence/prisma.js';
 import { RoomRepository } from './persistence/room-repository.js';
+import { createPrivateSnapshotKeyring } from './persistence/private-snapshot-keyring.js';
 import { attachSocketSessionTransport } from './socket-transport.js';
 
 const isOriginAllowed = createOriginPolicy();
+const roomRepository = new RoomRepository(prisma, undefined, undefined, undefined, createPrivateSnapshotKeyring());
 const app = createApp({
-  roomRepository: new RoomRepository(prisma),
+  roomRepository,
   isOriginAllowed,
 });
 const httpServer = createServer(app);
@@ -25,7 +27,7 @@ app.get('/health', (_request, response) => {
   response.json({ status: 'ok' });
 });
 
-attachSocketSessionTransport(io, new RoomRepository(prisma));
+attachSocketSessionTransport(io, roomRepository);
 
 httpServer.listen(port, () => {
   console.log(`Server listening on http://localhost:${port}`);

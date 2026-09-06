@@ -8,6 +8,12 @@ import {
   type PlayerAccessTokenHasher,
 } from './player-access-token.js';
 import { createRoomJoinId } from './room-join-id.js';
+import {
+  hydrateSignedPrivateHandSnapshot,
+  type PrivateSnapshotSigningKey,
+  type SignedPrivateHandSnapshot,
+} from './private-hand-snapshot.js';
+import type { VerifiedPrivateHandRecovery } from './private-hand-snapshot.js';
 
 type PlayerInput = {
   id: string;
@@ -61,11 +67,20 @@ export type GameStartEvent = Readonly<{
 export type StartGameAtomicallyInput = Readonly<{
   joinId: string;
   hostPlayerId: string;
-  /** Private, server-only recovery state. Never send this through a socket. */
-  snapshot: Prisma.InputJsonValue;
+  /** Authenticated server-only recovery state. Never send this through a socket. */
+  snapshot: SignedPrivateHandSnapshot;
   /** Deliberately small public audit metadata; cards and deck state do not belong here. */
   event: unknown;
 }>;
+
+function isBoundInitialPrivateSnapshot(snapshot: SignedPrivateHandSnapshot, roomId: string): boolean {
+  return snapshot.version === 1
+    && snapshot.roomId === roomId
+    && snapshot.sequence === 0
+    && typeof snapshot.keyId === 'string'
+    && typeof snapshot.signature === 'string'
+    && /^[a-f0-9]{64}$/i.test(snapshot.signature);
+}
 
 function publicGameStartEvent(event: unknown): GameStartEvent {
   if (!event || typeof event !== 'object') throw new Error('Invalid game-start event');
@@ -82,6 +97,7 @@ export class RoomRepository {
     private readonly createJoinId: RoomJoinIdFactory = createRoomJoinId,
     private readonly createAccessToken: PlayerAccessTokenFactory = createPlayerAccessToken,
     private readonly hashAccessToken: PlayerAccessTokenHasher = hashPlayerAccessToken,
+    private readonly privateSnapshotKeyring: ReadonlyMap<string, PrivateSnapshotSigningKey> = new Map(),
   ) {}
 
   private async createPlayerWithUniqueAccessToken(db: PlayerWriter, player: PlayerInput, roomId: string) {
@@ -191,24 +207,27 @@ export class RoomRepository {
   async startGameAtomically({ joinId, hostPlayerId, snapshot, event }: StartGameAtomicallyInput) {
     const publicEvent = publicGameStartEvent(event);
     return this.db.$transaction(async (tx) => {
+      // Authenticate private state before the status claim; a forged envelope
+      // must never mutate a room, even inside a transaction that later rolls back.
+      const room = await tx.room.findUnique({
+        where: { joinId },
+        select: { id: true },
+      });
+      if (!room) throw new Error('Room is not startable by this host');
+      const sequence = 0;
+      if (!isBoundInitialPrivateSnapshot(snapshot, room.id)) throw new Error('Invalid game-start private snapshot');
+      hydrateSignedPrivateHandSnapshot(snapshot, { roomId: room.id, sequence }, this.privateSnapshotKeyring);
+
       const claimed = await tx.room.updateMany({
         where: { joinId, hostPlayerId, status: 'WAITING' },
         data: { status: 'IN_PROGRESS' },
       });
       if (claimed.count !== 1) throw new Error('Room is not startable by this host');
-
-      const room = await tx.room.findUnique({
-        where: { joinId },
-        select: { id: true },
-      });
-      if (!room) throw new Error('Started room disappeared during transaction');
-
-      const sequence = 0;
       await tx.gameEvent.create({
         data: { roomId: room.id, sequence, type: 'GAME_STARTED', payload: publicEvent },
       });
       await tx.gameSnapshot.create({
-        data: { roomId: room.id, sequence, state: snapshot },
+        data: { roomId: room.id, sequence, state: snapshot as unknown as Prisma.InputJsonValue },
       });
       return { roomId: room.id, sequence };
     });
@@ -221,6 +240,19 @@ export class RoomRepository {
       orderBy: { sequence: 'desc' },
       select: { sequence: true, state: true },
     });
-    return snapshot ? { sequence: snapshot.sequence, state: snapshot.state } : null;
+    return snapshot ? { sequence: snapshot.sequence, state: snapshot.state as unknown as SignedPrivateHandSnapshot } : null;
+  }
+
+  /**
+   * Server-only restart boundary. A participant-scoped row is not authoritative
+   * until its HMAC and its persisted room/sequence context both verify.
+   */
+  async recoverLatestHandForPlayer(roomId: string, playerId: string): Promise<{ sequence: number; recovery: VerifiedPrivateHandRecovery } | null> {
+    const snapshot = await this.findLatestGameSnapshotForPlayer(roomId, playerId);
+    if (!snapshot) return null;
+    return {
+      sequence: snapshot.sequence,
+      recovery: hydrateSignedPrivateHandSnapshot(snapshot.state, { roomId, sequence: snapshot.sequence }, this.privateSnapshotKeyring),
+    };
   }
 }
