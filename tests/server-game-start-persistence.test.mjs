@@ -43,14 +43,14 @@ test('game start atomically moves only the host waiting room in progress and per
     joinId: room.joinId,
     hostPlayerId: room.hostPlayerId,
     snapshot: privateSnapshot,
-    event: { dealerSeat: 3, smallBlind: 5, bigBlind: 10 },
+    event: { dealerSeat: 1, smallBlind: 5, bigBlind: 10 },
   });
 
   assert.deepEqual(started, { roomId: room.id, sequence: 0 });
   assert.deepEqual(db.calls.map(([name]) => name), ['room.findUnique', 'room.updateMany', 'gameEvent.create', 'gameSnapshot.create']);
   assert.deepEqual(db.calls[0][1], { where: { joinId: room.joinId }, select: { id: true } });
   assert.deepEqual(db.calls[1][1], { where: { joinId: room.joinId, hostPlayerId: room.hostPlayerId, status: 'WAITING' }, data: { status: 'IN_PROGRESS' } });
-  assert.deepEqual(db.calls[2][1].data, { roomId: room.id, sequence: 0, type: 'GAME_STARTED', payload: { dealerSeat: 3, smallBlind: 5, bigBlind: 10 } });
+  assert.deepEqual(db.calls[2][1].data, { roomId: room.id, sequence: 0, type: 'GAME_STARTED', payload: { dealerSeat: 1, smallBlind: 5, bigBlind: 10 } });
   assert.equal(db.calls[3][1].data.state, privateSnapshot);
   assert.equal(JSON.stringify(db.calls[2][1]).includes('holeCards'), false, 'events must never contain private cards/deck state');
 });
@@ -60,7 +60,7 @@ test('game start rejects non-host or already-started rooms before writing an eve
   const repository = new RoomRepository(db, undefined, undefined, undefined, snapshotKeyring);
 
   await assert.rejects(
-    repository.startGameAtomically({ joinId: room.joinId, hostPlayerId: 'attacker', snapshot: privateSnapshot, event: { dealerSeat: 3, smallBlind: 5, bigBlind: 10 } }),
+    repository.startGameAtomically({ joinId: room.joinId, hostPlayerId: 'attacker', snapshot: privateSnapshot, event: { dealerSeat: 1, smallBlind: 5, bigBlind: 10 } }),
     /not startable/i,
   );
   assert.deepEqual(db.calls.map(([name]) => name), ['room.findUnique', 'room.updateMany']);
@@ -74,10 +74,10 @@ test('game-start event whitelists public metadata and never persists attacker-su
     joinId: room.joinId,
     hostPlayerId: room.hostPlayerId,
     snapshot: privateSnapshot,
-    event: { dealerSeat: 3, smallBlind: 5, bigBlind: 10, deck: ['AS'], holeCards: { 1: ['AS', 'KH'] } },
+    event: { dealerSeat: 1, smallBlind: 5, bigBlind: 10, deck: ['AS'], holeCards: { 1: ['AS', 'KH'] } },
   });
 
-  assert.deepEqual(db.calls[2][1].data.payload, { dealerSeat: 3, smallBlind: 5, bigBlind: 10 });
+  assert.deepEqual(db.calls[2][1].data.payload, { dealerSeat: 1, smallBlind: 5, bigBlind: 10 });
 });
 
 test('restart recovery scopes the latest private snapshot to an authenticated room participant', async () => {
@@ -110,6 +110,21 @@ test('game start verifies an initial private snapshot MAC before claiming or dur
     /invalid signed/i,
   );
   assert.deepEqual(db.calls.map(([name]) => name), ['room.findUnique'], 'invalid private state must not claim a room before verification');
+});
+
+test('game start rejects public metadata that disagrees with the authenticated private hand', async () => {
+  const db = createDb();
+  const repository = new RoomRepository(db, undefined, undefined, undefined, snapshotKeyring);
+  await assert.rejects(
+    repository.startGameAtomically({
+      joinId: room.joinId,
+      hostPlayerId: room.hostPlayerId,
+      snapshot: privateSnapshot,
+      event: { dealerSeat: 3, smallBlind: 99, bigBlind: 100 },
+    }),
+    /event/i,
+  );
+  assert.deepEqual(db.calls.map(([name]) => name), ['room.findUnique'], 'inconsistent public metadata must not claim the room');
 });
 
 test('restart recovery verifies the participant-scoped durable envelope and returns an authoritative hand only after MAC validation', async () => {

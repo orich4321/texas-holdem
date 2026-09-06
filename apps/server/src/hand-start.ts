@@ -1,4 +1,4 @@
-import { startHand, type StartHandInput } from '@texas-holdem/poker-core';
+import { startHand, type StartHandInput } from '@texas-holdem/poker-core/server';
 import type { StartedHand } from '../../../packages/poker-core/src/server-recovery.js';
 
 import { secureRandomInt } from './secure-random.js';

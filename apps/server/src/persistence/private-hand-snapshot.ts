@@ -66,6 +66,30 @@ function signatureFor(value: Omit<SignedPrivateHandSnapshot, 'signature'>, key: 
   return createHmac('sha256', key).update(SNAPSHOT_DOMAIN).update(canonicalJson(unsignedEnvelope(value)), 'utf8').digest('hex');
 }
 
+/**
+ * v1 snapshots written before `smallBlindAmount` existed contain authenticated
+ * initial preflop contributions, but not the configured amount. They are the
+ * only historical records we accept: later hand snapshots have never been
+ * persisted by this slice. The actual posted small blind is sufficient for
+ * recovery because postflop rules use the authenticated big blind; new writes
+ * always carry and MAC-bind the explicit configured amount.
+ */
+function upgradeAuthenticatedLegacyInitialSnapshot(snapshot: StartedHandSnapshot, sequence: number): StartedHandSnapshot {
+  const hand = snapshot && typeof snapshot === 'object' ? snapshot.hand : undefined;
+  if (
+    sequence !== 0
+    || !hand
+    || typeof hand !== 'object'
+    || Object.prototype.hasOwnProperty.call(hand, 'smallBlindAmount')
+    || hand.street !== 'preflop'
+    || !Array.isArray(hand.seats)
+    || !Number.isSafeInteger(hand.smallBlindSeat)
+  ) return snapshot;
+  const smallBlindSeat = hand.seats.find((seat) => seat && typeof seat === 'object' && seat.seatNumber === hand.smallBlindSeat);
+  if (!smallBlindSeat || !Number.isSafeInteger(smallBlindSeat.totalCommitted) || smallBlindSeat.totalCommitted <= 0) return snapshot;
+  return { ...snapshot, hand: { ...hand, smallBlindAmount: smallBlindSeat.totalCommitted } };
+}
+
 /** Server-only persistence envelope. Do not emit this value to Socket.IO clients. */
 export function signPrivateHandSnapshot(
   hand: StartedHand,
@@ -111,7 +135,8 @@ export function hydrateSignedPrivateHandSnapshot(
   const expected = Buffer.from(signatureFor({ version, keyId, roomId, sequence, snapshot }, key), 'hex');
   const actual = Buffer.from(signature, 'hex');
   if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) throw new Error('Invalid signed private hand snapshot');
-  const recovery = Object.freeze({ hand: hydrateStartedHandForVerifiedServerRecovery(snapshot) });
+  const authenticatedSnapshot = upgradeAuthenticatedLegacyInitialSnapshot(snapshot, sequence);
+  const recovery = Object.freeze({ hand: hydrateStartedHandForVerifiedServerRecovery(authenticatedSnapshot) });
   verifiedRecoveries.add(recovery);
   return recovery;
 }

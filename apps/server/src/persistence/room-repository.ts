@@ -216,7 +216,15 @@ export class RoomRepository {
       if (!room) throw new Error('Room is not startable by this host');
       const sequence = 0;
       if (!isBoundInitialPrivateSnapshot(snapshot, room.id)) throw new Error('Invalid game-start private snapshot');
-      hydrateSignedPrivateHandSnapshot(snapshot, { roomId: room.id, sequence }, this.privateSnapshotKeyring);
+      const recovery = hydrateSignedPrivateHandSnapshot(snapshot, { roomId: room.id, sequence }, this.privateSnapshotKeyring);
+      const hand = recovery.hand;
+      if (
+        publicEvent.dealerSeat !== hand.dealerSeat
+        || publicEvent.smallBlind !== hand.smallBlindAmount
+        || publicEvent.bigBlind !== hand.bigBlindAmount
+      ) {
+        throw new Error('Game-start event does not match the authenticated private hand');
+      }
 
       const claimed = await tx.room.updateMany({
         where: { joinId, hostPlayerId, status: 'WAITING' },

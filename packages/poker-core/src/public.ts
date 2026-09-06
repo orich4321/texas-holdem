@@ -1,13 +1,13 @@
-/** Browser-safe and shared poker-core surface. Recovery authority is intentionally absent. */
+/**
+ * Browser-safe shared surface. It deliberately cannot construct a deck or deal
+ * a hand: those private capabilities are available only through `./server`.
+ */
 export {
   pokerCorePackage,
   evaluateFiveCardHand,
   compareFiveCardHands,
   evaluateBestFiveCardHand,
   compareBestFiveCardHands,
-  Deck,
-
-  startHand,
   getPreflopLegalActions,
   applyPreflopCheck,
   applyPreflopCall,
@@ -47,11 +47,6 @@ export type {
   Card,
   FiveCardHandCategory,
   FiveCardHandEvaluation,
-  RandomInt,
-  StartHandSeat,
-  StartHandInput,
-  StartedHandSeat,
-
   PreflopLegalActions,
   FlopLegalActions,
   ShowdownPot,

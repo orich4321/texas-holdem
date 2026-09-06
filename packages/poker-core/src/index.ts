@@ -277,6 +277,7 @@ export interface StartedHand {
   remainingDeck: readonly Card[];
   /** Server-private burn pile; retained to preserve the complete 52-card invariant. */
   burnedCards: readonly Card[];
+  smallBlindAmount: number;
   bigBlindAmount: number;
   /** Pot at the start of this street; prevents forged cross-street pot changes. */
   streetPot: number;
@@ -308,9 +309,9 @@ function freezeStartedSeats(seats: StartedHandSeat[]): StartedHandSeat[] {
   return Object.freeze(seats) as unknown as StartedHandSeat[];
 }
 
-function attachPrivateHandState<T extends Omit<StartedHand, 'street' | 'communityCards' | 'remainingDeck' | 'burnedCards' | 'bigBlindAmount' | 'streetPot' | 'pendingActorSeats' | 'raiseLockedSeats'>>(
+function attachPrivateHandState<T extends Omit<StartedHand, 'street' | 'communityCards' | 'remainingDeck' | 'burnedCards' | 'smallBlindAmount' | 'bigBlindAmount' | 'streetPot' | 'pendingActorSeats' | 'raiseLockedSeats'>>(
   hand: T,
-  state: Pick<StartedHand, 'street' | 'communityCards' | 'remainingDeck' | 'burnedCards' | 'bigBlindAmount' | 'streetPot' | 'pendingActorSeats' | 'raiseLockedSeats'>,
+  state: Pick<StartedHand, 'street' | 'communityCards' | 'remainingDeck' | 'burnedCards' | 'smallBlindAmount' | 'bigBlindAmount' | 'streetPot' | 'pendingActorSeats' | 'raiseLockedSeats'>,
 ): StartedHand {
   const freezePublicState = state.street !== 'preflop';
   if (freezePublicState) hand.seats = freezeStartedSeats(hand.seats);
@@ -319,6 +320,7 @@ function attachPrivateHandState<T extends Omit<StartedHand, 'street' | 'communit
     communityCards: { value: frozenCards(state.communityCards), enumerable: false },
     remainingDeck: { value: frozenCards(state.remainingDeck), enumerable: false },
     burnedCards: { value: frozenCards(state.burnedCards), enumerable: false },
+    smallBlindAmount: { value: state.smallBlindAmount, enumerable: false },
     bigBlindAmount: { value: state.bigBlindAmount, enumerable: false },
     streetPot: { value: state.streetPot, enumerable: false },
     pendingActorSeats: { value: Object.freeze([...state.pendingActorSeats]), enumerable: false },
@@ -330,7 +332,7 @@ function attachPrivateHandState<T extends Omit<StartedHand, 'street' | 'communit
 
 function preservePrivateHandState(
   source: StartedHand,
-  next: Omit<StartedHand, 'street' | 'communityCards' | 'remainingDeck' | 'burnedCards' | 'bigBlindAmount' | 'streetPot' | 'pendingActorSeats' | 'raiseLockedSeats'>,
+  next: Omit<StartedHand, 'street' | 'communityCards' | 'remainingDeck' | 'burnedCards' | 'smallBlindAmount' | 'bigBlindAmount' | 'streetPot' | 'pendingActorSeats' | 'raiseLockedSeats'>,
   pendingActorSeats: readonly number[] = source.pendingActorSeats,
   raiseLockedSeats: readonly number[] = source.raiseLockedSeats ?? [],
 ): StartedHand {
@@ -345,6 +347,7 @@ function preservePrivateHandState(
     communityCards: source.communityCards,
     remainingDeck: source.remainingDeck,
     burnedCards: source.burnedCards,
+    smallBlindAmount: source.smallBlindAmount,
     bigBlindAmount: source.bigBlindAmount,
     streetPot: source.streetPot,
     pendingActorSeats,
@@ -359,7 +362,7 @@ export interface StartedHandSnapshot {
     dealerSeat: number; smallBlindSeat: number; bigBlindSeat: number; currentActorSeat: number;
     currentBet: number; minimumRaiseIncrement: number; pot: number; seats: readonly StartedHandSeat[];
     street: Street; communityCards: readonly Card[]; remainingDeck: readonly Card[]; burnedCards: readonly Card[];
-    bigBlindAmount: number; streetPot: number; pendingActorSeats: readonly number[]; raiseLockedSeats: readonly number[];
+    smallBlindAmount: number; bigBlindAmount: number; streetPot: number; pendingActorSeats: readonly number[]; raiseLockedSeats: readonly number[];
   };
 }
 
@@ -377,7 +380,7 @@ export function serializeStartedHand(hand: StartedHand): StartedHandSnapshot {
     dealerSeat: hand.dealerSeat, smallBlindSeat: hand.smallBlindSeat, bigBlindSeat: hand.bigBlindSeat, currentActorSeat: hand.currentActorSeat,
     currentBet: hand.currentBet, minimumRaiseIncrement: hand.minimumRaiseIncrement, pot: hand.pot, seats: hand.seats.map(snapshotSeat), street: hand.street,
     communityCards: hand.communityCards.map(snapshotCard), remainingDeck: hand.remainingDeck.map(snapshotCard), burnedCards: hand.burnedCards.map(snapshotCard),
-    bigBlindAmount: hand.bigBlindAmount, streetPot: hand.streetPot, pendingActorSeats: [...hand.pendingActorSeats], raiseLockedSeats: [...(hand.raiseLockedSeats ?? [])],
+    smallBlindAmount: hand.smallBlindAmount, bigBlindAmount: hand.bigBlindAmount, streetPot: hand.streetPot, pendingActorSeats: [...hand.pendingActorSeats], raiseLockedSeats: [...(hand.raiseLockedSeats ?? [])],
   } };
 }
 
@@ -394,8 +397,8 @@ export function hydrateStartedHandForVerifiedServerRecovery(snapshot: unknown): 
   const source = snapshot && typeof snapshot === 'object' ? snapshot as Partial<StartedHandSnapshot> : undefined;
   const hand = source?.version === 1 && source.hand && typeof source.hand === 'object' ? source.hand : undefined;
   if (!hand || !Array.isArray(hand.seats) || hand.seats.length < 2 || hand.seats.length > 9 || !Array.isArray(hand.communityCards) || !Array.isArray(hand.remainingDeck) || !Array.isArray(hand.burnedCards) || !Array.isArray(hand.pendingActorSeats) || !Array.isArray(hand.raiseLockedSeats) || !['preflop', 'flop', 'turn', 'river', 'showdown'].includes(hand.street as string)) throw new Error('Invalid private hand snapshot');
-  const values = [hand.dealerSeat, hand.smallBlindSeat, hand.bigBlindSeat, hand.currentActorSeat, hand.currentBet, hand.minimumRaiseIncrement, hand.pot, hand.bigBlindAmount, hand.streetPot, ...hand.pendingActorSeats, ...hand.raiseLockedSeats];
-  if (values.some((value) => !Number.isSafeInteger(value) || value < 0) || hand.minimumRaiseIncrement <= 0 || hand.bigBlindAmount <= 0 || hand.seats.some((seat) => !seat || !Number.isSafeInteger(seat.seatNumber) || typeof seat.playerId !== 'string' || seat.playerId.length === 0 || !Number.isSafeInteger(seat.stack) || seat.stack < 0 || !Number.isSafeInteger(seat.currentBet) || seat.currentBet < 0 || !Number.isSafeInteger(seat.totalCommitted) || seat.totalCommitted < 0 || (seat.holeCards !== undefined && (!Array.isArray(seat.holeCards) || seat.holeCards.length !== 2 || !seat.holeCards.every(isSnapshotCard))))) throw new Error('Invalid private hand snapshot');
+  const values = [hand.dealerSeat, hand.smallBlindSeat, hand.bigBlindSeat, hand.currentActorSeat, hand.currentBet, hand.minimumRaiseIncrement, hand.pot, hand.smallBlindAmount, hand.bigBlindAmount, hand.streetPot, ...hand.pendingActorSeats, ...hand.raiseLockedSeats];
+  if (values.some((value) => !Number.isSafeInteger(value) || value < 0) || hand.minimumRaiseIncrement <= 0 || hand.smallBlindAmount <= 0 || hand.bigBlindAmount < hand.smallBlindAmount || hand.seats.some((seat) => !seat || !Number.isSafeInteger(seat.seatNumber) || typeof seat.playerId !== 'string' || seat.playerId.length === 0 || !Number.isSafeInteger(seat.stack) || seat.stack < 0 || !Number.isSafeInteger(seat.currentBet) || seat.currentBet < 0 || !Number.isSafeInteger(seat.totalCommitted) || seat.totalCommitted < 0 || (seat.holeCards !== undefined && (!Array.isArray(seat.holeCards) || seat.holeCards.length !== 2 || !seat.holeCards.every(isSnapshotCard))))) throw new Error('Invalid private hand snapshot');
   const cards = [...hand.seats.flatMap((seat) => seat.holeCards ?? []), ...hand.communityCards, ...hand.remainingDeck, ...hand.burnedCards];
   if (cards.length !== 52 || cards.some((card) => !isSnapshotCard(card)) || new Set(cards.map((card) => `${card.rank}-${card.suit}`)).size !== 52 || new Set(hand.seats.map((seat) => seat.seatNumber)).size !== hand.seats.length || new Set(hand.seats.map((seat) => seat.playerId)).size !== hand.seats.length) throw new Error('Invalid private hand snapshot');
   const seatsByNumber = new Map(hand.seats.map((seat) => [seat.seatNumber, seat]));
@@ -414,7 +417,7 @@ export function hydrateStartedHandForVerifiedServerRecovery(snapshot: unknown): 
     return !seat || !seat.holeCards || seat.isFolded === true || seat.stack <= 0;
   }) || hand.raiseLockedSeats.some((seatNumber) => !seatsByNumber.has(seatNumber)) || (hand.pendingActorSeats.length > 0 && (!actor || !hand.pendingActorSeats.includes(hand.currentActorSeat))) || hand.seats.some((seat) => (!seat.holeCards && (seat.stack !== 0 || seat.currentBet !== 0 || seat.totalCommitted !== 0)) || (seat.holeCards && seat.holeCards.length !== 2))) throw new Error('Invalid private hand snapshot');
   return attachPrivateHandState({ dealerSeat: hand.dealerSeat, smallBlindSeat: hand.smallBlindSeat, bigBlindSeat: hand.bigBlindSeat, currentActorSeat: hand.currentActorSeat, currentBet: hand.currentBet, minimumRaiseIncrement: hand.minimumRaiseIncrement, pot: hand.pot, seats: hand.seats.map(snapshotSeat) }, {
-    street: hand.street, communityCards: hand.communityCards, remainingDeck: hand.remainingDeck, burnedCards: hand.burnedCards, bigBlindAmount: hand.bigBlindAmount, streetPot: hand.streetPot, pendingActorSeats: hand.pendingActorSeats, raiseLockedSeats: hand.raiseLockedSeats,
+    street: hand.street, communityCards: hand.communityCards, remainingDeck: hand.remainingDeck, burnedCards: hand.burnedCards, smallBlindAmount: hand.smallBlindAmount, bigBlindAmount: hand.bigBlindAmount, streetPot: hand.streetPot, pendingActorSeats: hand.pendingActorSeats, raiseLockedSeats: hand.raiseLockedSeats,
   });
 }
 
@@ -516,6 +519,7 @@ export function startHand(input: StartHandInput): StartedHand {
     communityCards: [],
     remainingDeck: deck.deal(deck.remaining) as Card[],
     burnedCards: [],
+    smallBlindAmount: input.smallBlind,
     bigBlindAmount: input.bigBlind,
     streetPot: input.smallBlind + input.bigBlind,
     pendingActorSeats: preflopActionOrder.filter((index) => seats[index].stack > 0).map((index) => input.seats[index].seatNumber),
@@ -879,6 +883,7 @@ export function advancePreflopToFlop(hand: StartedHand): StartedHand {
     communityCards: afterBurn.slice(0, 3),
     remainingDeck: afterBurn.slice(3),
     burnedCards: [flopBurn],
+    smallBlindAmount: hand.smallBlindAmount,
     bigBlindAmount: hand.bigBlindAmount,
     streetPot: hand.pot,
     pendingActorSeats: hand.seats.filter((seat) => seat.holeCards && !seat.isFolded && seat.stack > 0).map((seat) => seat.seatNumber),
@@ -1040,7 +1045,7 @@ function advancePostflopToNext(hand: StartedHand, street: 'flop' | 'turn'): Star
   return attachPrivateHandState({
     ...hand, currentActorSeat, currentBet: 0, minimumRaiseIncrement: hand.bigBlindAmount,
     seats: hand.seats.map((seat) => ({ ...seat, currentBet: 0, holeCards: seat.holeCards && [cloneCard(seat.holeCards[0]), cloneCard(seat.holeCards[1])] as [Card, Card] })),
-  }, { street: isTurn ? 'river' : 'turn', communityCards: [...hand.communityCards, turnCard], remainingDeck, burnedCards: [...hand.burnedCards, turnBurn], bigBlindAmount: hand.bigBlindAmount, streetPot: hand.pot, pendingActorSeats });
+  }, { street: isTurn ? 'river' : 'turn', communityCards: [...hand.communityCards, turnCard], remainingDeck, burnedCards: [...hand.burnedCards, turnBurn], smallBlindAmount: hand.smallBlindAmount, bigBlindAmount: hand.bigBlindAmount, streetPot: hand.pot, pendingActorSeats });
 }
 
 export function getFlopLegalActions(hand: StartedHand): FlopLegalActions { return getPostflopLegalActions(hand, 'flop'); }
@@ -1104,6 +1109,7 @@ export function advanceRiverToShowdown(hand: StartedHand): StartedHand {
     communityCards: hand.communityCards,
     remainingDeck: hand.remainingDeck,
     burnedCards: hand.burnedCards,
+    smallBlindAmount: hand.smallBlindAmount,
     bigBlindAmount: hand.bigBlindAmount,
     streetPot: hand.pot,
     pendingActorSeats: [],
@@ -1157,7 +1163,7 @@ export function runOutAllInToShowdown(hand: StartedHand): StartedHand {
     seats: hand.seats.map((seat) => ({ ...seat, currentBet: 0, holeCards: seat.holeCards && [cloneCard(seat.holeCards[0]), cloneCard(seat.holeCards[1])] as [Card, Card] })),
   }, {
     street: 'showdown', communityCards, remainingDeck, burnedCards,
-    bigBlindAmount: hand.bigBlindAmount, streetPot: hand.pot, pendingActorSeats: [], raiseLockedSeats: [],
+    smallBlindAmount: hand.smallBlindAmount, bigBlindAmount: hand.bigBlindAmount, streetPot: hand.pot, pendingActorSeats: [], raiseLockedSeats: [],
   });
 }
 

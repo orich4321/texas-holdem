@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
+import { createHmac } from 'node:crypto';
 import { test } from 'node:test';
 
 import { startHand } from '../packages/poker-core/src/index.ts';
@@ -12,11 +13,41 @@ const keyring = new Map([[context.keyId, key]]);
 const seats = [{ seatNumber: 1, playerId: 'ada', stack: 100 }, { seatNumber: 2, playerId: 'ben', stack: 100 }, { seatNumber: 3, playerId: 'cy', stack: 100 }];
 const newHand = () => startHand({ seats, dealerSeat: 1, smallBlind: 5, bigBlind: 10, randomInt: () => 0 });
 
+function canonicalJson(value) {
+  if (value === null || typeof value === 'boolean' || typeof value === 'string' || typeof value === 'number') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
+  return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(',')}}`;
+}
+
+function signedLegacyInitialSnapshot() {
+  const current = JSON.parse(JSON.stringify(signPrivateHandSnapshot(newHand(), context, key)));
+  delete current.snapshot.hand.smallBlindAmount;
+  const unsigned = { version: current.version, keyId: current.keyId, roomId: current.roomId, sequence: current.sequence, snapshot: current.snapshot };
+  current.signature = createHmac('sha256', key)
+    .update('texas-holdem/private-hand-snapshot/v1\0')
+    .update(canonicalJson(unsigned), 'utf8')
+    .digest('hex');
+  return current;
+}
+
 test('server private envelope authenticates a context-bound JSON round-trip before restoring authority', () => {
   const signed = signPrivateHandSnapshot(newHand(), context, key);
   const restored = hydrateSignedPrivateHandSnapshot(JSON.parse(JSON.stringify(signed)), context, keyring);
   assert.equal(restored.hand.street, 'preflop');
   assert.equal(restored.hand.remainingDeck.length, 46);
+});
+
+test('a signed historical initial snapshot without an explicit small blind recovers with its authenticated posted blind', () => {
+  const restored = hydrateSignedPrivateHandSnapshot(signedLegacyInitialSnapshot(), context, keyring);
+  assert.equal(restored.hand.smallBlindAmount, 5);
+  assert.equal(restored.hand.bigBlindAmount, 10);
+  assert.equal(restored.hand.street, 'preflop');
+});
+
+test('an unsigned missing small blind is never treated as a historical snapshot', () => {
+  const legacy = signedLegacyInitialSnapshot();
+  legacy.signature = '0'.repeat(64);
+  assert.throws(() => hydrateSignedPrivateHandSnapshot(legacy, context, keyring), /invalid signed/i);
 });
 
 test('server private envelope rejects snapshot tampering, wrong room/sequence, and unknown keys before hydration', () => {

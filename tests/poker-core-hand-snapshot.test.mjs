@@ -17,8 +17,12 @@ test('a private authoritative hand snapshot is JSON-safe without exposing recove
   const snapshot = serializeStartedHand(started);
   assert.deepEqual(JSON.parse(JSON.stringify(snapshot)), snapshot);
   const publicSurface = await import('../packages/poker-core/src/public.ts');
+  const serverSurface = await import('../packages/poker-core/src/server.ts');
+  assert.equal('startHand' in publicSurface, false, 'browser entry must not deal or expose private hands');
+  assert.equal('Deck' in publicSurface, false, 'browser entry must not construct a deck');
   assert.equal('serializeStartedHand' in publicSurface, false);
   assert.equal('hydrateStartedHandForVerifiedServerRecovery' in publicSurface, false);
+  assert.equal(typeof serverSurface.startHand, 'function', 'dealing belongs on the explicit server-only entry');
 });
 
 test('snapshots can be structurally altered as inert JSON but cannot grant public authority', async () => {
@@ -27,5 +31,5 @@ test('snapshots can be structurally altered as inert JSON but cannot grant publi
   invalidActor.hand.currentActorSeat = 99;
   assert.equal(invalidActor.hand.currentActorSeat, 99);
   const packageManifest = JSON.parse(readFileSync(new URL('../packages/poker-core/package.json', import.meta.url), 'utf8'));
-  assert.deepEqual(packageManifest.exports, { '.': './src/public.ts' });
+  assert.deepEqual(packageManifest.exports, { '.': './src/public.ts', './server': './src/server.ts' });
 });

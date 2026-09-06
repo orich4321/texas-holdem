@@ -29,7 +29,7 @@ import {
   getTurnLegalActions,
   runOutAllInToShowdown,
   type Card,
-} from '@texas-holdem/poker-core';
+} from '@texas-holdem/poker-core/server';
 import type { StartedHand } from '../../../packages/poker-core/src/server-recovery.js';
 
 import { startServerHand } from './hand-start.js';
