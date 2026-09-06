@@ -813,7 +813,7 @@ export function advancePreflopToFlop(hand: StartedHand): StartedHand {
 /** Legal flop actions use the same total-bet targets as preflop after round bets reset. */
 export type FlopLegalActions = PreflopLegalActions;
 
-function getPostflopLegalActions(hand: StartedHand, street: 'flop' | 'turn'): FlopLegalActions {
+function getPostflopLegalActions(hand: StartedHand, street: 'flop' | 'turn' | 'river'): FlopLegalActions {
   if (!hand || typeof hand !== 'object' || hand.street !== street || !Array.isArray(hand.seats) || !Array.isArray(hand.pendingActorSeats) || !Number.isSafeInteger(hand.currentActorSeat) || !Number.isSafeInteger(hand.currentBet) || hand.currentBet < 0 || !Number.isSafeInteger(hand.minimumRaiseIncrement) || hand.minimumRaiseIncrement <= 0) {
     throw new Error('Started hand must contain safe flop betting state');
   }
@@ -831,7 +831,7 @@ function getPostflopLegalActions(hand: StartedHand, street: 'flop' | 'turn'): Fl
 }
 
 /** Applies a legal flop check and advances only the still-pending postflop actor. */
-function applyPostflopCheck(hand: StartedHand, actorSeat: number, street: 'flop' | 'turn'): StartedHand {
+function applyPostflopCheck(hand: StartedHand, actorSeat: number, street: 'flop' | 'turn' | 'river'): StartedHand {
   if (!Number.isSafeInteger(actorSeat)) throw new Error('Checking actor seat must be a safe integer');
   if (hand.currentActorSeat !== actorSeat) throw new Error('Only the active actor may check');
   const legalActions = getPostflopLegalActions(hand, street);
@@ -871,7 +871,7 @@ function clonedFlopSeats(hand: StartedHand, actorIndex: number, update?: (seat: 
 }
 
 /** Applies a legal flop call, including a short all-in call, and advances pending action. */
-function applyPostflopCall(hand: StartedHand, actorSeat: number, street: 'flop' | 'turn'): StartedHand {
+function applyPostflopCall(hand: StartedHand, actorSeat: number, street: 'flop' | 'turn' | 'river'): StartedHand {
   if (!Number.isSafeInteger(actorSeat)) throw new Error('Calling actor seat must be a safe integer');
   if (hand.currentActorSeat !== actorSeat) throw new Error('Only the active actor may call');
   if (!Number.isSafeInteger(hand.pot) || hand.pot < 0) throw new Error('Started hand must contain a non-negative safe pot');
@@ -888,7 +888,7 @@ function applyPostflopCall(hand: StartedHand, actorSeat: number, street: 'flop' 
 }
 
 /** Applies a legal flop fold, retaining committed chips while removing the actor from action. */
-function applyPostflopFold(hand: StartedHand, actorSeat: number, street: 'flop' | 'turn'): StartedHand {
+function applyPostflopFold(hand: StartedHand, actorSeat: number, street: 'flop' | 'turn' | 'river'): StartedHand {
   if (!Number.isSafeInteger(actorSeat)) throw new Error('Folding actor seat must be a safe integer');
   if (hand.currentActorSeat !== actorSeat) throw new Error('Only the active actor may fold');
   if (!Number.isSafeInteger(hand.pot) || hand.pot < 0) throw new Error('Started hand must contain a non-negative safe pot');
@@ -901,7 +901,7 @@ function applyPostflopFold(hand: StartedHand, actorSeat: number, street: 'flop' 
 }
 
 /** Applies a legal full flop raise to a total committed-bet target and reopens action. */
-function applyPostflopRaise(hand: StartedHand, actorSeat: number, raiseTo: number, street: 'flop' | 'turn'): StartedHand {
+function applyPostflopRaise(hand: StartedHand, actorSeat: number, raiseTo: number, street: 'flop' | 'turn' | 'river'): StartedHand {
   if (!Number.isSafeInteger(actorSeat)) throw new Error('Raising actor seat must be a safe integer');
   if (!Number.isSafeInteger(raiseTo) || raiseTo < 0) throw new Error('Flop raise target must be a non-negative safe integer');
   if (hand.currentActorSeat !== actorSeat) throw new Error('Only the active actor may raise');
@@ -919,7 +919,7 @@ function applyPostflopRaise(hand: StartedHand, actorSeat: number, raiseTo: numbe
 }
 
 /** Applies a raising flop all-in; a short raise does not alter the full-raise increment. */
-function applyPostflopAllIn(hand: StartedHand, actorSeat: number, street: 'flop' | 'turn'): StartedHand {
+function applyPostflopAllIn(hand: StartedHand, actorSeat: number, street: 'flop' | 'turn' | 'river'): StartedHand {
   if (!Number.isSafeInteger(actorSeat)) throw new Error('All-in actor seat must be a safe integer');
   if (hand.currentActorSeat !== actorSeat) throw new Error('Only the active actor may go all-in');
   if (!Number.isSafeInteger(hand.pot) || hand.pot < 0) throw new Error('Started hand must contain a non-negative safe pot');
@@ -982,6 +982,14 @@ export function applyTurnCall(hand: StartedHand, actorSeat: number): StartedHand
 export function applyTurnFold(hand: StartedHand, actorSeat: number): StartedHand { return applyPostflopFold(hand, actorSeat, 'turn'); }
 export function applyTurnRaise(hand: StartedHand, actorSeat: number, raiseTo: number): StartedHand { return applyPostflopRaise(hand, actorSeat, raiseTo, 'turn'); }
 export function applyTurnAllIn(hand: StartedHand, actorSeat: number): StartedHand { return applyPostflopAllIn(hand, actorSeat, 'turn'); }
+
+/** River actions share the authoritative postflop rules and finish river betting. */
+export function getRiverLegalActions(hand: StartedHand): FlopLegalActions { return getPostflopLegalActions(hand, 'river'); }
+export function applyRiverCheck(hand: StartedHand, actorSeat: number): StartedHand { return applyPostflopCheck(hand, actorSeat, 'river'); }
+export function applyRiverCall(hand: StartedHand, actorSeat: number): StartedHand { return applyPostflopCall(hand, actorSeat, 'river'); }
+export function applyRiverFold(hand: StartedHand, actorSeat: number): StartedHand { return applyPostflopFold(hand, actorSeat, 'river'); }
+export function applyRiverRaise(hand: StartedHand, actorSeat: number, raiseTo: number): StartedHand { return applyPostflopRaise(hand, actorSeat, raiseTo, 'river'); }
+export function applyRiverAllIn(hand: StartedHand, actorSeat: number): StartedHand { return applyPostflopAllIn(hand, actorSeat, 'river'); }
 
 /** Advances a settled flop to the turn, burning one server-private card then dealing one. */
 export function advanceFlopToTurn(hand: StartedHand): StartedHand { return advancePostflopToNext(hand, 'flop'); }
