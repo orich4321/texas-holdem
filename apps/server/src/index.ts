@@ -1,6 +1,6 @@
 import { createServer } from 'node:http';
 import { Server } from 'socket.io';
-import { createApp } from './app.js';
+import { createApp } from './http-app.js';
 import { createOriginPolicy } from './origin-policy.js';
 import { prisma } from './persistence/prisma.js';
 import { RoomRepository } from './persistence/room-repository.js';

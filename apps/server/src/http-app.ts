@@ -100,6 +100,7 @@ function setPlayerSessionCookie(response: express.Response, accessToken: string)
   });
 }
 
+/** Builds the HTTP API independently from the Socket.IO transport. */
 export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy() }: CreateAppDependencies) {
   const app = express();
 

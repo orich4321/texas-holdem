@@ -14,7 +14,7 @@ const { RoomRepository } = integrationEnabled
   ? await import('../apps/server/src/persistence/room-repository.ts')
   : { RoomRepository: undefined };
 const { createApp } = integrationEnabled
-  ? await import('../apps/server/src/app.ts')
+  ? await import('../apps/server/src/http-app.ts')
   : { createApp: undefined };
 
 let server;
