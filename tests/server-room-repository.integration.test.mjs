@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { Buffer } from 'node:buffer';
 import { randomUUID } from 'node:crypto';
 import { test, before, after, beforeEach } from 'node:test';
 
@@ -11,6 +12,8 @@ const { prisma } = integrationEnabled
 const { RoomRepository } = integrationEnabled
   ? await import('../apps/server/src/persistence/room-repository.ts')
   : { RoomRepository: undefined };
+
+const snapshotKeyring = new Map([['integration-current', Buffer.from('integration snapshot signing key that is safely over 32 bytes', 'utf8')]]);
 
 if (integrationEnabled) {
   before(() => {
@@ -128,4 +131,38 @@ test('database rejects assigning a room host from another room', { skip: !integr
       data: { hostPlayerId: secondRoom.hostPlayerId },
     }),
   );
+});
+
+test('database transaction serializes an authenticated action into one private successor snapshot', { skip: !integrationEnabled }, async () => {
+  const repository = new RoomRepository(prisma, undefined, undefined, undefined, snapshotKeyring);
+  const created = await repository.createRoom({
+    status: 'WAITING',
+    host: { id: randomUUID(), displayName: 'Host', initialStack: 1_000 },
+    players: [{ id: randomUUID(), displayName: 'Guest', initialStack: 1_000 }],
+  });
+  await repository.startGameForHostAtomically({ joinId: created.joinId, hostPlayerId: created.hostPlayerId });
+
+  const initial = await repository.recoverLatestHandForPlayer(created.id, created.hostPlayerId);
+  const activePlayerId = initial.recovery.hand.seats.find((seat) => seat.seatNumber === initial.recovery.hand.currentActorSeat)?.playerId;
+  assert.equal(typeof activePlayerId, 'string');
+  const activeView = await repository.recoverLatestPlayerViewForPlayer(created.id, activePlayerId);
+  const action = activeView.toCall === 0 ? { type: 'check' } : { type: 'call' };
+
+  const attempts = await Promise.allSettled([
+    repository.persistPlayerActionAtomically({ roomId: created.id, playerId: activePlayerId, action }),
+    repository.persistPlayerActionAtomically({ roomId: created.id, playerId: activePlayerId, action }),
+  ]);
+  assert.equal(attempts.filter((attempt) => attempt.status === 'fulfilled').length, 1);
+  assert.equal(attempts.filter((attempt) => attempt.status === 'rejected').length, 1);
+
+  const events = await prisma.gameEvent.findMany({ where: { roomId: created.id }, orderBy: { sequence: 'asc' } });
+  assert.equal(events.length, 2);
+  assert.deepEqual(events[1].payload, { actorPlayerId: activePlayerId, action });
+  assert.equal(JSON.stringify(events[1].payload).includes('holeCards'), false);
+  assert.equal(JSON.stringify(events[1].payload).includes('deck'), false);
+  const recovered = await repository.recoverLatestHandForPlayer(created.id, created.hostPlayerId);
+  assert.equal(recovered.sequence, 1);
+  assert.equal(recovered.recovery.hand.currentActorSeat !== initial.recovery.hand.currentActorSeat, true);
+  const guestView = await repository.recoverLatestPlayerViewForPlayer(created.id, created.players[1].id);
+  assert.equal(JSON.stringify(guestView).match(/"holeCards"/g).length, 1);
 });

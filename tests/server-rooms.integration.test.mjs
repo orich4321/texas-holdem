@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { Buffer } from 'node:buffer';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { test, before, after, beforeEach } from 'node:test';
@@ -20,10 +21,12 @@ let server;
 let baseUrl;
 let repository;
 
+const snapshotKeyring = new Map([['integration-current', Buffer.from('integration snapshot signing key that is safely over 32 bytes', 'utf8')]]);
+
 if (integrationEnabled) {
   before(async () => {
     assert.match(testDatabaseUrl, /(?:_|-)test(?:\?|$|\/)/, 'TEST_DATABASE_URL must use a test database');
-    repository = new RoomRepository(prisma);
+    repository = new RoomRepository(prisma, undefined, undefined, undefined, snapshotKeyring);
     server = createServer(createApp({ roomRepository: repository }));
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
@@ -60,6 +63,10 @@ async function postJoin(joinId, body) {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
   });
+}
+
+async function postStart(joinId, cookie) {
+  return globalThis.fetch(`${baseUrl}/rooms/${joinId}/start`, { method: 'POST', headers: { cookie } });
 }
 
 test('POST /rooms persists a waiting room and its host then returns an opaque invite', { skip: !integrationEnabled }, async () => {
@@ -225,7 +232,31 @@ test('POST /rooms/:joinId/join returns stable generic errors for invalid input, 
   assert.equal(await prisma.player.count(), 1);
 });
 
-test('GET /rooms/:joinId exposes only a waiting room lobby projection', { skip: !integrationEnabled }, async () => {
+test('POST /rooms/:joinId/start accepts only the authenticated host and never exposes a dealt hand', { skip: !integrationEnabled }, async () => {
+  const created = await postRoom({ displayName: 'Host', initialStack: 800 });
+  const hostCookie = created.headers.get('set-cookie');
+  const { roomId } = await created.json();
+  const joined = await postJoin(roomId, { displayName: 'Guest', initialStack: 800 });
+  const guestCookie = joined.headers.get('set-cookie');
+
+  const guestAttempt = await postStart(roomId, guestCookie);
+  assert.equal(guestAttempt.status, 409);
+  const started = await postStart(roomId, hostCookie);
+  assert.equal(started.status, 201);
+  assert.deepEqual(await started.json(), { roomId, status: 'IN_PROGRESS' });
+  assert.equal(await prisma.gameEvent.count({ where: { room: { joinId: roomId } } }), 1);
+  assert.equal(await prisma.gameSnapshot.count({ where: { room: { joinId: roomId } } }), 1);
+
+  const publicRoom = await globalThis.fetch(`${baseUrl}/rooms/${roomId}`);
+  assert.equal(publicRoom.status, 200);
+  const projection = await publicRoom.json();
+  assert.equal(projection.status, 'IN_PROGRESS');
+  assert.equal(projection.canStart, false);
+  assert.equal(JSON.stringify(projection).includes('holeCards'), false);
+  assert.equal(JSON.stringify(projection).includes('deck'), false);
+});
+
+test('GET /rooms/:joinId exposes a player-safe waiting-room lobby projection', { skip: !integrationEnabled }, async () => {
   const created = await postRoom({ displayName: 'Host', initialStack: 800 });
   const { roomId } = await created.json();
   await postJoin(roomId, { displayName: 'Guest', initialStack: 400 });
@@ -233,7 +264,7 @@ test('GET /rooms/:joinId exposes only a waiting room lobby projection', { skip: 
   const lobby = await globalThis.fetch(`${baseUrl}/rooms/${roomId}`);
   assert.equal(lobby.status, 200);
   const result = await lobby.json();
-  assert.deepEqual(result, { joinId: roomId, status: 'WAITING', host: { displayName: 'Host' }, players: [
+  assert.deepEqual(result, { joinId: roomId, status: 'WAITING', canStart: false, host: { displayName: 'Host' }, players: [
     { displayName: 'Host', initialStack: 800, currentStack: 800 },
     { displayName: 'Guest', initialStack: 400, currentStack: 400 },
   ] });

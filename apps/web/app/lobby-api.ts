@@ -10,7 +10,8 @@ export const ROOM_FULL_MESSAGE = 'השולחן כבר מלא. נסו חדר אח
 
 export type Lobby = {
   joinId: string;
-  status: 'WAITING';
+  status: 'WAITING' | 'IN_PROGRESS';
+  canStart: boolean;
   host: { displayName: string };
   players: Array<{ displayName: string; initialStack: number; currentStack: number }>;
 };
@@ -32,13 +33,31 @@ function isLobby(value: unknown, expectedJoinId: string): value is Lobby {
   if (value === null || typeof value !== 'object') return false;
   const lobby = value as Record<string, unknown>;
   return lobby.joinId === expectedJoinId
-    && lobby.status === 'WAITING'
+    && (lobby.status === 'WAITING' || lobby.status === 'IN_PROGRESS')
+    && typeof lobby.canStart === 'boolean'
     && lobby.host !== null
     && typeof lobby.host === 'object'
     && typeof (lobby.host as Record<string, unknown>).displayName === 'string'
     && Array.isArray(lobby.players)
     && lobby.players.length <= 9
     && lobby.players.every(isPlayer);
+}
+
+export async function startLobbyGame(
+  joinId: string,
+  boundaries: Boundaries,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  try {
+    const response = await boundaries.fetch(`${SERVER_URL}/rooms/${encodeURIComponent(joinId)}/start`, {
+      method: 'POST',
+      credentials: 'include',
+    });
+    return response.status === 201
+      ? { ok: true }
+      : { ok: false, message: 'לא הצלחנו להתחיל את המשחק. נסו שוב.' };
+  } catch {
+    return { ok: false, message: 'לא הצלחנו להתחיל את המשחק. נסו שוב.' };
+  }
 }
 
 export async function loadLobby(

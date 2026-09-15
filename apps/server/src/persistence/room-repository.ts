@@ -14,6 +14,9 @@ import {
   type SignedPrivateHandSnapshot,
 } from './private-hand-snapshot.js';
 import type { VerifiedPrivateHandRecovery } from './private-hand-snapshot.js';
+import { signPrivateHandSnapshot } from './private-hand-snapshot.js';
+import { ServerGameLifecycle, type PlayerAction, type ServerPlayerView } from '../game-lifecycle.js';
+import { startServerHand } from '../hand-start.js';
 
 type PlayerInput = {
   id: string;
@@ -73,6 +76,22 @@ export type StartGameAtomicallyInput = Readonly<{
   event: unknown;
 }>;
 
+export type PersistPlayerActionInput = Readonly<{
+  roomId: string;
+  /** Derived exclusively from an authenticated server session. */
+  playerId: string;
+  action: PlayerAction;
+}>;
+
+export type StartGameForHostInput = Readonly<{
+  joinId: string;
+  /** Derived exclusively from the authenticated host session. */
+  hostPlayerId: string;
+}>;
+
+const DEFAULT_SMALL_BLIND = 5;
+const DEFAULT_BIG_BLIND = 10;
+
 function isBoundInitialPrivateSnapshot(snapshot: SignedPrivateHandSnapshot, roomId: string): boolean {
   return snapshot.version === 1
     && snapshot.roomId === roomId
@@ -89,6 +108,18 @@ function publicGameStartEvent(event: unknown): GameStartEvent {
     throw new Error('Invalid game-start event');
   }
   return { dealerSeat: dealerSeat as number, smallBlind: smallBlind as number, bigBlind: bigBlind as number };
+}
+
+function validatePersistedPlayerAction(action: unknown): asserts action is PlayerAction {
+  if (!action || typeof action !== 'object' || Array.isArray(action)) throw new Error('Invalid player action');
+  const record = action as Record<string, unknown>;
+  const keys = Object.keys(record).sort();
+  if (typeof record.type !== 'string' || !['check', 'call', 'fold', 'all-in', 'raise'].includes(record.type)) throw new Error('Invalid player action');
+  if (record.type === 'raise') {
+    if (keys.length !== 2 || keys[0] !== 'raiseTo' || keys[1] !== 'type' || typeof record.raiseTo !== 'number' || !Number.isSafeInteger(record.raiseTo) || record.raiseTo < 0) throw new Error('Invalid player action');
+    return;
+  }
+  if (keys.length !== 1 || keys[0] !== 'type') throw new Error('Invalid player action');
 }
 
 export class RoomRepository {
@@ -241,6 +272,61 @@ export class RoomRepository {
     });
   }
 
+  /**
+   * The production game-start path. Seat order, stakes, shuffle, private
+   * snapshot, and public metadata are all derived on the server; the browser
+   * supplies only its authenticated host identity.
+   */
+  async startGameForHostAtomically({ joinId, hostPlayerId }: StartGameForHostInput) {
+    const activeKey = this.privateSnapshotKeyring.entries().next().value as [string, PrivateSnapshotSigningKey] | undefined;
+    if (!activeKey) throw new Error('Room is not startable by this host');
+    const [keyId, key] = activeKey;
+
+    return this.db.$transaction(async (tx) => {
+      const room = await tx.room.findUnique({
+        where: { joinId },
+        select: {
+          id: true,
+          hostPlayerId: true,
+          status: true,
+          players: { orderBy: { createdAt: 'asc' }, select: { id: true, currentStack: true } },
+        },
+      });
+      if (!room || room.hostPlayerId !== hostPlayerId || room.status !== 'WAITING' || room.players.length < 2) {
+        throw new Error('Room is not startable by this host');
+      }
+
+      // Claim the waiting room before dealing. PostgreSQL serializes matching
+      // updates, so a concurrent start cannot produce a second deck or hand.
+      const claimed = await tx.room.updateMany({
+        where: { id: room.id, hostPlayerId, status: 'WAITING' },
+        data: { status: 'IN_PROGRESS' },
+      });
+      if (claimed.count !== 1) throw new Error('Room is not startable by this host');
+
+      const hand = startServerHand({
+        seats: room.players.map((player, index) => ({
+          seatNumber: index + 1,
+          playerId: player.id,
+          stack: player.currentStack,
+        })),
+        dealerSeat: 1,
+        smallBlind: DEFAULT_SMALL_BLIND,
+        bigBlind: DEFAULT_BIG_BLIND,
+      });
+      const sequence = 0;
+      const event = Object.freeze({
+        dealerSeat: hand.dealerSeat,
+        smallBlind: hand.smallBlindAmount,
+        bigBlind: hand.bigBlindAmount,
+      });
+      const snapshot = signPrivateHandSnapshot(hand, { roomId: room.id, sequence, keyId }, key);
+      await tx.gameEvent.create({ data: { roomId: room.id, sequence, type: 'GAME_STARTED', payload: event } });
+      await tx.gameSnapshot.create({ data: { roomId: room.id, sequence, state: snapshot as unknown as Prisma.InputJsonValue } });
+      return { roomId: room.id, sequence };
+    });
+  }
+
   /** Server-only restart path, scoped to a participant proven by session auth. */
   async findLatestGameSnapshotForPlayer(roomId: string, playerId: string) {
     const snapshot = await this.db.gameSnapshot.findFirst({
@@ -262,5 +348,80 @@ export class RoomRepository {
       sequence: snapshot.sequence,
       recovery: hydrateSignedPrivateHandSnapshot(snapshot.state, { roomId, sequence: snapshot.sequence }, this.privateSnapshotKeyring),
     };
+  }
+
+  /**
+   * Builds the sole player-safe projection used for reconnects. The signed
+   * hand remains within the server boundary and is never returned to a socket.
+   */
+  async recoverLatestPlayerViewForPlayer(roomId: string, playerId: string): Promise<ServerPlayerView | null> {
+    const room = await this.db.room.findFirst({
+      where: { id: roomId, status: 'IN_PROGRESS', players: { some: { id: playerId } } },
+      select: {
+        players: {
+          orderBy: { createdAt: 'asc' },
+          select: { id: true, displayName: true, currentStack: true },
+        },
+      },
+    });
+    if (!room) return null;
+
+    const latest = await this.recoverLatestHandForPlayer(roomId, playerId);
+    if (!latest) return null;
+    const hand = latest.recovery.hand;
+    const lifecycle = ServerGameLifecycle.fromVerifiedRecoveredHand({
+      seats: room.players.map((player, index) => ({
+        seatNumber: index + 1,
+        playerId: player.id,
+        playerName: player.displayName,
+        stack: player.currentStack,
+      })),
+      dealerSeat: hand.dealerSeat,
+      smallBlind: hand.smallBlindAmount,
+      bigBlind: hand.bigBlindAmount,
+    }, latest.recovery);
+    return lifecycle.viewFor(playerId);
+  }
+
+  /** Applies an authenticated action to the latest verified state and commits its successor atomically. */
+  async persistPlayerActionAtomically({ roomId, playerId, action }: PersistPlayerActionInput) {
+    validatePersistedPlayerAction(action);
+    return this.db.$transaction(async (tx) => {
+      const room = await tx.room.findUnique({
+        where: { id: roomId },
+        select: { status: true, players: { orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, currentStack: true } } },
+      });
+      if (!room || room.status !== 'IN_PROGRESS' || !room.players.some((player) => player.id === playerId)) throw new Error('Game action is unavailable');
+
+      // PostgreSQL obtains a row lock for this otherwise no-op update. Reading
+      // the latest snapshot only after that lock means two accepted actions
+      // cannot both calculate the same successor sequence.
+      const locked = await tx.room.updateMany({
+        where: { id: roomId, status: 'IN_PROGRESS' },
+        data: { updatedAt: new Date() },
+      });
+      if (locked.count !== 1) throw new Error('Game action is unavailable');
+      const latest = await tx.gameSnapshot.findFirst({
+        where: { roomId }, orderBy: { sequence: 'desc' }, select: { sequence: true, state: true },
+      });
+      if (!latest) throw new Error('Game action is unavailable');
+      const recovery = hydrateSignedPrivateHandSnapshot(latest.state as unknown as SignedPrivateHandSnapshot, { roomId, sequence: latest.sequence }, this.privateSnapshotKeyring);
+      const hand = recovery.hand;
+      const lifecycle = ServerGameLifecycle.fromVerifiedRecoveredHand({
+        seats: room.players.map((player, index) => ({ seatNumber: index + 1, playerId: player.id, playerName: player.displayName, stack: player.currentStack })),
+        dealerSeat: hand.dealerSeat, smallBlind: hand.smallBlindAmount, bigBlind: hand.bigBlindAmount,
+      }, recovery);
+      const view = lifecycle.applyAction(playerId, action);
+      const views = Object.freeze(room.players.map((player) => lifecycle.viewFor(player.id)));
+      const sequence = latest.sequence + 1;
+      const activeKey = this.privateSnapshotKeyring.entries().next().value as [string, PrivateSnapshotSigningKey] | undefined;
+      if (!activeKey) throw new Error('Game action is unavailable');
+      const [keyId, key] = activeKey;
+      const snapshot = signPrivateHandSnapshot(lifecycle.handForDurableSnapshot(), { roomId, sequence, keyId }, key);
+      const publicAction = action.type === 'raise' ? { type: 'raise' as const, raiseTo: action.raiseTo } : { type: action.type };
+      await tx.gameEvent.create({ data: { roomId, sequence, type: 'PLAYER_ACTION', payload: { actorPlayerId: playerId, action: publicAction } } });
+      await tx.gameSnapshot.create({ data: { roomId, sequence, state: snapshot as unknown as Prisma.InputJsonValue } });
+      return { sequence, view, views };
+    });
   }
 }

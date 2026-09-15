@@ -4,7 +4,7 @@ import { test } from 'node:test';
 
 import { RoomRepository } from '../apps/server/src/persistence/room-repository.ts';
 import { startHand } from '../packages/poker-core/src/index.ts';
-import { signPrivateHandSnapshot } from '../apps/server/src/persistence/private-hand-snapshot.ts';
+import { hydrateSignedPrivateHandSnapshot, signPrivateHandSnapshot } from '../apps/server/src/persistence/private-hand-snapshot.ts';
 
 const room = { id: 'room-db-id', joinId: '0123456789abcdef', hostPlayerId: 'host-id', status: 'WAITING' };
 const snapshotKey = Buffer.from('a server-only snapshot signing key with adequate length', 'utf8');
@@ -18,7 +18,7 @@ const privateSnapshot = signPrivateHandSnapshot(startHand({
   randomInt: () => 0,
 }), { roomId: room.id, sequence: 0, keyId: snapshotKeyId }, snapshotKey);
 
-function createDb({ updateCount = 1, createEvent = undefined, createSnapshot = undefined } = {}) {
+function createDb({ updateCount = 1, createEvent = undefined, createSnapshot = undefined, roomRecord = room } = {}) {
   const calls = [];
   const gameSnapshot = {
     create: async (args) => { calls.push(['gameSnapshot.create', args]); return createSnapshot ?? { id: 'snapshot-1', sequence: 0, ...args.data }; },
@@ -27,13 +27,51 @@ function createDb({ updateCount = 1, createEvent = undefined, createSnapshot = u
   const tx = {
     room: {
       updateMany: async (args) => { calls.push(['room.updateMany', args]); return { count: updateCount }; },
-      findUnique: async (args) => { calls.push(['room.findUnique', args]); return room; },
+      findUnique: async (args) => { calls.push(['room.findUnique', args]); return roomRecord; },
     },
     gameEvent: { create: async (args) => { calls.push(['gameEvent.create', args]); return createEvent ?? { id: 'event-1', sequence: 0, ...args.data }; } },
     gameSnapshot,
   };
   return { calls, gameSnapshot, $transaction: async (fn) => fn(tx) };
 }
+
+test('authenticated host start deals only on the server and commits the first signed hand atomically', async () => {
+  const roomWithPlayers = {
+    ...room,
+    players: [
+      { id: 'host-id', currentStack: 100 },
+      { id: 'player-1', currentStack: 100 },
+    ],
+  };
+  const db = createDb({ roomRecord: roomWithPlayers });
+  const repository = new RoomRepository(db, undefined, undefined, undefined, snapshotKeyring);
+
+  const started = await repository.startGameForHostAtomically({ joinId: room.joinId, hostPlayerId: room.hostPlayerId });
+
+  assert.deepEqual(started, { roomId: room.id, sequence: 0 });
+  assert.deepEqual(db.calls.map(([name]) => name), ['room.findUnique', 'room.updateMany', 'gameEvent.create', 'gameSnapshot.create']);
+  assert.deepEqual(db.calls[1][1], { where: { id: room.id, hostPlayerId: room.hostPlayerId, status: 'WAITING' }, data: { status: 'IN_PROGRESS' } });
+  assert.deepEqual(db.calls[2][1].data.payload, { dealerSeat: 1, smallBlind: 5, bigBlind: 10 });
+  assert.equal(JSON.stringify(db.calls[2][1].data).includes('holeCards'), false);
+  assert.equal(JSON.stringify(db.calls[2][1].data).includes('deck'), false);
+  const recovered = hydrateSignedPrivateHandSnapshot(db.calls[3][1].data.state, { roomId: room.id, sequence: 0 }, snapshotKeyring);
+  assert.deepEqual(recovered.hand.seats.map((seat) => seat.playerId), ['host-id', 'player-1']);
+});
+
+test('authenticated start refuses a non-host or a one-player room before claiming it', async () => {
+  for (const roomRecord of [
+    { ...room, players: [{ id: 'host-id', currentStack: 100 }] },
+    { ...room, players: [{ id: 'host-id', currentStack: 100 }, { id: 'player-1', currentStack: 100 }] },
+  ]) {
+    const db = createDb({ roomRecord });
+    const repository = new RoomRepository(db, undefined, undefined, undefined, snapshotKeyring);
+    await assert.rejects(
+      repository.startGameForHostAtomically({ joinId: room.joinId, hostPlayerId: roomRecord.players.length === 1 ? room.hostPlayerId : 'attacker' }),
+      /not startable/i,
+    );
+    assert.deepEqual(db.calls.map(([name]) => name), ['room.findUnique']);
+  }
+});
 
 test('game start atomically moves only the host waiting room in progress and persists a private snapshot plus public event', async () => {
   const db = createDb();

@@ -1,0 +1,68 @@
+import assert from 'node:assert/strict';
+import { Buffer } from 'node:buffer';
+import { test } from 'node:test';
+
+import { RoomRepository } from '../apps/server/src/persistence/room-repository.ts';
+import { startHand } from '../packages/poker-core/src/index.ts';
+import { signPrivateHandSnapshot, hydrateSignedPrivateHandSnapshot } from '../apps/server/src/persistence/private-hand-snapshot.ts';
+
+const key = Buffer.from('a server-only snapshot signing key with adequate length', 'utf8');
+const keyId = 'test-current';
+const keyring = new Map([[keyId, key]]);
+const room = {
+  id: 'room-db-id', joinId: '0123456789abcdef', status: 'IN_PROGRESS',
+  players: [
+    { id: 'host-id', displayName: 'אורי', currentStack: 100, createdAt: new Date('2026-01-01') },
+    { id: 'player-1', displayName: 'נועה', currentStack: 100, createdAt: new Date('2026-01-02') },
+  ],
+};
+const initial = signPrivateHandSnapshot(startHand({
+  seats: room.players.map((player, index) => ({ seatNumber: index + 1, playerId: player.id, stack: player.currentStack })),
+  dealerSeat: 1, smallBlind: 5, bigBlind: 10, randomInt: () => 0,
+}), { roomId: room.id, sequence: 0, keyId }, key);
+
+function createDb() {
+  const calls = [];
+  const tx = {
+    room: {
+      findUnique: async (args) => { calls.push(['room.findUnique', args]); return room; },
+      updateMany: async (args) => { calls.push(['room.updateMany', args]); return { count: 1 }; },
+    },
+    gameSnapshot: {
+      findFirst: async (args) => { calls.push(['gameSnapshot.findFirst', args]); return { sequence: 0, state: initial }; },
+      create: async (args) => { calls.push(['gameSnapshot.create', args]); return args.data; },
+    },
+    gameEvent: { create: async (args) => { calls.push(['gameEvent.create', args]); return args.data; } },
+  };
+  return { calls, $transaction: async (callback) => callback(tx) };
+}
+
+test('accepted authoritative action persists a minimal event and next signed snapshot atomically', async () => {
+  const db = createDb();
+  const repository = new RoomRepository(db, undefined, undefined, undefined, keyring);
+
+  const result = await repository.persistPlayerActionAtomically({ roomId: room.id, playerId: 'host-id', action: { type: 'call' } });
+
+  assert.equal(result.sequence, 1);
+  assert.equal(result.view.playerId, 'host-id');
+  assert.deepEqual(db.calls.map(([name]) => name), ['room.findUnique', 'room.updateMany', 'gameSnapshot.findFirst', 'gameEvent.create', 'gameSnapshot.create']);
+  assert.deepEqual(db.calls[3][1].data, { roomId: room.id, sequence: 1, type: 'PLAYER_ACTION', payload: { actorPlayerId: 'host-id', action: { type: 'call' } } });
+  const signed = db.calls[4][1].data.state;
+  const recovered = hydrateSignedPrivateHandSnapshot(signed, { roomId: room.id, sequence: 1 }, keyring);
+  assert.equal(recovered.hand.currentActorSeat, 2);
+  assert.equal(JSON.stringify(db.calls[3][1].data).includes('holeCards'), false);
+  assert.equal(JSON.stringify(db.calls[3][1].data).includes('deck'), false);
+});
+
+test('invalid or out-of-turn action writes nothing', async () => {
+  for (const [playerId, action] of [
+    ['player-1', { type: 'call' }],
+    ['host-id', { type: 'raise', raiseTo: 1.5 }],
+    ['host-id', { type: 'call', playerId: 'player-1' }],
+  ]) {
+    const db = createDb();
+    const repository = new RoomRepository(db, undefined, undefined, undefined, keyring);
+    await assert.rejects(repository.persistPlayerActionAtomically({ roomId: room.id, playerId, action }), /action|active|raise/i);
+    assert.deepEqual(db.calls.map(([name]) => name), playerId === 'host-id' ? [] : ['room.findUnique', 'room.updateMany', 'gameSnapshot.findFirst']);
+  }
+});

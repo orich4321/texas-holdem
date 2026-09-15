@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import express, { type ErrorRequestHandler, type RequestHandler } from 'express';
 import { createOriginPolicy } from './origin-policy.js';
 import type { RoomRepository } from './persistence/room-repository.js';
+import { parseCookieHeader } from './socket-session.js';
 
 const MAX_REQUEST_BODY_SIZE = '16kb';
 const MAX_DISPLAY_NAME_CODE_POINTS = 24;
@@ -153,10 +154,25 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
     }
   });
 
+  app.post('/rooms/:joinId/start', async (request, response) => {
+    try {
+      const accessToken = parseCookieHeader(request.headers.cookie).poker_player_token;
+      const player = await roomRepository.findPlayerByRoomJoinIdAndAccessToken(request.params.joinId, accessToken);
+      if (!player) {
+        response.status(401).json({ error: { code: 'UNAUTHORIZED' } });
+        return;
+      }
+      await roomRepository.startGameForHostAtomically({ joinId: request.params.joinId, hostPlayerId: player.id });
+      response.status(201).json({ roomId: request.params.joinId, status: 'IN_PROGRESS' });
+    } catch {
+      response.status(409).json({ error: { code: 'ROOM_NOT_STARTABLE' } });
+    }
+  });
+
   app.get('/rooms/:joinId', async (request, response) => {
     try {
       const room = await roomRepository.findRoomByJoinId(request.params.joinId);
-      if (!room || room.status !== 'WAITING') {
+      if (!room || (room.status !== 'WAITING' && room.status !== 'IN_PROGRESS')) {
         response.status(404).json({ error: { code: 'ROOM_NOT_FOUND' } });
         return;
       }
@@ -168,6 +184,12 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
       response.json({
         joinId: room.joinId,
         status: room.status,
+        canStart: room.status === 'WAITING'
+          && room.players.length >= 2
+          && (await roomRepository.findPlayerByRoomJoinIdAndAccessToken(
+            room.joinId,
+            parseCookieHeader(request.headers.cookie).poker_player_token,
+          ))?.id === room.hostPlayerId,
         host: { displayName: host.displayName },
         players: room.players.map(({ displayName, initialStack, currentStack }) => ({ displayName, initialStack, currentStack })),
       });

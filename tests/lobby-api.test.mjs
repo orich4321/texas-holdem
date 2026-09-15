@@ -22,6 +22,7 @@ test('lobby request loads a validated public waiting-room projection with browse
   const projection = {
     joinId: 'abc123',
     status: 'WAITING',
+    canStart: false,
     host: { displayName: 'אורי' },
     players: [{ displayName: 'אורי', initialStack: 1000, currentStack: 1000 }],
   };
@@ -47,10 +48,10 @@ test('lobby request hides backend details for malformed, rejected, and network r
     async () => ({ status: 500, json: async () => ({ error: privateDetail }) }),
     async () => ({ status: 200, json: async () => ({ joinId: 'abc', players: [] }) }),
     async () => ({ status: 200, json: async () => ({
-      joinId: 'another-room', status: 'WAITING', host: { displayName: 'אורי' }, players: [],
+      joinId: 'another-room', status: 'WAITING', canStart: false, host: { displayName: 'אורי' }, players: [],
     }) }),
     async () => ({ status: 200, json: async () => ({
-      joinId: 'abc123', status: 'WAITING', host: { displayName: 'אורי' },
+      joinId: 'abc123', status: 'WAITING', canStart: false, host: { displayName: 'אורי' },
       players: Array.from({ length: 10 }, () => ({ displayName: 'שחקן', initialStack: 1000, currentStack: 1000 })),
     }) }),
     async () => { throw new Error(privateDetail); },
@@ -108,4 +109,23 @@ test('joining validates nickname locally and returns generic Hebrew errors witho
     fetch: async () => ({ status: 404, json: async () => ({ error: 'private detail' }) }),
   });
   assert.deepEqual(missing, { ok: false, message: LOBBY_JOIN_ERROR_MESSAGE });
+});
+
+test('host start sends only an authenticated, cookie-backed request and keeps failure details private', async () => {
+  const { startLobbyGame } = await lobbyApi();
+  const requests = [];
+  const started = await startLobbyGame('abc123', {
+    fetch: async (...request) => { requests.push(request); return { status: 201, json: async () => null }; },
+  });
+  assert.deepEqual(started, { ok: true });
+  assert.deepEqual(requests, [[
+    'http://localhost:3001/rooms/abc123/start',
+    { method: 'POST', credentials: 'include' },
+  ]]);
+
+  const failed = await startLobbyGame('abc123', {
+    fetch: async () => ({ status: 409, json: async () => ({ error: 'private database detail' }) }),
+  });
+  assert.equal(failed.ok, false);
+  assert.doesNotMatch(failed.message, /private database detail/);
 });

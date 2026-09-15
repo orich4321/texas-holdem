@@ -180,6 +180,11 @@ export class ServerGameLifecycle {
     return this.viewFor(playerId);
   }
 
+  /** Server-only persistence boundary; callers must sign before storing this state. */
+  handForDurableSnapshot(): StartedHand {
+    return this.requireHand();
+  }
+
   private requireHand(): StartedHand {
     if (!this.hand) throw new Error('Game has not started');
     return this.hand;

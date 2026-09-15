@@ -6,7 +6,9 @@ import {
   type Lobby,
   loadLobby,
   joinLobby,
+  startLobbyGame,
 } from '../../lobby-api';
+import TableClient from './table-client';
 
 type LobbyClientProps = { joinId: string };
 
@@ -17,6 +19,7 @@ export default function LobbyClient({ joinId }: LobbyClientProps) {
   const [joinMessage, setJoinMessage] = useState<string>();
   const [loading, setLoading] = useState(true);
   const [joining, setJoining] = useState(false);
+  const [starting, setStarting] = useState(false);
   const [copied, setCopied] = useState<string>();
 
   const refreshLobby = useCallback(async (signal?: AbortSignal) => {
@@ -34,6 +37,12 @@ export default function LobbyClient({ joinId }: LobbyClientProps) {
     void refreshLobby(controller.signal);
     return () => controller.abort();
   }, [refreshLobby]);
+
+  useEffect(() => {
+    if (lobby?.status !== 'WAITING') return undefined;
+    const timer = globalThis.setInterval(() => { void refreshLobby(); }, 3_000);
+    return () => globalThis.clearInterval(timer);
+  }, [lobby?.status, refreshLobby]);
 
   async function handleJoin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -64,6 +73,16 @@ export default function LobbyClient({ joinId }: LobbyClientProps) {
     }
   }
 
+  async function handleStart() {
+    if (starting) return;
+    setStarting(true);
+    setJoinMessage(undefined);
+    const result = await startLobbyGame(joinId, { fetch: globalThis.fetch });
+    if (result.ok) await refreshLobby();
+    else setJoinMessage(result.message);
+    setStarting(false);
+  }
+
   if (loading && !lobby) {
     return <main className="lobby-shell" aria-busy="true"><p className="lobby-loading">טוענים את השולחן…</p></main>;
   }
@@ -82,6 +101,8 @@ export default function LobbyClient({ joinId }: LobbyClientProps) {
   }
 
   if (!lobby) return null;
+
+  if (lobby.status === 'IN_PROGRESS') return <TableClient joinId={joinId} />;
 
   return (
     <main className="lobby-shell">
@@ -121,6 +142,12 @@ export default function LobbyClient({ joinId }: LobbyClientProps) {
           <button type="button" onClick={() => void copyInvitation()}>העתקת קישור</button>
           {copied ? <p role="status" aria-live="polite">{copied}</p> : null}
         </div>
+
+        {lobby.canStart ? (
+          <button type="button" className="lobby-start" onClick={() => void handleStart()} disabled={starting}>
+            {starting ? 'מחלקים קלפים…' : 'התחילו את היד'}
+          </button>
+        ) : null}
 
         <form className="lobby-join-form" onSubmit={handleJoin}>
           <div className="lobby-form-heading"><h2>הצטרפו לשולחן</h2><span>1,000 צ׳יפים</span></div>
