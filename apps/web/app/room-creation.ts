@@ -39,6 +39,7 @@ export async function submitRoomCreation(
   try {
     const response = await boundaries.fetch(`${SERVER_URL}/rooms`, {
       method: 'POST',
+      credentials: 'include',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ displayName, initialStack: INITIAL_STACK }),
     });

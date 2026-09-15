@@ -87,10 +87,15 @@ function createHttpCorsMiddleware(isOriginAllowed: OriginPolicy): RequestHandler
 }
 
 function setPlayerSessionCookie(response: express.Response, accessToken: string): void {
+  const isProduction = process.env.NODE_ENV === 'production';
+
   response.cookie('poker_player_token', accessToken, {
     httpOnly: true,
-    sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
+    // The deployed web and game-server projects have different Vercel origins.
+    // Cross-origin fetches and Socket.IO handshakes therefore need a secure,
+    // cross-site cookie in production.
+    sameSite: isProduction ? 'none' : 'lax',
+    secure: isProduction,
     path: '/',
   });
 }

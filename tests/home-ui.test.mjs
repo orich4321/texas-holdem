@@ -109,6 +109,7 @@ test('room creation posts the normalized nickname and fixed MVP stack before nav
     'http://localhost:3001/rooms',
     {
       method: 'POST',
+      credentials: 'include',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ displayName: 'אורי', initialStack: 1000 }),
     },

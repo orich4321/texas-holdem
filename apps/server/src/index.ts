@@ -29,6 +29,12 @@ app.get('/health', (_request, response) => {
 
 attachSocketSessionTransport(io, roomRepository);
 
-httpServer.listen(port, () => {
-  console.log(`Server listening on http://localhost:${port}`);
-});
+// Vercel invokes the exported HTTP server. Local development retains a normal
+// listener so the Socket.IO transport can be exercised outside its runtime.
+if (!process.env.VERCEL) {
+  httpServer.listen(port, () => {
+    console.log(`Server listening on http://localhost:${port}`);
+  });
+}
+
+export default httpServer;
