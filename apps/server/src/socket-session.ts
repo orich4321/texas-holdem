@@ -35,7 +35,7 @@ export function parseCookieHeader(header: unknown): Readonly<Record<string, stri
     const name = part.slice(0, separator).trim();
     const value = part.slice(separator + 1).trim();
     if (!/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name) || value.length === 0) continue;
-    if (Object.hasOwn(parsed, name)) {
+    if (Object.prototype.hasOwnProperty.call(parsed, name)) {
       delete parsed[name];
       duplicates.add(name);
     } else if (!duplicates.has(name)) {
