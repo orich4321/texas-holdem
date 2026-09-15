@@ -39,3 +39,24 @@ export function createOriginPolicy(configuredOrigins = process.env.CLIENT_ORIGIN
   const allowedOrigins = new Set(origins.map(validateOrigin));
   return (origin: string | undefined) => origin !== undefined && allowedOrigins.has(origin);
 }
+
+/**
+ * Allows an explicitly configured browser origin, or the origin of the public
+ * request itself. The latter is for a same-origin Vercel Services deployment;
+ * it still requires the complete browser Origin to match the request Host.
+ */
+export function isAllowedRequestOrigin(
+  origin: string | undefined,
+  requestHost: string | undefined,
+  isConfiguredOriginAllowed: (origin: string | undefined) => boolean,
+): boolean {
+  if (isConfiguredOriginAllowed(origin)) return true;
+  if (!origin || !requestHost) return false;
+
+  try {
+    const parsed = new URL(origin);
+    return parsed.origin === origin && parsed.host === requestHost;
+  } catch {
+    return false;
+  }
+}

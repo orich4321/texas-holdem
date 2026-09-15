@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { test } from 'node:test';
 
-import { createOriginPolicy } from '../apps/server/src/origin-policy.ts';
+import { createOriginPolicy, isAllowedRequestOrigin } from '../apps/server/src/origin-policy.ts';
 
 const root = resolve(import.meta.dirname, '..');
 
@@ -17,6 +17,14 @@ test('configured client origins allow listed origins and reject unlisted origins
 test('origin policy rejects malformed configured origins', () => {
   assert.throws(() => createOriginPolicy('https://poker.example/path'), /absolute HTTP\(S\) origin/);
   assert.throws(() => createOriginPolicy('https://poker.example,'), /must not contain empty values/);
+});
+
+test('same-origin Vercel Services requests are accepted without widening configured cross-origin access', () => {
+  const policy = createOriginPolicy('https://poker.example');
+
+  assert.equal(isAllowedRequestOrigin('https://table.vercel.app', 'table.vercel.app', policy), true);
+  assert.equal(isAllowedRequestOrigin('https://attacker.example', 'table.vercel.app', policy), false);
+  assert.equal(isAllowedRequestOrigin('https://attacker.example/path', 'attacker.example', policy), false);
 });
 
 function postgresPortMappings(compose) {
@@ -77,9 +85,9 @@ test('dependency safety configuration aligns Express 4 types and pins vulnerable
   assert.equal(rootPackage.pnpm?.overrides?.qs, '6.16.0');
 });
 
-test('Socket.IO enables credentialed CORS while retaining the origin allowlist', async () => {
+test('Socket.IO enables credentialed CORS and verifies origins against each request host', async () => {
   const serverEntry = await readFile(resolve(root, 'apps/server/src/index.ts'), 'utf8');
 
-  assert.match(serverEntry, /cors:\s*\{\s*origin:\s*\(origin, callback\) => callback\(null, isOriginAllowed\(origin\)\),\s*credentials:\s*true,?\s*\}/s);
-  assert.match(serverEntry, /allowRequest:\s*\(request, callback\) => callback\(null, isOriginAllowed\(request\.headers\.origin\)\)/);
+  assert.match(serverEntry, /cors:\s*\{\s*[\s\S]*origin:\s*true,[\s\S]*credentials:\s*true,/);
+  assert.match(serverEntry, /allowRequest:\s*\(request, callback\) => callback\([\s\S]*isAllowedRequestOrigin\(request\.headers\.origin, request\.headers\.host, isOriginAllowed\)/);
 });

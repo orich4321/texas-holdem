@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import express, { type ErrorRequestHandler, type RequestHandler } from 'express';
-import { createOriginPolicy } from './origin-policy.js';
+import { createOriginPolicy, isAllowedRequestOrigin } from './origin-policy.js';
 import type { RoomRepository } from './persistence/room-repository.js';
 import { parseCookieHeader } from './socket-session.js';
 
@@ -13,6 +13,12 @@ type OriginPolicy = (origin: string | undefined) => boolean;
 type CreateAppDependencies = {
   roomRepository: RoomRepository;
   isOriginAllowed?: OriginPolicy;
+  /**
+   * Optional public prefix for a same-origin deployment.  Keeping the router
+   * available at both paths lets the existing standalone API deployment remain
+   * online while a Vercel Services deployment uses `/server`.
+   */
+  basePath?: string;
 };
 
 type CreateRoomRequest = {
@@ -66,7 +72,7 @@ function createHttpCorsMiddleware(isOriginAllowed: OriginPolicy): RequestHandler
       return;
     }
 
-    if (!isOriginAllowed(origin)) {
+    if (!isAllowedRequestOrigin(origin, request.headers.host, isOriginAllowed)) {
       response.status(403).json({ error: { code: 'ORIGIN_NOT_ALLOWED' } });
       return;
     }
@@ -101,14 +107,21 @@ function setPlayerSessionCookie(response: express.Response, accessToken: string)
 }
 
 /** Builds the HTTP API independently from the Socket.IO transport. */
-export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy() }: CreateAppDependencies) {
+export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy(), basePath }: CreateAppDependencies) {
   const app = express();
+  const routes = express.Router();
 
   app.use(createHttpCorsMiddleware(isOriginAllowed));
 
   app.use(express.json({ limit: MAX_REQUEST_BODY_SIZE }));
 
-  app.post('/rooms', async (request, response) => {
+  // Register the unprefixed form first for local and standalone-server use.
+  // A Vercel Services deployment preserves the incoming `/server` pathname, so
+  // it additionally reaches this same router through the configured prefix.
+  app.use(routes);
+  if (basePath) app.use(basePath, routes);
+
+  routes.post('/rooms', async (request, response) => {
     const input = validateCreateRoomInput(request.body);
     if (!input) {
       response.status(400).json({ error: { code: 'INVALID_REQUEST' } });
@@ -128,7 +141,7 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
     }
   });
 
-  app.post('/rooms/:joinId/join', async (request, response) => {
+  routes.post('/rooms/:joinId/join', async (request, response) => {
     const input = validateCreateRoomInput(request.body);
     if (!input) {
       response.status(400).json({ error: { code: 'INVALID_REQUEST' } });
@@ -160,7 +173,7 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
     }
   });
 
-  app.post('/rooms/:joinId/start', async (request, response) => {
+  routes.post('/rooms/:joinId/start', async (request, response) => {
     try {
       const accessToken = parseCookieHeader(request.headers.cookie).poker_player_token;
       const player = await roomRepository.findPlayerByRoomJoinIdAndAccessToken(request.params.joinId, accessToken);
@@ -175,7 +188,7 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
     }
   });
 
-  app.get('/rooms/:joinId', async (request, response) => {
+  routes.get('/rooms/:joinId', async (request, response) => {
     try {
       const room = await roomRepository.findRoomByJoinId(request.params.joinId);
       if (!room || (room.status !== 'WAITING' && room.status !== 'IN_PROGRESS')) {

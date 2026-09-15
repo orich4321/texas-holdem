@@ -2,9 +2,10 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-declare const process: { env: { NEXT_PUBLIC_SERVER_URL?: string } };
+declare const process: { env: { NEXT_PUBLIC_GAME_URL?: string; NEXT_PUBLIC_SERVER_URL?: string } };
 
-const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL ?? 'http://localhost:3001';
+const SERVER_URL = process.env.NEXT_PUBLIC_GAME_URL ?? process.env.NEXT_PUBLIC_SERVER_URL ?? 'http://localhost:3001';
+const SOCKET_PATH = SERVER_URL.startsWith('/') ? `${SERVER_URL}/socket.io` : '/socket.io';
 
 type Card = { rank: string; suit: string };
 type PlayerAction = { type: 'check' | 'call' | 'fold' | 'all-in' } | { type: 'raise'; raiseTo: number };
@@ -24,7 +25,7 @@ type BrowserSocket = {
   emit(event: string, payload?: unknown): void;
   disconnect(): void;
 };
-type SocketFactory = (url: string, options: { auth: { roomJoinId: string }; withCredentials: boolean }) => BrowserSocket;
+type SocketFactory = (url: string, options: { auth: { roomJoinId: string }; path: string; withCredentials: boolean }) => BrowserSocket;
 
 declare global { interface Window { io?: SocketFactory } }
 
@@ -89,7 +90,15 @@ export default function TableClient({ joinId }: { joinId: string }) {
     void loadSocketClient()
       .then((createSocket) => {
         if (!active) return;
-        const socket = createSocket(SERVER_URL, { auth: { roomJoinId: joinId }, withCredentials: true });
+        // A relative service URL must connect to the root namespace of the
+        // current origin; `/server` itself is the HTTP route prefix, not a
+        // Socket.IO namespace.
+        const socketOrigin = SERVER_URL.startsWith('/') ? globalThis.window.location.origin : SERVER_URL;
+        const socket = createSocket(socketOrigin, {
+          auth: { roomJoinId: joinId },
+          path: SOCKET_PATH,
+          withCredentials: true,
+        });
         socketRef.current = socket;
         socket.on('connect', () => { if (active) setStatus('מחוברים לשולחן'); });
         socket.on('connect_error', () => { if (active) setStatus('החיבור לשולחן נכשל. מרעננים את הדף ומנסים שוב.'); });
