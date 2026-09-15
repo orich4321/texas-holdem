@@ -1,6 +1,6 @@
 declare const process: { env: { NEXT_PUBLIC_GAME_URL?: string; NEXT_PUBLIC_SERVER_URL?: string } };
 
-const SERVER_URL = process.env.NEXT_PUBLIC_GAME_URL ?? process.env.NEXT_PUBLIC_SERVER_URL ?? 'http://localhost:3001';
+const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL ?? process.env.NEXT_PUBLIC_GAME_URL ?? 'http://localhost:3001';
 const INITIAL_STACK = 1000;
 
 export const EMPTY_NICKNAME_MESSAGE = 'צריך להזין כינוי כדי להצטרף.';

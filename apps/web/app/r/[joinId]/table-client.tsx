@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 declare const process: { env: { NEXT_PUBLIC_GAME_URL?: string; NEXT_PUBLIC_SERVER_URL?: string } };
 
-const SERVER_URL = process.env.NEXT_PUBLIC_GAME_URL ?? process.env.NEXT_PUBLIC_SERVER_URL ?? 'http://localhost:3001';
+const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL ?? process.env.NEXT_PUBLIC_GAME_URL ?? 'http://localhost:3001';
 const SOCKET_PATH = SERVER_URL.startsWith('/') ? `${SERVER_URL}/socket.io` : '/socket.io';
 
 type Card = { rank: string; suit: string };

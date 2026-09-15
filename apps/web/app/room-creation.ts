@@ -1,7 +1,10 @@
 declare const process: { env: { NEXT_PUBLIC_GAME_URL?: string; NEXT_PUBLIC_SERVER_URL?: string } };
 
 const INITIAL_STACK = 1000;
-const SERVER_URL = process.env.NEXT_PUBLIC_GAME_URL ?? process.env.NEXT_PUBLIC_SERVER_URL ?? 'http://localhost:3001';
+// NEXT_PUBLIC_SERVER_URL is set to `/server` for the unified Vercel
+// deployment. Prefer it over Vercel's generated service URL, whose public
+// route need not match this application's rewrite prefix.
+const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL ?? process.env.NEXT_PUBLIC_GAME_URL ?? 'http://localhost:3001';
 
 export const EMPTY_NICKNAME_MESSAGE = 'צריך להזין כינוי כדי לפתוח חדר.';
 export const CREATION_ERROR_MESSAGE = 'לא הצלחנו לפתוח את החדר. נסו שוב.';
