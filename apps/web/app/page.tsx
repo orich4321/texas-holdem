@@ -20,7 +20,10 @@ export default function HomePage() {
 
     setPending(true);
     const result = await submitRoomCreation(nickname, {
-      fetch: globalThis.fetch,
+      // Keep the browser's fetch receiver intact. Passing globalThis.fetch
+      // directly lets the boundary invoke it with its own `this` value, which
+      // Chromium rejects before any network request is made.
+      fetch: (...args) => globalThis.fetch(...args),
       navigate: (destination) => globalThis.location.assign(destination),
     });
 

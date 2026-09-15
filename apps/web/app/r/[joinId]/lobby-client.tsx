@@ -25,7 +25,7 @@ export default function LobbyClient({ joinId }: LobbyClientProps) {
   const refreshLobby = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
     setLoadError(undefined);
-    const result = await loadLobby(joinId, { fetch: globalThis.fetch }, signal);
+    const result = await loadLobby(joinId, { fetch: (...args) => globalThis.fetch(...args) }, signal);
     if (signal?.aborted) return;
     if (result.ok) setLobby(result.lobby);
     else setLoadError(result.message);
@@ -54,7 +54,7 @@ export default function LobbyClient({ joinId }: LobbyClientProps) {
     }
 
     setJoining(true);
-    const result = await joinLobby(joinId, nickname, { fetch: globalThis.fetch });
+    const result = await joinLobby(joinId, nickname, { fetch: (...args) => globalThis.fetch(...args) });
     if (result.ok) {
       setNickname('');
       await refreshLobby();
@@ -77,7 +77,7 @@ export default function LobbyClient({ joinId }: LobbyClientProps) {
     if (starting) return;
     setStarting(true);
     setJoinMessage(undefined);
-    const result = await startLobbyGame(joinId, { fetch: globalThis.fetch });
+    const result = await startLobbyGame(joinId, { fetch: (...args) => globalThis.fetch(...args) });
     if (result.ok) await refreshLobby();
     else setJoinMessage(result.message);
     setStarting(false);
