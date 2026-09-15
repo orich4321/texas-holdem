@@ -31,5 +31,8 @@ test('snapshots can be structurally altered as inert JSON but cannot grant publi
   invalidActor.hand.currentActorSeat = 99;
   assert.equal(invalidActor.hand.currentActorSeat, 99);
   const packageManifest = JSON.parse(readFileSync(new URL('../packages/poker-core/package.json', import.meta.url), 'utf8'));
-  assert.deepEqual(packageManifest.exports, { '.': './src/public.ts', './server': './src/server.ts' });
+  assert.deepEqual(packageManifest.exports, {
+    '.': { development: './src/public.ts', default: './dist/public.js' },
+    './server': { development: './src/server.ts', default: './dist/server.js' },
+  });
 });

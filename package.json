@@ -16,7 +16,7 @@
   },
   "scripts": {
     "dev": "pnpm --parallel --filter @texas-holdem/web --filter @texas-holdem/server dev",
-    "test": "tsx --test tests/**/*.test.mjs",
+    "test": "tsx --conditions=development --test tests/**/*.test.mjs",
     "test:persistence": "bash tests/run-persistence-integration.sh",
     "lint": "eslint apps tests --max-warnings=0",
     "typecheck": "pnpm -r --if-present typecheck",

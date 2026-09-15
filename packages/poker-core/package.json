@@ -4,10 +4,17 @@
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./src/public.ts",
-    "./server": "./src/server.ts"
+    ".": {
+      "development": "./src/public.ts",
+      "default": "./dist/public.js"
+    },
+    "./server": {
+      "development": "./src/server.ts",
+      "default": "./dist/server.js"
+    }
   },
   "scripts": {
+    "build": "tsc --project tsconfig.build.json",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
