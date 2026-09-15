@@ -1,4 +1,5 @@
 import { createServer } from 'node:http';
+import express from 'express';
 import { Server } from 'socket.io';
 import { createApp } from './http-app.js';
 import { createOriginPolicy } from './origin-policy.js';
@@ -6,6 +7,9 @@ import { prisma } from './persistence/prisma.js';
 import { RoomRepository } from './persistence/room-repository.js';
 import { createPrivateSnapshotKeyring } from './persistence/private-snapshot-keyring.js';
 import { attachSocketSessionTransport } from './socket-transport.js';
+
+// Keep the framework import visible to Vercel's Express entrypoint detector.
+void express;
 
 const isOriginAllowed = createOriginPolicy();
 const roomRepository = new RoomRepository(prisma, undefined, undefined, undefined, createPrivateSnapshotKeyring());
