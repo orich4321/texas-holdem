@@ -198,6 +198,25 @@ test('POST /rooms/:joinId/join creates a non-host player with a private session 
   assert.equal((await repository.findPlayerByRoomJoinIdAndAccessToken(roomId, guestToken))?.id, room?.players[1]?.id);
 });
 
+test('POST /rooms/:joinId/join permits one seat per existing room session', { skip: !integrationEnabled }, async () => {
+  const created = await postRoom({ displayName: 'Host', initialStack: 800 });
+  const hostCookie = created.headers.get('set-cookie');
+  const { roomId } = await created.json();
+  const joined = await postJoin(roomId, { displayName: 'Guest', initialStack: 400 });
+  const guestCookie = joined.headers.get('set-cookie');
+
+  for (const cookie of [hostCookie, guestCookie]) {
+    const repeated = await globalThis.fetch(`${baseUrl}/rooms/${roomId}/join`, {
+      method: 'POST',
+      headers: { cookie, 'content-type': 'application/json' },
+      body: JSON.stringify({ displayName: 'Duplicate', initialStack: 400 }),
+    });
+    assert.equal(repeated.status, 409);
+    assert.deepEqual(await repeated.json(), { error: { code: 'ALREADY_JOINED' } });
+  }
+  assert.equal(await prisma.player.count(), 2);
+});
+
 test('POST /rooms/:joinId/join caps a waiting room at nine players', { skip: !integrationEnabled }, async () => {
   const created = await postRoom({ displayName: 'Host', initialStack: 800 });
   const { roomId } = await created.json();
@@ -264,7 +283,7 @@ test('GET /rooms/:joinId exposes a player-safe waiting-room lobby projection', {
   const lobby = await globalThis.fetch(`${baseUrl}/rooms/${roomId}`);
   assert.equal(lobby.status, 200);
   const result = await lobby.json();
-  assert.deepEqual(result, { joinId: roomId, status: 'WAITING', isHost: false, canStart: false, host: { displayName: 'Host' }, players: [
+  assert.deepEqual(result, { joinId: roomId, status: 'WAITING', isHost: false, isParticipant: false, canStart: false, host: { displayName: 'Host' }, players: [
     { displayName: 'Host', initialStack: 800, currentStack: 800 },
     { displayName: 'Guest', initialStack: 400, currentStack: 400 },
   ] });

@@ -164,6 +164,17 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
     }
 
     try {
+      // A player session is the device's one seat at this room. Do this on
+      // the server as well as hiding the form in the UI: a repeated request
+      // must not turn one person into multiple players.
+      const existingPlayer = await roomRepository.findPlayerByRoomJoinIdAndAccessToken(
+        request.params.joinId,
+        parseCookieHeader(request.headers.cookie).poker_player_token,
+      );
+      if (existingPlayer) {
+        response.status(409).json({ error: { code: 'ALREADY_JOINED' } });
+        return;
+      }
       const result = await roomRepository.joinWaitingRoom(request.params.joinId, {
         id: randomUUID(),
         ...input,
@@ -276,6 +287,7 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
         joinId: room.joinId,
         status: room.status,
         isHost,
+        isParticipant: Boolean(sessionPlayer),
         canStart: room.status === 'WAITING'
           && room.players.length >= 2
           && isHost,

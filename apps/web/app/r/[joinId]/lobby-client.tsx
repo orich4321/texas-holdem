@@ -159,15 +159,19 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
           </button>
         ) : null}
 
-        <form className="lobby-join-form" onSubmit={handleJoin}>
-          <div className="lobby-form-heading"><h2>הצטרפו לשולחן</h2><span>1,000 צ׳יפים</span></div>
-          <label htmlFor="lobby-nickname">הכינוי שלכם</label>
-          <div className="lobby-input-row">
-            <input id="lobby-nickname" name="nickname" type="text" autoComplete="nickname" maxLength={24} placeholder="איך לקרוא לכם?" value={nickname} onChange={(event) => setNickname(event.target.value)} disabled={joining} aria-describedby={joinMessage ? 'join-status' : undefined} />
-            <button type="submit" disabled={joining}>{joining ? 'מצטרפים…' : 'הצטרפות'}</button>
-          </div>
-          {joinMessage ? <p id="join-status" className="lobby-status" role="status" aria-live="polite">{joinMessage}</p> : null}
-        </form>
+        {lobby.isParticipant ? (
+          <p className="lobby-already-joined" role="status">אתם כבר יושבים בשולחן הזה.</p>
+        ) : (
+          <form className="lobby-join-form" onSubmit={handleJoin}>
+            <div className="lobby-form-heading"><h2>הצטרפו לשולחן</h2><span>1,000 צ׳יפים</span></div>
+            <label htmlFor="lobby-nickname">הכינוי שלכם</label>
+            <div className="lobby-input-row">
+              <input id="lobby-nickname" name="nickname" type="text" autoComplete="nickname" maxLength={24} placeholder="איך לקרוא לכם?" value={nickname} onChange={(event) => setNickname(event.target.value)} disabled={joining} aria-describedby={joinMessage ? 'join-status' : undefined} />
+              <button type="submit" disabled={joining}>{joining ? 'מצטרפים…' : 'הצטרפות'}</button>
+            </div>
+            {joinMessage ? <p id="join-status" className="lobby-status" role="status" aria-live="polite">{joinMessage}</p> : null}
+          </form>
+        )}
       </section>
     </main>
   );
