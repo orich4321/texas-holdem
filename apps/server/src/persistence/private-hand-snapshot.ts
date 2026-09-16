@@ -4,7 +4,7 @@ import {
   serializeStartedHand,
   type StartedHand,
   type StartedHandSnapshot,
-} from '../../../../packages/poker-core/src/server-recovery.js';
+} from '@texas-holdem/poker-core/server';
 
 const SNAPSHOT_DOMAIN = 'texas-holdem/private-hand-snapshot/v1\0';
 
