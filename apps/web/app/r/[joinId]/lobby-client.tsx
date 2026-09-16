@@ -66,7 +66,11 @@ export default function LobbyClient({ joinId }: LobbyClientProps) {
 
   async function copyInvitation() {
     try {
-      await globalThis.navigator.clipboard.writeText(globalThis.location.href);
+      // The invite is always the guest route, even when the host is viewing
+      // their distinct route. Server-side session auth still enforces roles.
+      await globalThis.navigator.clipboard.writeText(
+        new URL(`/r/${encodeURIComponent(joinId)}`, globalThis.location.origin).toString(),
+      );
       setCopied('הקישור הועתק. אפשר לשלוח אותו לשולחן.');
     } catch {
       setCopied('לא הצלחנו להעתיק. אפשר להעתיק את הקישור משורת הכתובת.');

@@ -134,7 +134,13 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
         host: { id: randomUUID(), ...input },
       });
       setPlayerSessionCookie(response, room.hostAccessToken);
-      response.status(201).json({ roomId: room.joinId, invitePath: `/r/${room.joinId}` });
+      response.status(201).json({
+        roomId: room.joinId,
+        // This is a distinct host route, not an authorization secret. Host
+        // abilities remain bound to the httpOnly player session.
+        hostPath: `/r/${room.joinId}/host`,
+        invitePath: `/r/${room.joinId}`,
+      });
     } catch {
       console.error('Room creation failed');
       response.status(500).json({ error: { code: 'INTERNAL_ERROR' } });

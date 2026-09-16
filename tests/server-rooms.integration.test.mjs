@@ -75,7 +75,7 @@ test('POST /rooms persists a waiting room and its host then returns an opaque in
   assert.equal(response.status, 201);
   const result = await response.json();
   assert.match(result.roomId, /^[a-f0-9]{16}$/);
-  assert.deepEqual(result, { roomId: result.roomId, invitePath: `/r/${result.roomId}` });
+  assert.deepEqual(result, { roomId: result.roomId, hostPath: `/r/${result.roomId}/host`, invitePath: `/r/${result.roomId}` });
   const sessionCookie = response.headers.get('set-cookie');
   assert.match(sessionCookie, /^poker_player_token=[A-Za-z0-9_-]{43}; Path=\/; HttpOnly; SameSite=Lax$/);
   assert.equal(sessionCookie.includes('Secure'), false);

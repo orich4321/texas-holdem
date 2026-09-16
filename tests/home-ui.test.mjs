@@ -89,7 +89,7 @@ test('home typography rules are scoped and use logical alignment', async () => {
   assert.doesNotMatch(styles, /text-align:\s*right/);
 });
 
-test('room creation posts the normalized nickname and fixed MVP stack before navigating to the matching invite', async () => {
+test('room creation posts the normalized nickname and fixed MVP stack before navigating to the matching host route', async () => {
   const { submitRoomCreation } = await roomCreation();
   const requests = [];
   const destinations = [];
@@ -99,7 +99,7 @@ test('room creation posts the normalized nickname and fixed MVP stack before nav
       requests.push(request);
       return {
         status: 201,
-        json: async () => ({ roomId: 'abc123', invitePath: '/r/abc123' }),
+        json: async () => ({ roomId: 'abc123', hostPath: '/r/abc123/host', invitePath: '/r/abc123' }),
       };
     },
     navigate: (destination) => destinations.push(destination),
@@ -114,7 +114,7 @@ test('room creation posts the normalized nickname and fixed MVP stack before nav
       body: JSON.stringify({ displayName: 'אורי', initialStack: 1000 }),
     },
   ]]);
-  assert.deepEqual(destinations, ['/r/abc123']);
+  assert.deepEqual(destinations, ['/r/abc123/host']);
   assert.deepEqual(result, { ok: true });
 });
 
@@ -158,8 +158,9 @@ test('room creation rejects malformed or mismatched success payloads without nav
   const payloads = [
     null,
     { roomId: 'abc123' },
-    { roomId: 'abc123', invitePath: '/r/different' },
-    { roomId: 123, invitePath: '/r/123' },
+    { roomId: 'abc123', hostPath: '/r/abc123/host', invitePath: '/r/different' },
+    { roomId: 'abc123', hostPath: '/r/different/host', invitePath: '/r/abc123' },
+    { roomId: 123, hostPath: '/r/123/host', invitePath: '/r/123' },
   ];
 
   for (const payload of payloads) {

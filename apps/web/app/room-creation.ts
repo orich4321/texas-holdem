@@ -23,12 +23,14 @@ type RoomCreationResult =
   | { ok: true }
   | { ok: false; message: string };
 
-function hasMatchingInvite(payload: unknown): payload is { roomId: string; invitePath: string } {
+function hasMatchingHostRoom(payload: unknown): payload is { roomId: string; hostPath: string; invitePath: string } {
   if (payload === null || typeof payload !== 'object') return false;
 
-  const { roomId, invitePath } = payload as Record<string, unknown>;
+  const { roomId, hostPath, invitePath } = payload as Record<string, unknown>;
   return typeof roomId === 'string'
+    && typeof hostPath === 'string'
     && typeof invitePath === 'string'
+    && hostPath === `/r/${roomId}/host`
     && invitePath === `/r/${roomId}`;
 }
 
@@ -49,9 +51,9 @@ export async function submitRoomCreation(
     if (response.status !== 201) return { ok: false, message: CREATION_ERROR_MESSAGE };
 
     const payload = await response.json();
-    if (!hasMatchingInvite(payload)) return { ok: false, message: CREATION_ERROR_MESSAGE };
+    if (!hasMatchingHostRoom(payload)) return { ok: false, message: CREATION_ERROR_MESSAGE };
 
-    boundaries.navigate(payload.invitePath);
+    boundaries.navigate(payload.hostPath);
     return { ok: true };
   } catch {
     return { ok: false, message: CREATION_ERROR_MESSAGE };
