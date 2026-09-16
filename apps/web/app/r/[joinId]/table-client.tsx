@@ -1,11 +1,10 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 declare const process: { env: { NEXT_PUBLIC_GAME_URL?: string; NEXT_PUBLIC_SERVER_URL?: string } };
 
 const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL ?? process.env.NEXT_PUBLIC_GAME_URL ?? 'http://localhost:3001';
-const SOCKET_PATH = SERVER_URL.startsWith('/') ? `${SERVER_URL}/socket.io` : '/socket.io';
 
 type Card = { rank: string; suit: string };
 type PlayerAction = { type: 'check' | 'call' | 'fold' | 'all-in' } | { type: 'raise'; raiseTo: number };
@@ -20,15 +19,6 @@ type PlayerView = {
   holeCards: readonly [Card, Card];
   seats: readonly { seatNumber: number; playerId: string; playerName: string; stack: number; currentBet: number; isFolded: boolean }[];
 };
-type BrowserSocket = {
-  on(event: string, listener: (payload?: unknown) => void): void;
-  emit(event: string, payload?: unknown): void;
-  disconnect(): void;
-};
-type SocketFactory = (url: string, options: { auth: { roomJoinId: string }; path: string; withCredentials: boolean }) => BrowserSocket;
-
-declare global { interface Window { io?: SocketFactory } }
-
 const streetNames: Record<PlayerView['street'], string> = {
   preflop: 'לפני הפלופ', flop: 'פלופ', turn: 'טרן', river: 'ריבר', showdown: 'חשיפה',
 };
@@ -54,23 +44,6 @@ function isPlayerView(value: unknown): value is PlayerView {
     && Array.isArray(view.seats);
 }
 
-function loadSocketClient(): Promise<SocketFactory> {
-  if (globalThis.window.io) return Promise.resolve(globalThis.window.io);
-  return new Promise((resolve, reject) => {
-    const existing = globalThis.document.querySelector<HTMLScriptElement>('script[data-poker-socket-client]');
-    const script = existing ?? globalThis.document.createElement('script');
-    const ready = () => globalThis.window.io ? resolve(globalThis.window.io) : reject(new Error('Socket client unavailable'));
-    script.addEventListener('load', ready, { once: true });
-    script.addEventListener('error', () => reject(new Error('Socket client failed to load')), { once: true });
-    if (!existing) {
-      script.async = true;
-      script.dataset.pokerSocketClient = 'true';
-      script.src = `${SERVER_URL}/socket.io/socket.io.js`;
-      globalThis.document.head.append(script);
-    }
-  });
-}
-
 function PlayingCard({ card, hidden = false }: { card?: Card; hidden?: boolean }) {
   if (hidden || !card) return <span className="playing-card playing-card-back" aria-label="קלף סגור">♠</span>;
   const suit = suits[card.suit] ?? '?';
@@ -83,45 +56,49 @@ export default function TableClient({ joinId }: { joinId: string }) {
   const [status, setStatus] = useState('מתחברים לשולחן…');
   const [raiseTo, setRaiseTo] = useState('');
   const [pending, setPending] = useState(false);
-  const socketRef = useRef<BrowserSocket | undefined>(undefined);
 
   useEffect(() => {
     let active = true;
-    void loadSocketClient()
-      .then((createSocket) => {
+    const refresh = async () => {
+      try {
+        const response = await globalThis.fetch(`${SERVER_URL}/rooms/${encodeURIComponent(joinId)}/game`, { credentials: 'include', cache: 'no-store' });
+        const next = await response.json();
+        if (!response.ok || !isPlayerView(next)) throw new Error('Invalid player view');
         if (!active) return;
-        // A relative service URL must connect to the root namespace of the
-        // current origin; `/server` itself is the HTTP route prefix, not a
-        // Socket.IO namespace.
-        const socketOrigin = SERVER_URL.startsWith('/') ? globalThis.window.location.origin : SERVER_URL;
-        const socket = createSocket(socketOrigin, {
-          auth: { roomJoinId: joinId },
-          path: SOCKET_PATH,
-          withCredentials: true,
-        });
-        socketRef.current = socket;
-        socket.on('connect', () => { if (active) setStatus('מחוברים לשולחן'); });
-        socket.on('connect_error', () => { if (active) setStatus('החיבור לשולחן נכשל. מרעננים את הדף ומנסים שוב.'); });
-        socket.on('game:error', () => { if (active) { setPending(false); setStatus('הפעולה לא זמינה כרגע. נסו שוב.'); } });
-        socket.on('game:state', (next) => {
-          if (!active || !isPlayerView(next)) return;
-          setView(next);
-          setPending(false);
-          setStatus(next.street === 'showdown' ? 'היד הסתיימה' : 'מחוברים לשולחן');
-        });
-      })
-      .catch(() => { if (active) setStatus('לא הצלחנו לטעון את חיבור המשחק.'); });
-    return () => { active = false; socketRef.current?.disconnect(); socketRef.current = undefined; };
+        setView(next);
+        setStatus(next.street === 'showdown' ? 'היד הסתיימה' : 'מחוברים לשולחן');
+      } catch {
+        if (active) setStatus('החיבור לשולחן נכשל. מרעננים את הדף ומנסים שוב.');
+      }
+    };
+    void refresh();
+    const timer = globalThis.setInterval(() => { void refresh(); }, 1_000);
+    return () => { active = false; globalThis.clearInterval(timer); };
   }, [joinId]);
 
   const ownSeat = useMemo(() => view?.seats.find((seat) => seat.playerId === view.playerId), [view]);
   const isTurn = Boolean(view && ownSeat && view.currentActorSeat === ownSeat.seatNumber && view.street !== 'showdown');
   const suggestedRaise = view && ownSeat ? ownSeat.currentBet + view.toCall + 10 : 0;
 
-  function act(action: PlayerAction) {
-    if (!isTurn || pending || !socketRef.current) return;
+  async function act(action: PlayerAction) {
+    if (!isTurn || pending) return;
     setPending(true);
-    socketRef.current.emit('game:action', action);
+    try {
+      const response = await globalThis.fetch(`${SERVER_URL}/rooms/${encodeURIComponent(joinId)}/game/actions`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(action),
+      });
+      const next = await response.json();
+      if (!response.ok || !isPlayerView(next)) throw new Error('Action unavailable');
+      setView(next);
+      setStatus(next.street === 'showdown' ? 'היד הסתיימה' : 'מחוברים לשולחן');
+    } catch {
+      setStatus('הפעולה לא זמינה כרגע. נסו שוב.');
+    } finally {
+      setPending(false);
+    }
   }
 
   function submitRaise() {
@@ -130,7 +107,7 @@ export default function TableClient({ joinId }: { joinId: string }) {
       setStatus('צריך להזין סכום העלאה שלם וחיובי.');
       return;
     }
-    act({ type: 'raise', raiseTo: amount });
+    void act({ type: 'raise', raiseTo: amount });
   }
 
   if (!view) return <main className="table-shell"><p className="table-connection" role="status">{status}</p></main>;
@@ -162,9 +139,9 @@ export default function TableClient({ joinId }: { joinId: string }) {
         <div><p>הקלפים שלכם</p><div className="hole-cards"><PlayingCard card={view.holeCards[0]} /><PlayingCard card={view.holeCards[1]} /></div></div>
         <p className="table-status" role="status">{isTurn ? `התור שלכם${view.toCall ? ` — להשוות ${view.toCall.toLocaleString('he-IL')}` : ''}` : status}</p>
         {isTurn ? <div className="action-bar">
-          <button type="button" className="action-fold" disabled={pending} onClick={() => act({ type: 'fold' })}>פרישה</button>
-          <button type="button" disabled={pending} onClick={() => act(view.toCall === 0 ? { type: 'check' } : { type: 'call' })}>{view.toCall === 0 ? 'צ׳ק' : `השוואה ${view.toCall}`}</button>
-          <button type="button" disabled={pending} onClick={() => act({ type: 'all-in' })}>אול אין</button>
+          <button type="button" className="action-fold" disabled={pending} onClick={() => void act({ type: 'fold' })}>פרישה</button>
+          <button type="button" disabled={pending} onClick={() => void act(view.toCall === 0 ? { type: 'check' } : { type: 'call' })}>{view.toCall === 0 ? 'צ׳ק' : `השוואה ${view.toCall}`}</button>
+          <button type="button" disabled={pending} onClick={() => void act({ type: 'all-in' })}>אול אין</button>
           <label className="raise-control">העלאה<input inputMode="numeric" value={raiseTo} onChange={(event) => setRaiseTo(event.target.value)} placeholder={String(suggestedRaise)} disabled={pending} /><button type="button" disabled={pending} onClick={submitRaise}>העלו</button></label>
         </div> : null}
       </section>

@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import express, { type ErrorRequestHandler, type RequestHandler } from 'express';
+import type { PlayerAction } from './game-lifecycle.js';
 import { createOriginPolicy, isAllowedRequestOrigin } from './origin-policy.js';
 import type { RoomRepository } from './persistence/room-repository.js';
 import { parseCookieHeader } from './socket-session.js';
@@ -48,6 +49,14 @@ function validateCreateRoomInput(body: unknown): ValidatedRoomInput | undefined 
   }
 
   return { displayName: normalizedDisplayName, initialStack };
+}
+
+function validatePlayerAction(body: unknown): PlayerAction | undefined {
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) return undefined;
+  const { type, raiseTo } = body as { type?: unknown; raiseTo?: unknown };
+  if (type === 'check' || type === 'call' || type === 'fold' || type === 'all-in') return { type };
+  if (type === 'raise' && typeof raiseTo === 'number' && Number.isSafeInteger(raiseTo)) return { type, raiseTo };
+  return undefined;
 }
 
 const jsonErrorHandler: ErrorRequestHandler = (error, _request, response, next) => {
@@ -195,6 +204,54 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
       // diagnosed without exposing database or snapshot details to players.
       console.error('Room start failed', error);
       response.status(409).json({ error: { code: 'ROOM_NOT_STARTABLE' } });
+    }
+  });
+
+  // HTTP is the portable realtime transport for the Vercel deployment. The
+  // response is always scoped to the authenticated player, so polling never
+  // exposes another player's hole cards.
+  routes.get('/rooms/:joinId/game', async (request, response) => {
+    try {
+      const player = await roomRepository.findPlayerByRoomJoinIdAndAccessToken(
+        request.params.joinId,
+        parseCookieHeader(request.headers.cookie).poker_player_token,
+      );
+      if (!player) {
+        response.status(401).json({ error: { code: 'UNAUTHORIZED' } });
+        return;
+      }
+      const view = await roomRepository.recoverLatestPlayerViewForPlayer(player.roomId, player.id);
+      if (!view) {
+        response.status(409).json({ error: { code: 'GAME_NOT_AVAILABLE' } });
+        return;
+      }
+      response.json(view);
+    } catch (error) {
+      console.error('Game state lookup failed', error);
+      response.status(500).json({ error: { code: 'INTERNAL_ERROR' } });
+    }
+  });
+
+  routes.post('/rooms/:joinId/game/actions', async (request, response) => {
+    const action = validatePlayerAction(request.body);
+    if (!action) {
+      response.status(400).json({ error: { code: 'INVALID_REQUEST' } });
+      return;
+    }
+    try {
+      const player = await roomRepository.findPlayerByRoomJoinIdAndAccessToken(
+        request.params.joinId,
+        parseCookieHeader(request.headers.cookie).poker_player_token,
+      );
+      if (!player) {
+        response.status(401).json({ error: { code: 'UNAUTHORIZED' } });
+        return;
+      }
+      const result = await roomRepository.persistPlayerActionAtomically({ roomId: player.roomId, playerId: player.id, action });
+      response.status(201).json(result.view);
+    } catch (error) {
+      console.error('Game action failed', error);
+      response.status(409).json({ error: { code: 'ACTION_UNAVAILABLE' } });
     }
   });
 
