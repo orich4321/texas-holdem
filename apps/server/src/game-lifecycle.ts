@@ -28,7 +28,9 @@ import {
   getRiverLegalActions,
   getTurnLegalActions,
   runOutAllInToShowdown,
+  settleShowdown,
   type Card,
+  type ShowdownPot,
 } from '@texas-holdem/poker-core/server';
 import type { StartedHand } from '../../../packages/poker-core/src/server-recovery.js';
 
@@ -73,6 +75,10 @@ export interface ServerPlayerView {
     currentBet: number;
     isFolded: boolean;
   }[];
+  showdown?: Readonly<{
+    winners: readonly { seatNumber: number; playerId: string; playerName: string; chipsWon: number }[];
+    pots: readonly Pick<ShowdownPot, 'amount' | 'winnerSeatNumbers'>[];
+  }>;
 }
 
 /**
@@ -151,6 +157,10 @@ export class ServerGameLifecycle {
     const requestingSeat = hand.seats.find((seat) => seat.playerId === playerId);
     if (!requestingSeat?.holeCards) throw new Error('Player is not seated in this game');
     const toCall = hand.street === 'showdown' ? 0 : this.legalActions(hand).toCall;
+    const showdown = hand.street === 'showdown' ? this.showdownResult(hand) : undefined;
+    const settledStacks = showdown
+      ? new Map(showdown.seats.map((seat) => [seat.seatNumber, seat.stack]))
+      : undefined;
     return Object.freeze({
       playerId,
       street: hand.street,
@@ -164,11 +174,36 @@ export class ServerGameLifecycle {
         seatNumber: seat.seatNumber,
         playerId: seat.playerId,
         playerName: this.namesByPlayerId.get(seat.playerId)!,
-        stack: seat.stack,
+        stack: settledStacks?.get(seat.seatNumber) ?? seat.stack,
         currentBet: seat.currentBet,
         isFolded: seat.isFolded === true,
       }))),
+      ...(showdown ? {
+        showdown: Object.freeze({
+          winners: Object.freeze(
+            hand.seats
+              .filter((seat) => showdown.pots.some((pot) => pot.winnerSeatNumbers.includes(seat.seatNumber)))
+              .map((seat) => Object.freeze({
+                seatNumber: seat.seatNumber,
+                playerId: seat.playerId,
+                playerName: this.namesByPlayerId.get(seat.playerId)!,
+                chipsWon: showdown.seats.find((settledSeat) => settledSeat.seatNumber === seat.seatNumber)!.stack - seat.stack,
+              })),
+          ),
+          pots: Object.freeze(showdown.pots.map((pot) => Object.freeze({
+            amount: pot.amount,
+            winnerSeatNumbers: Object.freeze([...pot.winnerSeatNumbers]),
+          }))),
+        }),
+      } : {}),
     });
+  }
+
+  /** Computes the authoritative payout only after a terminal showdown. */
+  showdownSettlement() {
+    const hand = this.requireHand();
+    if (hand.street !== 'showdown') throw new Error('Hand has not reached showdown');
+    return this.showdownResult(hand);
   }
 
   applyAction(playerId: string, action: PlayerAction): ServerPlayerView {
@@ -188,6 +223,10 @@ export class ServerGameLifecycle {
   private requireHand(): StartedHand {
     if (!this.hand) throw new Error('Game has not started');
     return this.hand;
+  }
+
+  private showdownResult(hand: StartedHand) {
+    return settleShowdown(hand);
   }
 
   private legalActions(hand: StartedHand) {

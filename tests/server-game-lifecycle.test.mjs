@@ -81,6 +81,10 @@ test('a street-closing action advances before its view is returned through flop,
   assert.equal(showdown.street, 'showdown');
   assert.equal(showdown.communityCards.length, 5);
   assert.equal(showdown.toCall, 0);
+  assert.ok(showdown.showdown, 'the player-safe view includes an authoritative showdown result');
+  assert.ok(showdown.showdown.winners.length >= 1);
+  assert.ok(showdown.showdown.winners.every((winner) => winner.chipsWon > 0));
+  assert.equal(showdown.seats.reduce((total, seat) => total + seat.stack, 0), 300, 'settled stacks return every committed chip to the table');
 });
 
 test('server lifecycle snapshots constructor input before callers can mutate it', () => {

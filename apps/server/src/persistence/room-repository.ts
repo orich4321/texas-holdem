@@ -89,6 +89,12 @@ export type StartGameForHostInput = Readonly<{
   hostPlayerId: string;
 }>;
 
+export type StartNextHandForHostInput = Readonly<{
+  joinId: string;
+  /** Derived exclusively from the authenticated host session. */
+  hostPlayerId: string;
+}>;
+
 const DEFAULT_SMALL_BLIND = 5;
 const DEFAULT_BIG_BLIND = 10;
 
@@ -412,6 +418,25 @@ export class RoomRepository {
         dealerSeat: hand.dealerSeat, smallBlind: hand.smallBlindAmount, bigBlind: hand.bigBlindAmount,
       }, recovery);
       const view = lifecycle.applyAction(playerId, action);
+      const settlement = lifecycle.handForDurableSnapshot().street === 'showdown'
+        ? lifecycle.showdownSettlement()
+        : undefined;
+      if (settlement) {
+        await Promise.all(settlement.seats.map((seat) => tx.player.update({
+          where: { id: seat.playerId }, data: { currentStack: seat.stack },
+        })));
+        await tx.settlement.create({
+          data: {
+            roomId,
+            idempotencyKey: `hand-${latest.sequence}`,
+            result: {
+              pots: settlement.pots.map((pot) => ({ amount: pot.amount, winnerSeatNumbers: [...pot.winnerSeatNumbers] })),
+              uncalledReturns: settlement.uncalledReturns.map((returned) => ({ ...returned })),
+              stacks: settlement.seats.map((seat) => ({ seatNumber: seat.seatNumber, playerId: seat.playerId, stack: seat.stack })),
+            } as Prisma.InputJsonValue,
+          },
+        });
+      }
       const views = Object.freeze(room.players.map((player) => lifecycle.viewFor(player.id)));
       const sequence = latest.sequence + 1;
       const activeKey = this.privateSnapshotKeyring.entries().next().value as [string, PrivateSnapshotSigningKey] | undefined;
@@ -422,6 +447,63 @@ export class RoomRepository {
       await tx.gameEvent.create({ data: { roomId, sequence, type: 'PLAYER_ACTION', payload: { actorPlayerId: playerId, action: publicAction } } });
       await tx.gameSnapshot.create({ data: { roomId, sequence, state: snapshot as unknown as Prisma.InputJsonValue } });
       return { sequence, view, views };
+    });
+  }
+
+  /**
+   * Starts the next hand only after the prior showdown has been settled. The
+   * same transaction stores the durable chip totals, rotates the dealer, and
+   * signs the successor hand before any client can see it.
+   */
+  async startNextHandForHostAtomically({ joinId, hostPlayerId }: StartNextHandForHostInput) {
+    const activeKey = this.privateSnapshotKeyring.entries().next().value as [string, PrivateSnapshotSigningKey] | undefined;
+    if (!activeKey) throw new Error('Next hand is unavailable');
+    const [keyId, key] = activeKey;
+
+    return this.db.$transaction(async (tx) => {
+      const room = await tx.room.findUnique({ where: { joinId }, select: { id: true, hostPlayerId: true, status: true } });
+      if (!room || room.hostPlayerId !== hostPlayerId || room.status !== 'IN_PROGRESS') throw new Error('Next hand is unavailable');
+      const locked = await tx.room.updateMany({ where: { id: room.id, hostPlayerId, status: 'IN_PROGRESS' }, data: { updatedAt: new Date() } });
+      if (locked.count !== 1) throw new Error('Next hand is unavailable');
+      const lockedRoom = await tx.room.findUnique({
+        where: { id: room.id },
+        select: { players: { orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, currentStack: true } } },
+      });
+      const latest = await tx.gameSnapshot.findFirst({ where: { roomId: room.id }, orderBy: { sequence: 'desc' }, select: { sequence: true, state: true } });
+      if (!lockedRoom || !latest) throw new Error('Next hand is unavailable');
+      const recovery = hydrateSignedPrivateHandSnapshot(latest.state as unknown as SignedPrivateHandSnapshot, { roomId: room.id, sequence: latest.sequence }, this.privateSnapshotKeyring);
+      const lifecycle = ServerGameLifecycle.fromVerifiedRecoveredHand({
+        seats: lockedRoom.players.map((player, index) => ({ seatNumber: index + 1, playerId: player.id, playerName: player.displayName, stack: player.currentStack })),
+        dealerSeat: recovery.hand.dealerSeat,
+        smallBlind: recovery.hand.smallBlindAmount,
+        bigBlind: recovery.hand.bigBlindAmount,
+      }, recovery);
+      const settlement = lifecycle.showdownSettlement();
+      const settledStacks = new Map(settlement.seats.map((seat) => [seat.playerId, seat.stack]));
+      await Promise.all(settlement.seats.map((seat) => tx.player.update({ where: { id: seat.playerId }, data: { currentStack: seat.stack } })));
+
+      const seatNumbers = recovery.hand.seats.map((seat) => seat.seatNumber);
+      const dealerIndex = seatNumbers.indexOf(recovery.hand.dealerSeat);
+      const nextDealerSeat = Array.from({ length: seatNumbers.length }, (_, offset) => seatNumbers[(dealerIndex + offset + 1) % seatNumbers.length])
+        .find((seatNumber) => (settledStacks.get(recovery.hand.seats.find((seat) => seat.seatNumber === seatNumber)!.playerId) ?? 0) > 0);
+      if (!nextDealerSeat) throw new Error('Next hand is unavailable');
+      const hand = startServerHand({
+        seats: lockedRoom.players.map((player, index) => ({
+          seatNumber: index + 1,
+          playerId: player.id,
+          stack: settledStacks.get(player.id) ?? player.currentStack,
+        })),
+        dealerSeat: nextDealerSeat,
+        smallBlind: recovery.hand.smallBlindAmount,
+        bigBlind: recovery.hand.bigBlindAmount,
+      });
+      const sequence = latest.sequence + 1;
+      const snapshot = signPrivateHandSnapshot(hand, { roomId: room.id, sequence, keyId }, key);
+      await tx.gameEvent.create({
+        data: { roomId: room.id, sequence, type: 'HAND_STARTED', payload: { dealerSeat: hand.dealerSeat, smallBlind: hand.smallBlindAmount, bigBlind: hand.bigBlindAmount } },
+      });
+      await tx.gameSnapshot.create({ data: { roomId: room.id, sequence, state: snapshot as unknown as Prisma.InputJsonValue } });
+      return { roomId: room.id, sequence };
     });
   }
 }

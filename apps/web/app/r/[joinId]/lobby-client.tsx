@@ -112,7 +112,7 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
 
   if (!lobby) return null;
 
-  if (lobby.status === 'IN_PROGRESS') return <TableClient joinId={joinId} />;
+  if (lobby.status === 'IN_PROGRESS') return <TableClient joinId={joinId} isHost={lobby.isHost} />;
 
   return (
     <main className="lobby-shell">

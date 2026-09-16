@@ -266,6 +266,24 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
     }
   });
 
+  routes.post('/rooms/:joinId/game/next-hand', async (request, response) => {
+    try {
+      const player = await roomRepository.findPlayerByRoomJoinIdAndAccessToken(
+        request.params.joinId,
+        parseCookieHeader(request.headers.cookie).poker_player_token,
+      );
+      if (!player) {
+        response.status(401).json({ error: { code: 'UNAUTHORIZED' } });
+        return;
+      }
+      await roomRepository.startNextHandForHostAtomically({ joinId: request.params.joinId, hostPlayerId: player.id });
+      response.status(201).json({ roomId: request.params.joinId, status: 'IN_PROGRESS' });
+    } catch (error) {
+      console.error('Next hand failed', error);
+      response.status(409).json({ error: { code: 'NEXT_HAND_UNAVAILABLE' } });
+    }
+  });
+
   routes.get('/rooms/:joinId', async (request, response) => {
     try {
       const room = await roomRepository.findRoomByJoinId(request.params.joinId);

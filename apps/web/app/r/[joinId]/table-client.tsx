@@ -8,6 +8,10 @@ const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL ?? process.env.NEXT_PUBLIC
 
 type Card = { rank: string; suit: string };
 type PlayerAction = { type: 'check' | 'call' | 'fold' | 'all-in' } | { type: 'raise'; raiseTo: number };
+type Showdown = {
+  winners: readonly { seatNumber: number; playerId: string; playerName: string; chipsWon: number }[];
+  pots: readonly { amount: number; winnerSeatNumbers: readonly number[] }[];
+};
 type PlayerView = {
   playerId: string;
   street: 'preflop' | 'flop' | 'turn' | 'river' | 'showdown';
@@ -18,6 +22,7 @@ type PlayerView = {
   toCall: number;
   holeCards: readonly [Card, Card];
   seats: readonly { seatNumber: number; playerId: string; playerName: string; stack: number; currentBet: number; isFolded: boolean }[];
+  showdown?: Showdown;
 };
 const streetNames: Record<PlayerView['street'], string> = {
   preflop: 'לפני הפלופ', flop: 'פלופ', turn: 'טרן', river: 'ריבר', showdown: 'חשיפה',
@@ -51,11 +56,12 @@ function PlayingCard({ card, hidden = false }: { card?: Card; hidden?: boolean }
   return <span className={`playing-card${red ? ' playing-card-red' : ''}`} aria-label={`${card.rank} ${card.suit}`}><b>{card.rank}</b><i>{suit}</i></span>;
 }
 
-export default function TableClient({ joinId }: { joinId: string }) {
+export default function TableClient({ joinId, isHost }: { joinId: string; isHost: boolean }) {
   const [view, setView] = useState<PlayerView>();
   const [status, setStatus] = useState('מתחברים לשולחן…');
   const [raiseTo, setRaiseTo] = useState('');
   const [pending, setPending] = useState(false);
+  const [startingNextHand, setStartingNextHand] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -110,6 +116,22 @@ export default function TableClient({ joinId }: { joinId: string }) {
     void act({ type: 'raise', raiseTo: amount });
   }
 
+  async function startNextHand() {
+    if (!isHost || view?.street !== 'showdown' || startingNextHand) return;
+    setStartingNextHand(true);
+    try {
+      const response = await globalThis.fetch(`${SERVER_URL}/rooms/${encodeURIComponent(joinId)}/game/next-hand`, {
+        method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json' },
+      });
+      if (!response.ok) throw new Error('Next hand unavailable');
+      setStatus('מחלקים את היד הבאה…');
+    } catch {
+      setStatus('לא הצלחנו להתחיל את היד הבאה. נסו שוב.');
+    } finally {
+      setStartingNextHand(false);
+    }
+  }
+
   if (!view) return <main className="table-shell"><p className="table-connection" role="status">{status}</p></main>;
 
   return (
@@ -145,6 +167,15 @@ export default function TableClient({ joinId }: { joinId: string }) {
           <label className="raise-control">העלאה<input inputMode="numeric" value={raiseTo} onChange={(event) => setRaiseTo(event.target.value)} placeholder={String(suggestedRaise)} disabled={pending} /><button type="button" disabled={pending} onClick={submitRaise}>העלו</button></label>
         </div> : null}
       </section>
+      {view.showdown ? <section className="showdown-panel" aria-live="polite" aria-label="תוצאות היד">
+        <p>תוצאות היד</p>
+        <h2>{view.showdown.winners.length === 1 ? `${view.showdown.winners[0].playerName} זכה/זכתה ביד` : 'היד התחלקה בין המנצחים'}</h2>
+        <ul>
+          {view.showdown.winners.map((winner) => <li key={winner.playerId}><strong>{winner.playerName}</strong><span>קיבל/ה {winner.chipsWon.toLocaleString('he-IL')} צ׳יפים</span></li>)}
+        </ul>
+        {view.showdown.pots.length > 1 ? <small>{view.showdown.pots.map((pot, index) => `קופה ${index + 1}: ${pot.amount.toLocaleString('he-IL')}`).join(' · ')}</small> : null}
+        {isHost ? <button type="button" className="next-hand-button" disabled={startingNextHand} onClick={() => void startNextHand()}>{startingNextHand ? 'מחלקים…' : 'התחלת היד הבאה'}</button> : <small>המארח יכול להתחיל את היד הבאה.</small>}
+      </section> : null}
     </main>
   );
 }
