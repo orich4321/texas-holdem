@@ -36,7 +36,7 @@ test('lobby request loads a validated public waiting-room projection with browse
 
   assert.deepEqual(requests, [[
     'http://localhost:3001/rooms/abc123',
-    { credentials: 'include' },
+    { credentials: 'include', cache: 'no-store' },
   ]]);
   assert.deepEqual(result, { ok: true, lobby: projection });
 });

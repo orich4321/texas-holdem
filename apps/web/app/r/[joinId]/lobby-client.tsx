@@ -40,7 +40,7 @@ export default function LobbyClient({ joinId }: LobbyClientProps) {
 
   useEffect(() => {
     if (lobby?.status !== 'WAITING') return undefined;
-    const timer = globalThis.setInterval(() => { void refreshLobby(); }, 3_000);
+    const timer = globalThis.setInterval(() => { void refreshLobby(); }, 1_000);
     return () => globalThis.clearInterval(timer);
   }, [lobby?.status, refreshLobby]);
 

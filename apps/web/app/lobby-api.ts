@@ -68,6 +68,10 @@ export async function loadLobby(
   try {
     const response = await boundaries.fetch(`${SERVER_URL}/rooms/${encodeURIComponent(joinId)}`, {
       credentials: 'include',
+      // The lobby is shared, mutable state. A cached room projection can hide
+      // the second player from the host and therefore suppress the start
+      // button after they join.
+      cache: 'no-store',
       ...(signal ? { signal } : {}),
     });
     if (response.status !== 200) return { ok: false, message: LOBBY_LOAD_ERROR_MESSAGE };
