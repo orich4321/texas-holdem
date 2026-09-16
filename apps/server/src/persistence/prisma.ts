@@ -13,7 +13,13 @@ if (!databaseUrl) {
   throw new Error('DATABASE_URL is required (TEST_DATABASE_URL when NODE_ENV=test)');
 }
 
-const adapter = new PrismaPg({ connectionString: databaseUrl });
+// Vercel scales the service into short-lived instances. Keep each instance to
+// one PostgreSQL connection so Supabase's transaction pooler is not exhausted
+// by Prisma's default application-side pool.
+const adapter = new PrismaPg({
+  connectionString: databaseUrl,
+  max: 1,
+});
 
 export const prisma = globalForPrisma.prisma ?? new PrismaClient({ adapter });
 
