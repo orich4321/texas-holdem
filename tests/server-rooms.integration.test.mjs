@@ -264,7 +264,7 @@ test('GET /rooms/:joinId exposes a player-safe waiting-room lobby projection', {
   const lobby = await globalThis.fetch(`${baseUrl}/rooms/${roomId}`);
   assert.equal(lobby.status, 200);
   const result = await lobby.json();
-  assert.deepEqual(result, { joinId: roomId, status: 'WAITING', canStart: false, host: { displayName: 'Host' }, players: [
+  assert.deepEqual(result, { joinId: roomId, status: 'WAITING', isHost: false, canStart: false, host: { displayName: 'Host' }, players: [
     { displayName: 'Host', initialStack: 800, currentStack: 800 },
     { displayName: 'Guest', initialStack: 400, currentStack: 400 },
   ] });

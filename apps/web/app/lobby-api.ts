@@ -11,6 +11,7 @@ export const ROOM_FULL_MESSAGE = 'השולחן כבר מלא. נסו חדר אח
 export type Lobby = {
   joinId: string;
   status: 'WAITING' | 'IN_PROGRESS';
+  isHost: boolean;
   canStart: boolean;
   host: { displayName: string };
   players: Array<{ displayName: string; initialStack: number; currentStack: number }>;
@@ -34,6 +35,7 @@ function isLobby(value: unknown, expectedJoinId: string): value is Lobby {
   const lobby = value as Record<string, unknown>;
   return lobby.joinId === expectedJoinId
     && (lobby.status === 'WAITING' || lobby.status === 'IN_PROGRESS')
+    && typeof lobby.isHost === 'boolean'
     && typeof lobby.canStart === 'boolean'
     && lobby.host !== null
     && typeof lobby.host === 'object'

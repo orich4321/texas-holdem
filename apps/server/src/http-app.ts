@@ -206,15 +206,18 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
         response.status(404).json({ error: { code: 'ROOM_NOT_FOUND' } });
         return;
       }
+      const sessionPlayer = await roomRepository.findPlayerByRoomJoinIdAndAccessToken(
+        room.joinId,
+        parseCookieHeader(request.headers.cookie).poker_player_token,
+      );
+      const isHost = sessionPlayer?.id === room.hostPlayerId;
       response.json({
         joinId: room.joinId,
         status: room.status,
+        isHost,
         canStart: room.status === 'WAITING'
           && room.players.length >= 2
-          && (await roomRepository.findPlayerByRoomJoinIdAndAccessToken(
-            room.joinId,
-            parseCookieHeader(request.headers.cookie).poker_player_token,
-          ))?.id === room.hostPlayerId,
+          && isHost,
         host: { displayName: host.displayName },
         players: room.players.map(({ displayName, initialStack, currentStack }) => ({ displayName, initialStack, currentStack })),
       });

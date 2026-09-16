@@ -22,6 +22,7 @@ test('lobby request loads a validated public waiting-room projection with browse
   const projection = {
     joinId: 'abc123',
     status: 'WAITING',
+    isHost: false,
     canStart: false,
     host: { displayName: 'אורי' },
     players: [{ displayName: 'אורי', initialStack: 1000, currentStack: 1000 }],
@@ -48,10 +49,10 @@ test('lobby request hides backend details for malformed, rejected, and network r
     async () => ({ status: 500, json: async () => ({ error: privateDetail }) }),
     async () => ({ status: 200, json: async () => ({ joinId: 'abc', players: [] }) }),
     async () => ({ status: 200, json: async () => ({
-      joinId: 'another-room', status: 'WAITING', canStart: false, host: { displayName: 'אורי' }, players: [],
+      joinId: 'another-room', status: 'WAITING', isHost: false, canStart: false, host: { displayName: 'אורי' }, players: [],
     }) }),
     async () => ({ status: 200, json: async () => ({
-      joinId: 'abc123', status: 'WAITING', canStart: false, host: { displayName: 'אורי' },
+      joinId: 'abc123', status: 'WAITING', isHost: false, canStart: false, host: { displayName: 'אורי' },
       players: Array.from({ length: 10 }, () => ({ displayName: 'שחקן', initialStack: 1000, currentStack: 1000 })),
     }) }),
     async () => { throw new Error(privateDetail); },

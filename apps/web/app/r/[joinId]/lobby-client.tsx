@@ -10,9 +10,9 @@ import {
 } from '../../lobby-api';
 import TableClient from './table-client';
 
-type LobbyClientProps = { joinId: string };
+type LobbyClientProps = { joinId: string; isHostRoute?: boolean };
 
-export default function LobbyClient({ joinId }: LobbyClientProps) {
+export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClientProps) {
   const [lobby, setLobby] = useState<Lobby>();
   const [nickname, setNickname] = useState('');
   const [loadError, setLoadError] = useState<string>();
@@ -43,6 +43,12 @@ export default function LobbyClient({ joinId }: LobbyClientProps) {
     const timer = globalThis.setInterval(() => { void refreshLobby(); }, 1_000);
     return () => globalThis.clearInterval(timer);
   }, [lobby?.status, refreshLobby]);
+
+  useEffect(() => {
+    if (lobby?.isHost && !isHostRoute) {
+      globalThis.location.replace(`/r/${encodeURIComponent(joinId)}/host`);
+    }
+  }, [isHostRoute, joinId, lobby?.isHost]);
 
   async function handleJoin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

@@ -8,5 +8,5 @@ export default async function HostRoomPage({
   params,
 }: Readonly<{ params: Promise<{ joinId: string }> }>) {
   const { joinId } = await params;
-  return <LobbyClient joinId={joinId} />;
+  return <LobbyClient joinId={joinId} isHostRoute />;
 }
