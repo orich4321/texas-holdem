@@ -189,7 +189,11 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
       }
       await roomRepository.startGameForHostAtomically({ joinId: request.params.joinId, hostPlayerId: player.id });
       response.status(201).json({ roomId: request.params.joinId, status: 'IN_PROGRESS' });
-    } catch {
+    } catch (error) {
+      // Keep the public response intentionally generic, but preserve the
+      // underlying failure in server logs so production failures can be
+      // diagnosed without exposing database or snapshot details to players.
+      console.error('Room start failed', error);
       response.status(409).json({ error: { code: 'ROOM_NOT_STARTABLE' } });
     }
   });
