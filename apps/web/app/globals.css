@@ -42,6 +42,7 @@ select {
   grid-template-rows: minmax(min-content, 1fr) auto;
   min-height: 100svh;
   padding: max(24px, env(safe-area-inset-top)) 20px max(20px, env(safe-area-inset-bottom));
+  overflow-x: clip;
   place-items: center;
 }
 
@@ -411,3 +412,95 @@ select {
 }
 
 @media (max-width: 520px) { .poker-table { min-height: 54svh; border-radius: 36%; }.table-seat { min-width: 74px; padding: 5px; }.table-seat small, .table-seat em { font-size: 0.56rem; }.table-seats { inset: 2%; }.player-panel { grid-template-columns: 1fr; }.table-status { justify-self: start; }.action-bar { justify-content: stretch; }.action-bar > button { flex: 1; }.raise-control { width: 100%; }.raise-control input { flex: 1; width: auto; } }
+
+/* Mobile-first product polish */
+button { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid rgba(246, 215, 133, 0.9); outline-offset: 3px; }
+
+.home-card { overflow: hidden; }
+.home-card::before { display: block; width: 58px; height: 3px; margin: -34px auto 28px; border-radius: 999px; background: linear-gradient(90deg, transparent, var(--gold), transparent); content: ""; }
+.game-settings { padding: 16px; border-color: rgba(232,185,93,.23); border-radius: 18px; background: rgba(255,255,255,.025); gap: 12px; }
+.game-settings legend { padding-inline: 8px; font-size: .82rem; }
+.game-settings label { gap: 7px; font-size: .78rem; }
+.game-settings input, .game-settings select { min-height: 46px; padding-inline: 13px; border-radius: 12px; background-color: #121b18; }
+.game-settings small { padding: 2px 4px 0; color: #b8bbb3; }
+
+.lobby-card { overflow: hidden; }
+.lobby-header::after { display: block; width: 44px; height: 3px; margin: 0 auto 22px; border-radius: 99px; background: var(--gold); content: ""; opacity: .75; }
+.lobby-header > p:last-child { margin-bottom: 18px; }
+.lobby-settings { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 18px; }
+.lobby-settings > p { grid-column: 1 / -1; margin: 0 2px 1px; color: #aeb2aa; font-size: .72rem; font-weight: 800; }
+.lobby-settings > div { display: grid; min-width: 0; padding: 11px 7px; border: 1px solid rgba(255,255,255,.08); border-radius: 13px; background: rgba(255,255,255,.035); text-align: center; }
+.lobby-settings span { color: #afb5ad; font-size: .64rem; }
+.lobby-settings strong { margin-top: 4px; color: #f5da97; font-size: .92rem; font-variant-numeric: tabular-nums; }
+.lobby-settings small { color: #9ca29b; font-size: .61rem; }
+.lobby-share button, .lobby-start, .lobby-join-form button { transition: transform 140ms ease, filter 140ms ease; }
+.lobby-share button:active, .lobby-start:active, .lobby-join-form button:active { transform: scale(.98); }
+
+.table-shell { align-content: start; padding: max(12px, env(safe-area-inset-top)) 10px max(18px, env(safe-area-inset-bottom)); gap: 10px; overflow-x: clip; }
+.table-header { min-height: 52px; padding: 6px 8px; border: 1px solid rgba(255,255,255,.08); border-radius: 16px; background: rgba(8,18,14,.72); backdrop-filter: blur(12px); }
+.table-header a { display: flex; align-items: center; gap: 7px; }
+.table-header a span { display: grid; width: 27px; height: 27px; border-radius: 9px; color: #173027; background: var(--gold); place-items: center; font-size: .85rem; }
+.table-header > div { display: grid; gap: 2px; text-align: center; }
+.table-header > div span { color: #8f9992; font-size: .59rem; }
+.table-header > div strong { padding: 0; border: 0; color: #f7e4b3; background: none; font-size: .78rem; }
+.turn-banner { display: flex; align-items: center; justify-content: center; gap: 8px; width: min(100%, 840px); min-height: 38px; margin: 0 auto; padding: 7px 14px; border: 1px solid rgba(255,255,255,.08); border-radius: 999px; color: #c8cec9; background: rgba(255,255,255,.035); font-size: .8rem; font-weight: 700; text-align: center; }
+.turn-banner > span { width: 7px; height: 7px; border-radius: 50%; background: #8f9992; box-shadow: 0 0 0 4px rgba(143,153,146,.1); }
+.turn-banner-active { border-color: rgba(246,215,133,.38); color: #fff0c4; background: rgba(104,74,18,.24); }
+.turn-banner-active > span { background: #f4cc6b; box-shadow: 0 0 0 4px rgba(244,204,107,.14), 0 0 14px #f4cc6b; }
+.poker-table { min-height: min(60svh, 620px); }
+.table-pot { position: absolute; z-index: 2; top: 33%; left: 50%; min-width: 82px; padding: 6px 13px; transform: translateX(-50%); }
+.community-cards { top: 50%; }
+.playing-card-slot { border: 1px dashed rgba(230,226,207,.3); background: rgba(1,35,24,.28); box-shadow: inset 0 0 0 1px rgba(0,0,0,.12); }
+.table-seat { position: relative; }
+.table-seat-active::after { position: absolute; right: 50%; bottom: -7px; width: 24px; height: 3px; border-radius: 99px; background: #f1c75e; box-shadow: 0 0 10px #f1c75e; content: ""; transform: translateX(50%); }
+.table-seat-self { background: linear-gradient(145deg, rgba(15,70,52,.97), rgba(4,31,22,.94)); }
+.seat-number { top: 0; right: 0; transform: translate(35%, -35%); }
+.player-panel { position: sticky; z-index: 10; bottom: max(8px, env(safe-area-inset-bottom)); grid-template-columns: auto 1fr; padding: 10px 12px; border-color: rgba(255,255,255,.14); background: rgba(7,17,13,.94); box-shadow: 0 14px 38px rgba(0,0,0,.55); backdrop-filter: blur(18px); }
+.your-hand > p { color: #b8beb9; font-weight: 700; }
+.your-stack { display: flex; align-items: baseline; justify-content: center; gap: 5px; min-width: 0; }
+.your-stack span { color: #aab2ac; font-size: .68rem; }
+.your-stack strong { color: #f8dfa1; font-size: 1.35rem; font-variant-numeric: tabular-nums; }
+.your-stack small { color: #9fa8a1; font-size: .63rem; }
+.table-status { grid-column: 1 / -1; justify-self: stretch; padding: 8px; border-radius: 9px; color: #ffd8d3 !important; background: rgba(150,45,45,.2); }
+.action-bar { display: grid; grid-template-columns: .78fr 1.35fr .78fr; width: 100%; gap: 7px; }
+.action-bar button { min-height: 48px; border-radius: 13px; }
+.action-bar .action-primary { color: #062016; background: linear-gradient(135deg, #75e7bf, #35c895); box-shadow: 0 8px 20px rgba(53,200,149,.18); font-size: .94rem; }
+.action-bar .action-all-in { color: #ffe8b7; background: rgba(167,109,24,.28); }
+.raise-control { grid-column: 1 / -1; display: grid; grid-template-columns: auto 1fr auto; align-items: center; min-height: 46px; border-radius: 13px; background: rgba(255,255,255,.04); }
+.raise-control > span { padding-inline: 12px; color: #b9c0ba; font-size: .72rem; font-weight: 700; }
+.raise-control input { width: 100%; min-width: 0; height: 100%; font-variant-numeric: tabular-nums; }
+.action-bar .raise-control button { min-height: 44px; padding-inline: 18px; }
+.showdown-panel { border-radius: 20px; }
+
+@media (max-width: 520px) {
+  .table-shell { padding-inline: 7px; }
+  .table-header { border-radius: 14px; }
+  .table-header a { font-size: .82rem; }
+  .table-header a span { width: 24px; height: 24px; }
+  .turn-banner { width: calc(100% - 12px); }
+  .poker-table { min-height: clamp(410px, 57svh, 530px); padding: 7px; border-radius: 38%; }
+  .table-felt::after { inset: 15% 10%; }
+  .table-seats { inset: 3% 1.5%; }
+  .table-seat { min-width: 78px; max-width: 98px; padding: 6px 5px; border-radius: 11px; }
+  .table-seat strong { font-size: .68rem; }
+  .table-seat small, .table-seat em { font-size: .56rem; }
+  .table-pot { top: 34%; }
+  .community-cards { width: min-content; gap: 3px; }
+  .community-cards .playing-card { width: clamp(38px, 10.4vw, 48px); }
+  .playing-card { border-radius: 6px; }
+  .player-panel { grid-template-columns: auto 1fr; border-radius: 16px; }
+  .hole-cards .playing-card { width: 43px; }
+  .action-bar { justify-content: stretch; }
+  .action-bar > button { flex: initial; }
+  .raise-control { width: auto; }
+  .raise-control input { width: 100%; }
+}
+
+@media (max-width: 370px) {
+  .home-card { padding-inline: 17px; }
+  .game-settings-row { grid-template-columns: 1fr; }
+  .table-seat { min-width: 70px; max-width: 86px; }
+  .community-cards .playing-card { width: 35px; }
+  .table-header > div:first-of-type { display: none; }
+}

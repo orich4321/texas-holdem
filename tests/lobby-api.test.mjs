@@ -16,6 +16,22 @@ test('lobby shell preserves vertical scrolling for a full nine-player mobile tab
   assert.doesNotMatch(shellRule, /overflow-y\s*:\s*(?:hidden|clip)/);
 });
 
+test('mobile table UI keeps the player anchored, leaves unrevealed board slots empty, and exposes thumb-sized actions', async () => {
+  const [table, lobby, styles] = await Promise.all([
+    readFile(resolve(root, 'apps/web/app/r/[joinId]/table-client.tsx'), 'utf8'),
+    readFile(resolve(root, 'apps/web/app/r/[joinId]/lobby-client.tsx'), 'utf8'),
+    readFile(resolve(root, 'apps/web/app/globals.css'), 'utf8'),
+  ]);
+
+  assert.match(table, /const orderedSeats = useMemo/);
+  assert.match(table, /playing-card-slot/);
+  assert.match(table, /className="action-primary"/);
+  assert.match(styles, /\.player-panel\s*\{[^}]*position:\s*sticky/s);
+  assert.match(styles, /\.action-bar button\s*\{[^}]*min-height:\s*48px/s);
+  assert.match(lobby, /lobby\.settings\.initialStack\.toLocaleString\('he-IL'\)/);
+  assert.doesNotMatch(lobby, />1,000 צ׳יפים</);
+});
+
 test('lobby request loads a validated public waiting-room projection with browser cookies', async () => {
   const { loadLobby } = await lobbyApi();
   const requests = [];

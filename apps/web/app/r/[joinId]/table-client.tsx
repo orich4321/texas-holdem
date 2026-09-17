@@ -49,7 +49,8 @@ function isPlayerView(value: unknown): value is PlayerView {
     && Array.isArray(view.seats);
 }
 
-function PlayingCard({ card, hidden = false }: { card?: Card; hidden?: boolean }) {
+function PlayingCard({ card, hidden = false, placeholder = false }: { card?: Card; hidden?: boolean; placeholder?: boolean }) {
+  if (placeholder) return <span className="playing-card playing-card-slot" aria-hidden="true" />;
   if (hidden || !card) return <span className="playing-card playing-card-back" aria-label="קלף סגור">♠</span>;
   const suit = suits[card.suit] ?? '?';
   const red = card.suit === 'hearts' || card.suit === 'diamonds';
@@ -83,7 +84,14 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   }, [joinId]);
 
   const ownSeat = useMemo(() => view?.seats.find((seat) => seat.playerId === view.playerId), [view]);
+  const orderedSeats = useMemo(() => {
+    if (!view) return [];
+    const ownIndex = view.seats.findIndex((seat) => seat.playerId === view.playerId);
+    if (ownIndex < 0) return [...view.seats];
+    return [...view.seats.slice(ownIndex), ...view.seats.slice(0, ownIndex)];
+  }, [view]);
   const isTurn = Boolean(view && ownSeat && view.currentActorSeat === ownSeat.seatNumber && view.street !== 'showdown');
+  const activeSeat = view?.seats.find((seat) => seat.seatNumber === view.currentActorSeat);
   const suggestedRaise = view && ownSeat ? ownSeat.currentBet + view.toCall + 10 : 0;
 
   async function act(action: PlayerAction) {
@@ -134,17 +142,28 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
 
   if (!view) return <main className="table-shell"><p className="table-connection" role="status">{status}</p></main>;
 
+  const turnMessage = view.street === 'showdown'
+    ? 'היד הסתיימה — התוצאות מוכנות'
+    : isTurn
+      ? `התור שלכם${view.toCall ? ` · צריך להשוות ${view.toCall.toLocaleString('he-IL')}` : ' · אפשר לעשות צ׳ק'}`
+      : `ממתינים ל${activeSeat?.playerName ?? 'שחקן הבא'}`;
+
   return (
     <main className="table-shell" dir="rtl">
-      <header className="table-header"><a href={`/r/${joinId}`}>הולדם חברים</a><span>{streetNames[view.street]}</span><strong>קופה {view.pot.toLocaleString('he-IL')}</strong></header>
+      <header className="table-header">
+        <a href={`/r/${joinId}`}><span aria-hidden="true">♠</span> הולדם חברים</a>
+        <div><span>שלב</span><strong>{streetNames[view.street]}</strong></div>
+        <div><span>קופה</span><strong>{view.pot.toLocaleString('he-IL')}</strong></div>
+      </header>
+      <p className={`turn-banner${isTurn ? ' turn-banner-active' : ''}`} role="status" aria-live="polite"><span aria-hidden="true" />{turnMessage}</p>
       <section className="poker-table" aria-label="שולחן טקסס הולדם">
         <div className="table-felt">
           <div className="table-pot"><span>קופה</span><strong>{view.pot.toLocaleString('he-IL')}</strong></div>
           <div className="community-cards" aria-label="קלפי קהילה">
-            {Array.from({ length: 5 }, (_, index) => <PlayingCard key={index} card={view.communityCards[index]} hidden={!view.communityCards[index]} />)}
+            {Array.from({ length: 5 }, (_, index) => <PlayingCard key={index} card={view.communityCards[index]} placeholder={!view.communityCards[index]} />)}
           </div>
           <div className="table-seats">
-            {view.seats.map((seat) => {
+            {orderedSeats.map((seat) => {
               const isYou = seat.playerId === view.playerId;
               const isActor = seat.seatNumber === view.currentActorSeat && view.street !== 'showdown';
               return <article key={seat.playerId} className={`table-seat${isYou ? ' table-seat-self' : ''}${isActor ? ' table-seat-active' : ''}${seat.isFolded ? ' table-seat-folded' : ''}`}>
@@ -158,13 +177,14 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
         </div>
       </section>
       <section className="player-panel" aria-label="היד שלכם">
-        <div><p>הקלפים שלכם</p><div className="hole-cards"><PlayingCard card={view.holeCards[0]} /><PlayingCard card={view.holeCards[1]} /></div></div>
-        <p className="table-status" role="status">{isTurn ? `התור שלכם${view.toCall ? ` — להשוות ${view.toCall.toLocaleString('he-IL')}` : ''}` : status}</p>
+        <div className="your-hand"><p>היד שלכם</p><div className="hole-cards"><PlayingCard card={view.holeCards[0]} /><PlayingCard card={view.holeCards[1]} /></div></div>
+        <div className="your-stack"><span>הערימה שלכם</span><strong>{ownSeat?.stack.toLocaleString('he-IL') ?? '—'}</strong><small>צ׳יפים</small></div>
+        {status.includes('נכשל') || status.includes('לא זמינה') ? <p className="table-status" role="alert">{status}</p> : null}
         {isTurn ? <div className="action-bar">
           <button type="button" className="action-fold" disabled={pending} onClick={() => void act({ type: 'fold' })}>פרישה</button>
-          <button type="button" disabled={pending} onClick={() => void act(view.toCall === 0 ? { type: 'check' } : { type: 'call' })}>{view.toCall === 0 ? 'צ׳ק' : `השוואה ${view.toCall}`}</button>
-          <button type="button" disabled={pending} onClick={() => void act({ type: 'all-in' })}>אול אין</button>
-          <label className="raise-control">העלאה<input inputMode="numeric" value={raiseTo} onChange={(event) => setRaiseTo(event.target.value)} placeholder={String(suggestedRaise)} disabled={pending} /><button type="button" disabled={pending} onClick={submitRaise}>העלו</button></label>
+          <button type="button" className="action-primary" disabled={pending} onClick={() => void act(view.toCall === 0 ? { type: 'check' } : { type: 'call' })}>{view.toCall === 0 ? 'צ׳ק' : `השוואה · ${view.toCall.toLocaleString('he-IL')}`}</button>
+          <button type="button" className="action-all-in" disabled={pending} onClick={() => void act({ type: 'all-in' })}>אול אין</button>
+          <label className="raise-control"><span>העלאה עד</span><input aria-label="סכום העלאה" inputMode="numeric" value={raiseTo} onChange={(event) => setRaiseTo(event.target.value)} placeholder={String(suggestedRaise)} disabled={pending} /><button type="button" disabled={pending} onClick={submitRaise}>העלו</button></label>
         </div> : null}
       </section>
       {view.showdown ? <section className="showdown-panel" aria-live="polite" aria-label="תוצאות היד">

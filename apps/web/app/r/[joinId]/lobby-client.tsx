@@ -148,9 +148,10 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
         </section>
 
         <section className="lobby-settings" aria-label="הגדרות המשחק">
-          <span>הגדרות המארח</span>
-          <strong>{lobby.settings.initialStack.toLocaleString('he-IL')} צ׳יפים</strong>
-          <small>בליינדים {lobby.settings.smallBlind}/{lobby.settings.bigBlind}</small>
+          <p>הגדרות המשחק</p>
+          <div><span>ערימת פתיחה</span><strong>{lobby.settings.initialStack.toLocaleString('he-IL')}</strong><small>צ׳יפים</small></div>
+          <div><span>בליינדים</span><strong>{lobby.settings.smallBlind}/{lobby.settings.bigBlind}</strong></div>
+          <div><span>מקומות</span><strong>{lobby.settings.maxPlayers}</strong></div>
         </section>
 
         <div className="lobby-share">
@@ -169,7 +170,7 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
           <p className="lobby-already-joined" role="status">אתם כבר יושבים בשולחן הזה.</p>
         ) : (
           <form className="lobby-join-form" onSubmit={handleJoin}>
-            <div className="lobby-form-heading"><h2>הצטרפו לשולחן</h2><span>1,000 צ׳יפים</span></div>
+            <div className="lobby-form-heading"><h2>הצטרפו לשולחן</h2><span>{lobby.settings.initialStack.toLocaleString('he-IL')} צ׳יפים</span></div>
             <label htmlFor="lobby-nickname">הכינוי שלכם</label>
             <div className="lobby-input-row">
               <input id="lobby-nickname" name="nickname" type="text" autoComplete="nickname" maxLength={24} placeholder="איך לקרוא לכם?" value={nickname} onChange={(event) => setNickname(event.target.value)} disabled={joining} aria-describedby={joinMessage ? 'join-status' : undefined} />
