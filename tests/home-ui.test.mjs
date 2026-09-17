@@ -111,7 +111,7 @@ test('room creation posts the normalized nickname and host-selected table settin
       method: 'POST',
       credentials: 'include',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ displayName: 'אורי', initialStack: 1000, smallBlind: 5, bigBlind: 10, maxPlayers: 6 }),
+      body: JSON.stringify({ displayName: 'אורי', initialStack: 1000, smallBlind: 5, bigBlind: 10, maxPlayers: 9 }),
     },
   ]]);
   assert.deepEqual(destinations, ['/r/abc123/host']);

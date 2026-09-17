@@ -74,8 +74,7 @@ export default function HomePage() {
               <label>סמול בליינד<input inputMode="numeric" type="number" min="1" max="100000" value={settings.smallBlind} onChange={(event) => setSettings((current) => ({ ...current, smallBlind: Number(event.target.value) }))} /></label>
               <label>ביג בליינד<input inputMode="numeric" type="number" min="2" max="100000" value={settings.bigBlind} onChange={(event) => setSettings((current) => ({ ...current, bigBlind: Number(event.target.value) }))} /></label>
             </div>
-              <label>מספר שחקנים מרבי<select value={settings.maxPlayers} onChange={(event) => setSettings((current) => ({ ...current, maxPlayers: Number(event.target.value) }))}>{[2, 3, 4, 5, 6, 7, 8, 9].map((count) => <option key={count} value={count}>{count} שחקנים</option>)}</select></label>
-            <small>כל מי שמצטרף מקבל את אותה ערימת פתיחה.</small>
+            <small>כל מי שמצטרף מקבל את אותה ערימת פתיחה. השולחן מוכן לעד תשעה שחקנים.</small>
           </fieldset>
           <button type="submit" disabled={pending}>
             {pending ? 'פותחים חדר…' : 'פתח חדר'}

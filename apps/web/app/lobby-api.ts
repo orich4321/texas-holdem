@@ -1,6 +1,8 @@
-declare const process: { env: { NEXT_PUBLIC_GAME_URL?: string; NEXT_PUBLIC_SERVER_URL?: string } };
+declare const process: { env: { NODE_ENV?: string; NEXT_PUBLIC_GAME_URL?: string; NEXT_PUBLIC_SERVER_URL?: string } };
 
-const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL ?? process.env.NEXT_PUBLIC_GAME_URL ?? 'http://localhost:3001';
+const SERVER_URL = process.env.NODE_ENV === 'production'
+  ? '/server'
+  : process.env.NEXT_PUBLIC_SERVER_URL ?? process.env.NEXT_PUBLIC_GAME_URL ?? 'http://localhost:3001';
 
 export const EMPTY_NICKNAME_MESSAGE = 'צריך להזין כינוי כדי להצטרף.';
 export const LOBBY_LOAD_ERROR_MESSAGE = 'לא הצלחנו לטעון את החדר. נסו שוב.';

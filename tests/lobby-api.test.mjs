@@ -32,6 +32,22 @@ test('mobile table UI keeps the player anchored, leaves unrevealed board slots e
   assert.doesNotMatch(lobby, />1,000 צ׳יפים</);
 });
 
+test('production uses the same-origin game service and the host route never offers another seat', async () => {
+  const [creation, lobbyApi, lobby, table] = await Promise.all([
+    readFile(resolve(root, 'apps/web/app/room-creation.ts'), 'utf8'),
+    readFile(resolve(root, 'apps/web/app/lobby-api.ts'), 'utf8'),
+    readFile(resolve(root, 'apps/web/app/r/[joinId]/lobby-client.tsx'), 'utf8'),
+    readFile(resolve(root, 'apps/web/app/r/[joinId]/table-client.tsx'), 'utf8'),
+  ]);
+
+  assert.match(creation, /process\.env\.NODE_ENV === 'production'\s*\? '\/server'/);
+  assert.match(lobbyApi, /process\.env\.NODE_ENV === 'production'\s*\? '\/server'/);
+  assert.match(table, /process\.env\.NODE_ENV === 'production'\s*\? '\/server'/);
+  assert.match(lobby, /\{isHostRoute \? \(/);
+  assert.match(lobby, /אתם המארחים וכבר יושבים בשולחן הזה/);
+  assert.doesNotMatch(lobby, /\{lobby\.players\.length\}<b>\/{lobby\.settings\.maxPlayers}/);
+});
+
 test('lobby request loads a validated public waiting-room projection with browser cookies', async () => {
   const { loadLobby } = await lobbyApi();
   const requests = [];

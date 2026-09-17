@@ -134,7 +134,7 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
         <section className="lobby-roster" aria-labelledby="roster-title">
           <div className="lobby-roster-heading">
             <h2 id="roster-title">השחקנים בשולחן</h2>
-            <span aria-label={`${lobby.players.length} מתוך ${lobby.settings.maxPlayers} שחקנים`}>{lobby.players.length}<b>/{lobby.settings.maxPlayers}</b></span>
+            <span aria-label={`${lobby.players.length} שחקנים`}>{lobby.players.length}</span>
           </div>
           <ul>
             {lobby.players.map((player, index) => (
@@ -151,7 +151,6 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
           <p>הגדרות המשחק</p>
           <div><span>ערימת פתיחה</span><strong>{lobby.settings.initialStack.toLocaleString('he-IL')}</strong><small>צ׳יפים</small></div>
           <div><span>בליינדים</span><strong>{lobby.settings.smallBlind}/{lobby.settings.bigBlind}</strong></div>
-          <div><span>מקומות</span><strong>{lobby.settings.maxPlayers}</strong></div>
         </section>
 
         <div className="lobby-share">
@@ -166,7 +165,9 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
           </button>
         ) : null}
 
-        {lobby.isParticipant ? (
+        {isHostRoute ? (
+          <p className="lobby-already-joined" role="status">אתם המארחים וכבר יושבים בשולחן הזה.</p>
+        ) : lobby.isParticipant ? (
           <p className="lobby-already-joined" role="status">אתם כבר יושבים בשולחן הזה.</p>
         ) : (
           <form className="lobby-join-form" onSubmit={handleJoin}>

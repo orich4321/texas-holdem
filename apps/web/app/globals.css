@@ -428,7 +428,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .lobby-card { overflow: hidden; }
 .lobby-header::after { display: block; width: 44px; height: 3px; margin: 0 auto 22px; border-radius: 99px; background: var(--gold); content: ""; opacity: .75; }
 .lobby-header > p:last-child { margin-bottom: 18px; }
-.lobby-settings { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 18px; }
+.lobby-settings { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-top: 18px; }
 .lobby-settings > p { grid-column: 1 / -1; margin: 0 2px 1px; color: #aeb2aa; font-size: .72rem; font-weight: 800; }
 .lobby-settings > div { display: grid; min-width: 0; padding: 11px 7px; border: 1px solid rgba(255,255,255,.08); border-radius: 13px; background: rgba(255,255,255,.035); text-align: center; }
 .lobby-settings span { color: #afb5ad; font-size: .64rem; }

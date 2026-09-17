@@ -1,11 +1,13 @@
-declare const process: { env: { NEXT_PUBLIC_GAME_URL?: string; NEXT_PUBLIC_SERVER_URL?: string } };
+declare const process: { env: { NODE_ENV?: string; NEXT_PUBLIC_GAME_URL?: string; NEXT_PUBLIC_SERVER_URL?: string } };
 
 export type RoomSettings = Readonly<{ initialStack: number; smallBlind: number; bigBlind: number; maxPlayers: number }>;
-export const DEFAULT_ROOM_SETTINGS: RoomSettings = Object.freeze({ initialStack: 1000, smallBlind: 5, bigBlind: 10, maxPlayers: 6 });
-// NEXT_PUBLIC_SERVER_URL is set to `/server` for the unified Vercel
-// deployment. Prefer it over Vercel's generated service URL, whose public
-// route need not match this application's rewrite prefix.
-const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL ?? process.env.NEXT_PUBLIC_GAME_URL ?? 'http://localhost:3001';
+export const DEFAULT_ROOM_SETTINGS: RoomSettings = Object.freeze({ initialStack: 1000, smallBlind: 5, bigBlind: 10, maxPlayers: 9 });
+// The public Vercel app routes the game service through `/server`. Keeping
+// production requests same-origin is essential on iPhone/Safari: cross-site
+// cookies can be blocked, making a newly created host look like a guest.
+const SERVER_URL = process.env.NODE_ENV === 'production'
+  ? '/server'
+  : process.env.NEXT_PUBLIC_SERVER_URL ?? process.env.NEXT_PUBLIC_GAME_URL ?? 'http://localhost:3001';
 
 export const EMPTY_NICKNAME_MESSAGE = 'צריך להזין כינוי כדי לפתוח חדר.';
 export const CREATION_ERROR_MESSAGE = 'לא הצלחנו לפתוח את החדר. נסו שוב.';
