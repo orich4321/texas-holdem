@@ -134,7 +134,7 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
         <section className="lobby-roster" aria-labelledby="roster-title">
           <div className="lobby-roster-heading">
             <h2 id="roster-title">השחקנים בשולחן</h2>
-            <span aria-label={`${lobby.players.length} שחקנים`}>{lobby.players.length}</span>
+            <span aria-label={`${lobby.players.length} ${lobby.players.length === 1 ? 'שחקן' : 'שחקנים'}`}>{lobby.players.length}</span>
           </div>
           <ul>
             {lobby.players.map((player, index) => (
