@@ -405,14 +405,17 @@ export function hydrateStartedHandForVerifiedServerRecovery(snapshot: unknown): 
   const streetCardCounts: Record<Street, readonly [number, number]> = {
     preflop: [0, 0], flop: [3, 1], turn: [4, 2], river: [5, 3], showdown: [5, 3],
   };
+  const remainingContenders = hand.seats.filter((seat) => seat.holeCards && !seat.isFolded);
   const [communityCardCount, burnedCardCount] = streetCardCounts[hand.street];
+  const validUncontestedBoard = hand.street === 'showdown' && remainingContenders.length === 1
+    && [[0, 0], [3, 1], [4, 2], [5, 3]].some(([community, burned]) => hand.communityCards.length === community && hand.burnedCards.length === burned);
   const committed = hand.seats.reduce((total, seat) => total + seat.totalCommitted, 0);
   const currentBet = hand.seats.reduce((highest, seat) => Math.max(highest, seat.currentBet), 0);
   const actor = seatsByNumber.get(hand.currentActorSeat);
   const validBlindSeats = [hand.dealerSeat, hand.smallBlindSeat, hand.bigBlindSeat].every((seatNumber) => seatsByNumber.has(seatNumber));
   const pendingUnique = new Set(hand.pendingActorSeats);
   const locksUnique = new Set(hand.raiseLockedSeats);
-  if (!validBlindSeats || hand.smallBlindSeat === hand.bigBlindSeat || hand.communityCards.length !== communityCardCount || hand.burnedCards.length !== burnedCardCount || committed !== hand.pot || currentBet !== hand.currentBet || hand.streetPot > hand.pot || pendingUnique.size !== hand.pendingActorSeats.length || locksUnique.size !== hand.raiseLockedSeats.length || hand.pendingActorSeats.some((seatNumber) => {
+  if (!validBlindSeats || hand.smallBlindSeat === hand.bigBlindSeat || (!validUncontestedBoard && (hand.communityCards.length !== communityCardCount || hand.burnedCards.length !== burnedCardCount)) || committed !== hand.pot || currentBet !== hand.currentBet || hand.streetPot > hand.pot || pendingUnique.size !== hand.pendingActorSeats.length || locksUnique.size !== hand.raiseLockedSeats.length || hand.pendingActorSeats.some((seatNumber) => {
     const seat = seatsByNumber.get(seatNumber);
     return !seat || !seat.holeCards || seat.isFolded === true || seat.stack <= 0;
   }) || hand.raiseLockedSeats.some((seatNumber) => !seatsByNumber.has(seatNumber)) || (hand.pendingActorSeats.length > 0 && (!actor || !hand.pendingActorSeats.includes(hand.currentActorSeat))) || hand.seats.some((seat) => (!seat.holeCards && (seat.stack !== 0 || seat.currentBet !== 0 || seat.totalCommitted !== 0)) || (seat.holeCards && seat.holeCards.length !== 2))) throw new Error('Invalid private hand snapshot');
@@ -566,7 +569,9 @@ export function getPreflopLegalActions(hand: StartedHand): PreflopLegalActions {
     toCall,
     canCheck: toCall === 0,
     canCall: toCall > 0 && callAmount > 0,
-    canFold: otherEligiblePlayers > 1,
+    // Heads-up players must be allowed to fold: that action immediately
+    // awards the pot to the sole remaining opponent.
+    canFold: otherEligiblePlayers > 0,
     callAmount,
     canRaise,
     minRaiseTo: canRaise ? minRaiseTo : null,
@@ -1118,6 +1123,36 @@ export function advanceRiverToShowdown(hand: StartedHand): StartedHand {
 }
 
 /**
+ * Ends a hand immediately when every other dealt player has folded. No extra
+ * community cards are dealt and no further player action is required.
+ */
+export function finishUncontestedHand(hand: StartedHand): StartedHand {
+  if (!authoritativeHands.has(hand) || hand.street === 'showdown') throw new Error('An uncontested finish requires an active authoritative hand');
+  const remaining = hand.seats.filter((seat) => seat.holeCards && !seat.isFolded);
+  if (remaining.length !== 1 || !Number.isSafeInteger(hand.pot) || hand.pot < 0 || !Array.isArray(hand.pendingActorSeats)) {
+    throw new Error('An uncontested finish requires exactly one remaining player');
+  }
+  return attachPrivateHandState({
+    ...hand,
+    currentActorSeat: remaining[0].seatNumber,
+    seats: hand.seats.map((seat) => ({
+      ...seat,
+      holeCards: seat.holeCards && [cloneCard(seat.holeCards[0]), cloneCard(seat.holeCards[1])] as [Card, Card],
+    })),
+  }, {
+    street: 'showdown',
+    communityCards: hand.communityCards,
+    remainingDeck: hand.remainingDeck,
+    burnedCards: hand.burnedCards,
+    smallBlindAmount: hand.smallBlindAmount,
+    bigBlindAmount: hand.bigBlindAmount,
+    streetPot: hand.streetPot,
+    pendingActorSeats: [],
+    raiseLockedSeats: [],
+  });
+}
+
+/**
  * Runs the remaining board only after postflop betting is settled and every
  * non-folded player is all-in. The server-private shuffled deck stays inside
  * the authoritative hand capability; payout resolution remains a separate
@@ -1182,7 +1217,9 @@ export interface SettledShowdown {
 
 /** Constructs main/side pots from total commitments and awards each eligible showdown winner. */
 export function settleShowdown(hand: StartedHand): SettledShowdown {
-  if (!authoritativeHands.has(hand) || hand.street !== 'showdown' || hand.communityCards.length !== 5 || hand.pendingActorSeats.length !== 0) {
+  const remaining = hand?.seats?.filter((seat) => seat.holeCards && !seat.isFolded) ?? [];
+  const uncontested = remaining.length === 1;
+  if (!authoritativeHands.has(hand) || hand.street !== 'showdown' || (!uncontested && hand.communityCards.length !== 5) || hand.pendingActorSeats.length !== 0) {
     throw new Error('Showdown settlement requires authoritative settled showdown state');
   }
   if (!Number.isSafeInteger(hand.pot) || hand.pot < 0 || hand.seats.some((seat) => (!seat.holeCards && seat.totalCommitted > 0) || !Number.isSafeInteger(seat.totalCommitted) || seat.totalCommitted < 0 || !Number.isSafeInteger(seat.stack) || seat.stack < 0)) {
@@ -1190,6 +1227,19 @@ export function settleShowdown(hand: StartedHand): SettledShowdown {
   }
   const committed = hand.seats.reduce((total, seat) => total + seat.totalCommitted, 0);
   if (!Number.isSafeInteger(committed) || committed !== hand.pot) throw new Error('Showdown pot must equal total committed chips');
+  if (uncontested) {
+    const winner = remaining[0];
+    return Object.freeze({
+      pot: 0 as const,
+      seats: Object.freeze(hand.seats.map((seat) => Object.freeze({
+        ...seat,
+        stack: seat.seatNumber === winner.seatNumber ? seat.stack + hand.pot : seat.stack,
+        ...(seat.isFolded ? { holeCards: undefined } : {}),
+      }))),
+      pots: Object.freeze(hand.pot > 0 ? [Object.freeze({ amount: hand.pot, eligibleSeatNumbers: Object.freeze([winner.seatNumber]), winnerSeatNumbers: Object.freeze([winner.seatNumber]) })] : []),
+      uncalledReturns: Object.freeze([]),
+    });
+  }
   const levels = [...new Set(hand.seats.map((seat) => seat.totalCommitted).filter((amount) => amount > 0))].sort((left, right) => left - right);
   let priorLevel = 0;
   const uncalledReturns: { seatNumber: number; amount: number }[] = [];

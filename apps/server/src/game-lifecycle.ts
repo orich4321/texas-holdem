@@ -23,6 +23,7 @@ import {
   advancePreflopToFlop,
   advanceRiverToShowdown,
   advanceTurnToRiver,
+  finishUncontestedHand,
   getFlopLegalActions,
   getPreflopLegalActions,
   getRiverLegalActions,
@@ -262,9 +263,11 @@ export class ServerGameLifecycle {
 
   /** Advances a completed betting round before emitting any player-facing view. */
   private advanceIfSettled(hand: StartedHand): StartedHand {
-    if (hand.pendingActorSeats.length > 0 || hand.street === 'showdown') return hand;
-    if (hand.street === 'preflop') return this.advanceIfSettled(advancePreflopToFlop(hand));
+    if (hand.street === 'showdown') return hand;
     const contestingSeats = hand.seats.filter((seat) => seat.holeCards && !seat.isFolded);
+    if (contestingSeats.length === 1) return finishUncontestedHand(hand);
+    if (hand.pendingActorSeats.length > 0) return hand;
+    if (hand.street === 'preflop') return this.advanceIfSettled(advancePreflopToFlop(hand));
     if (contestingSeats.length >= 2 && contestingSeats.every((seat) => seat.stack === 0)) {
       return runOutAllInToShowdown(hand);
     }

@@ -3,7 +3,7 @@ import { Buffer } from 'node:buffer';
 import { test } from 'node:test';
 
 import { RoomRepository } from '../apps/server/src/persistence/room-repository.ts';
-import { startHand } from '../packages/poker-core/src/index.ts';
+import { applyPreflopRaise, startHand } from '../packages/poker-core/src/index.ts';
 import { signPrivateHandSnapshot, hydrateSignedPrivateHandSnapshot } from '../apps/server/src/persistence/private-hand-snapshot.ts';
 
 const key = Buffer.from('a server-only snapshot signing key with adequate length', 'utf8');
@@ -20,8 +20,10 @@ const initial = signPrivateHandSnapshot(startHand({
   seats: room.players.map((player, index) => ({ seatNumber: index + 1, playerId: player.id, stack: player.currentStack })),
   dealerSeat: 1, smallBlind: 5, bigBlind: 10, randomInt: () => 0,
 }), { roomId: room.id, sequence: 0, keyId }, key);
+const raised = applyPreflopRaise(hydrateSignedPrivateHandSnapshot(initial, { roomId: room.id, sequence: 0 }, keyring).hand, 1, 20);
+const raisedSnapshot = signPrivateHandSnapshot(raised, { roomId: room.id, sequence: 1, keyId }, key);
 
-function createDb() {
+function createDb({ latest = { sequence: 0, state: initial } } = {}) {
   const calls = [];
   const tx = {
     room: {
@@ -29,10 +31,12 @@ function createDb() {
       updateMany: async (args) => { calls.push(['room.updateMany', args]); return { count: 1 }; },
     },
     gameSnapshot: {
-      findFirst: async (args) => { calls.push(['gameSnapshot.findFirst', args]); return { sequence: 0, state: initial }; },
+      findFirst: async (args) => { calls.push(['gameSnapshot.findFirst', args]); return latest; },
       create: async (args) => { calls.push(['gameSnapshot.create', args]); return args.data; },
     },
     gameEvent: { create: async (args) => { calls.push(['gameEvent.create', args]); return args.data; } },
+    player: { update: async (args) => { calls.push(['player.update', args]); return args.data; } },
+    settlement: { create: async (args) => { calls.push(['settlement.create', args]); return args.data; } },
   };
   return { calls, $transaction: async (callback) => callback(tx) };
 }
@@ -52,6 +56,19 @@ test('accepted authoritative action persists a minimal event and next signed sna
   assert.equal(recovered.hand.currentActorSeat, 2);
   assert.equal(JSON.stringify(db.calls[3][1].data).includes('holeCards'), false);
   assert.equal(JSON.stringify(db.calls[3][1].data).includes('deck'), false);
+});
+
+test('the last fold atomically persists the uncontested winner and updated chip stacks', async () => {
+  const db = createDb({ latest: { sequence: 1, state: raisedSnapshot } });
+  const repository = new RoomRepository(db, undefined, undefined, undefined, keyring);
+
+  const result = await repository.persistPlayerActionAtomically({ roomId: room.id, playerId: 'player-1', action: { type: 'fold' } });
+
+  assert.equal(result.view.street, 'showdown');
+  assert.deepEqual(result.view.showdown?.winners.map((winner) => winner.playerId), ['host-id']);
+  assert.deepEqual(result.view.seats.map((seat) => [seat.playerId, seat.stack]), [['host-id', 110], ['player-1', 90]]);
+  assert.deepEqual(db.calls.filter(([name]) => name === 'player.update').map(([, args]) => args.data.currentStack).sort((a, b) => a - b), [90, 110]);
+  assert.equal(db.calls.filter(([name]) => name === 'settlement.create').length, 1);
 });
 
 test('invalid or out-of-turn action writes nothing', async () => {

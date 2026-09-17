@@ -135,6 +135,23 @@ test('a settled preflop all-in runs out server-private board cards to showdown b
   assert.equal(showdown.toCall, 0);
 });
 
+test('the final fold immediately ends the hand and awards the full pot without dealing extra board cards', () => {
+  const headsUp = seats.slice(0, 2);
+  const game = new ServerGameLifecycle({ seats: headsUp, dealerSeat: 1, smallBlind: 5, bigBlind: 10 });
+  game.start();
+  game.applyAction(game.currentActorPlayerId(), { type: 'raise', raiseTo: 20 });
+  const result = game.applyAction(game.currentActorPlayerId(), { type: 'fold' });
+
+  assert.equal(result.street, 'showdown');
+  assert.equal(result.communityCards.length, 0, 'an uncontested pot must not run out cards');
+  assert.deepEqual(result.showdown?.winners.map((winner) => winner.playerId), ['ada']);
+  assert.equal(result.showdown?.winners[0].chipsWon, 30);
+  assert.deepEqual(result.seats.map((seat) => ({ playerId: seat.playerId, stack: seat.stack })), [
+    { playerId: 'ada', stack: 110 },
+    { playerId: 'ben', stack: 90 },
+  ]);
+});
+
 test('a verified recovered hand resumes without a fresh deal and cannot be started again', () => {
   const recoveredHand = startHand({
     seats: seats.map(({ seatNumber, playerId, stack }) => ({ seatNumber, playerId, stack })),

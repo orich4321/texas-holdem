@@ -234,7 +234,7 @@ test('preflop fold rejects malformed pots without changing the hand', () => {
   }
 });
 
-test('preflop fold is not advertised when it would leave no further betting decision', () => {
+test('heads-up preflop fold is advertised because it can immediately concede the pot', () => {
   const hand = startHand({
     seats: [
       { seatNumber: 1, playerId: 'ada', stack: 100 },
@@ -246,10 +246,10 @@ test('preflop fold is not advertised when it would leave no further betting deci
     randomInt: unshuffledRandomInt,
   });
 
-  assert.equal(getPreflopLegalActions(hand).canFold, false);
-  assert.throws(() => applyPreflopFold(hand, 1), /cannot fold/);
-  assert.equal(hand.currentActorSeat, 1);
-  assert.equal(hand.seats[0].isFolded, undefined);
+  assert.equal(getPreflopLegalActions(hand).canFold, true);
+  const folded = applyPreflopFold(hand, 1);
+  assert.equal(folded.seats[0].isFolded, true);
+  assert.equal(folded.currentActorSeat, 2);
 });
 
 test('preflop full raise commits to its total target, updates the current bet, and advances action', () => {
