@@ -103,6 +103,16 @@ export type StartNextHandForHostInput = Readonly<{
   hostPlayerId: string;
 }>;
 
+export type AdvanceAllInRunoutForHostInput = Readonly<{
+  joinId: string;
+  hostPlayerId: string;
+}>;
+
+export type RevealShowdownHandInput = Readonly<{
+  roomId: string;
+  playerId: string;
+}>;
+
 function isBoundInitialPrivateSnapshot(snapshot: SignedPrivateHandSnapshot, roomId: string): boolean {
   return snapshot.version === 1
     && snapshot.roomId === roomId
@@ -454,6 +464,80 @@ export class RoomRepository {
       await tx.gameEvent.create({ data: { roomId, sequence, type: 'PLAYER_ACTION', payload: { actorPlayerId: playerId, action: publicAction } } });
       await tx.gameSnapshot.create({ data: { roomId, sequence, state: snapshot as unknown as Prisma.InputJsonValue } });
       return { sequence, view, views };
+    });
+  }
+
+  /** Advances a fully all-in hand by one public board street under the host lock. */
+  async advanceAllInRunoutForHostAtomically({ joinId, hostPlayerId }: AdvanceAllInRunoutForHostInput) {
+    const activeKey = this.privateSnapshotKeyring.entries().next().value as [string, PrivateSnapshotSigningKey] | undefined;
+    if (!activeKey) throw new Error('All-in board is unavailable');
+    const [keyId, key] = activeKey;
+    return this.db.$transaction(async (tx) => {
+      const room = await tx.room.findUnique({
+        where: { joinId },
+        select: { id: true, hostPlayerId: true, status: true, players: { orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, currentStack: true } } },
+      });
+      if (!room || room.hostPlayerId !== hostPlayerId || room.status !== 'IN_PROGRESS') throw new Error('All-in board is unavailable');
+      const locked = await tx.room.updateMany({ where: { id: room.id, hostPlayerId, status: 'IN_PROGRESS' }, data: { updatedAt: new Date() } });
+      if (locked.count !== 1) throw new Error('All-in board is unavailable');
+      const latest = await tx.gameSnapshot.findFirst({ where: { roomId: room.id }, orderBy: { sequence: 'desc' }, select: { sequence: true, state: true } });
+      if (!latest) throw new Error('All-in board is unavailable');
+      const recovery = hydrateSignedPrivateHandSnapshot(latest.state as unknown as SignedPrivateHandSnapshot, { roomId: room.id, sequence: latest.sequence }, this.privateSnapshotKeyring);
+      const lifecycle = ServerGameLifecycle.fromVerifiedRecoveredHand({
+        seats: room.players.map((player, index) => ({ seatNumber: index + 1, playerId: player.id, playerName: player.displayName, stack: player.currentStack })),
+        dealerSeat: recovery.hand.dealerSeat, smallBlind: recovery.hand.smallBlindAmount, bigBlind: recovery.hand.bigBlindAmount,
+      }, recovery);
+      lifecycle.advanceAllInRunout();
+      const hand = lifecycle.handForDurableSnapshot();
+      const settlement = hand.street === 'showdown' ? lifecycle.showdownSettlement() : undefined;
+      if (settlement) {
+        await Promise.all(settlement.seats.map((seat) => tx.player.update({ where: { id: seat.playerId }, data: { currentStack: seat.stack } })));
+        await tx.settlement.create({
+          data: {
+            roomId: room.id,
+            idempotencyKey: `hand-${latest.sequence}`,
+            result: {
+              pots: settlement.pots.map((pot) => ({ amount: pot.amount, winnerSeatNumbers: [...pot.winnerSeatNumbers] })),
+              uncalledReturns: settlement.uncalledReturns.map((returned) => ({ ...returned })),
+              stacks: settlement.seats.map((seat) => ({ seatNumber: seat.seatNumber, playerId: seat.playerId, stack: seat.stack })),
+            } as Prisma.InputJsonValue,
+          },
+        });
+      }
+      const sequence = latest.sequence + 1;
+      const snapshot = signPrivateHandSnapshot(hand, { roomId: room.id, sequence, keyId }, key);
+      await tx.gameEvent.create({ data: { roomId: room.id, sequence, type: 'ALL_IN_RUNOUT_ADVANCED', payload: { street: hand.street } } });
+      await tx.gameSnapshot.create({ data: { roomId: room.id, sequence, state: snapshot as unknown as Prisma.InputJsonValue } });
+      return { sequence, views: Object.freeze(room.players.map((player) => lifecycle.viewFor(player.id))) };
+    });
+  }
+
+  /** Persists a player's voluntary showdown reveal without trusting client cards. */
+  async revealShowdownHandAtomically({ roomId, playerId }: RevealShowdownHandInput) {
+    const activeKey = this.privateSnapshotKeyring.entries().next().value as [string, PrivateSnapshotSigningKey] | undefined;
+    if (!activeKey) throw new Error('Showdown reveal is unavailable');
+    const [keyId, key] = activeKey;
+    return this.db.$transaction(async (tx) => {
+      const room = await tx.room.findUnique({
+        where: { id: roomId },
+        select: { status: true, players: { orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, currentStack: true } } },
+      });
+      if (!room || room.status !== 'IN_PROGRESS' || !room.players.some((player) => player.id === playerId)) throw new Error('Showdown reveal is unavailable');
+      const locked = await tx.room.updateMany({ where: { id: roomId, status: 'IN_PROGRESS' }, data: { updatedAt: new Date() } });
+      if (locked.count !== 1) throw new Error('Showdown reveal is unavailable');
+      const latest = await tx.gameSnapshot.findFirst({ where: { roomId }, orderBy: { sequence: 'desc' }, select: { sequence: true, state: true } });
+      if (!latest) throw new Error('Showdown reveal is unavailable');
+      const recovery = hydrateSignedPrivateHandSnapshot(latest.state as unknown as SignedPrivateHandSnapshot, { roomId, sequence: latest.sequence }, this.privateSnapshotKeyring);
+      const lifecycle = ServerGameLifecycle.fromVerifiedRecoveredHand({
+        seats: room.players.map((player, index) => ({ seatNumber: index + 1, playerId: player.id, playerName: player.displayName, stack: player.currentStack })),
+        dealerSeat: recovery.hand.dealerSeat, smallBlind: recovery.hand.smallBlindAmount, bigBlind: recovery.hand.bigBlindAmount,
+      }, recovery);
+      const view = lifecycle.revealShowdownHand(playerId);
+      const sequence = latest.sequence + 1;
+      const snapshot = signPrivateHandSnapshot(lifecycle.handForDurableSnapshot(), { roomId, sequence, keyId }, key);
+      await tx.gameEvent.create({ data: { roomId, sequence, type: 'SHOWDOWN_HAND_REVEALED', payload: { playerId } } });
+      await tx.gameSnapshot.create({ data: { roomId, sequence, state: snapshot as unknown as Prisma.InputJsonValue } });
+      return { sequence, view, views: Object.freeze(room.players.map((player) => lifecycle.viewFor(player.id))) };
     });
   }
 

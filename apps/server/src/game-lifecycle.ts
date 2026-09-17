@@ -29,6 +29,7 @@ import {
   getRiverLegalActions,
   getTurnLegalActions,
   runOutAllInToShowdown,
+  revealShowdownSeat,
   settleShowdown,
   type Card,
   type ShowdownPot,
@@ -76,6 +77,17 @@ export interface ServerPlayerView {
     currentBet: number;
     isFolded: boolean;
   }[];
+  /** Cards intentionally made public by a showdown or an all-in runout. */
+  exposedHands: readonly {
+    seatNumber: number;
+    playerId: string;
+    playerName: string;
+    holeCards: readonly [Card, Card];
+    reason: 'all-in' | 'winner' | 'voluntary';
+  }[];
+  allInRunout?: Readonly<{
+    nextStreet: 'flop' | 'turn' | 'river' | 'showdown';
+  }>;
   showdown?: Readonly<{
     winners: readonly { seatNumber: number; playerId: string; playerName: string; chipsWon: number }[];
     pots: readonly Pick<ShowdownPot, 'amount' | 'winnerSeatNumbers'>[];
@@ -157,11 +169,41 @@ export class ServerGameLifecycle {
     const hand = this.requireHand();
     const requestingSeat = hand.seats.find((seat) => seat.playerId === playerId);
     if (!requestingSeat?.holeCards) throw new Error('Player is not seated in this game');
-    const toCall = hand.street === 'showdown' ? 0 : this.legalActions(hand).toCall;
+    const allInRunout = this.allInRunoutNextStreet(hand);
+    const toCall = hand.street === 'showdown' || allInRunout ? 0 : this.legalActions(hand).toCall;
     const showdown = hand.street === 'showdown' ? this.showdownResult(hand) : undefined;
     const settledStacks = showdown
       ? new Map(showdown.seats.map((seat) => [seat.seatNumber, seat.stack]))
       : undefined;
+    const contestingSeats = hand.seats.filter((seat) => seat.holeCards && !seat.isFolded);
+    const allInShowdown = hand.street === 'showdown'
+      && hand.communityCards.length === 5
+      && contestingSeats.length >= 2
+      && contestingSeats.every((seat) => seat.stack === 0);
+    const winnerSeatNumbers = new Set(
+      showdown && contestingSeats.length >= 2 && hand.communityCards.length === 5
+        ? showdown.pots.flatMap((pot) => pot.winnerSeatNumbers)
+        : [],
+    );
+    const voluntarilyRevealed = new Set(hand.revealedSeatNumbers);
+    const exposedHands = Object.freeze(hand.seats.flatMap((seat) => {
+      if (!seat.holeCards || seat.isFolded) return [];
+      const reason = allInRunout || allInShowdown
+        ? 'all-in' as const
+        : winnerSeatNumbers.has(seat.seatNumber)
+          ? 'winner' as const
+          : voluntarilyRevealed.has(seat.seatNumber)
+            ? 'voluntary' as const
+            : undefined;
+      if (!reason) return [];
+      return [Object.freeze({
+        seatNumber: seat.seatNumber,
+        playerId: seat.playerId,
+        playerName: this.namesByPlayerId.get(seat.playerId)!,
+        holeCards: Object.freeze(seat.holeCards.map((card) => Object.freeze({ ...card }))) as unknown as readonly [Card, Card],
+        reason,
+      })];
+    }));
     return Object.freeze({
       playerId,
       street: hand.street,
@@ -179,6 +221,8 @@ export class ServerGameLifecycle {
         currentBet: seat.currentBet,
         isFolded: seat.isFolded === true,
       }))),
+      exposedHands,
+      ...(allInRunout ? { allInRunout: Object.freeze({ nextStreet: allInRunout }) } : {}),
       ...(showdown ? {
         showdown: Object.freeze({
           winners: Object.freeze(
@@ -209,10 +253,33 @@ export class ServerGameLifecycle {
 
   applyAction(playerId: string, action: PlayerAction): ServerPlayerView {
     const hand = this.requireHand();
+    if (this.allInRunoutNextStreet(hand)) throw new Error('The host must advance the all-in board');
     if (this.currentActorPlayerId() !== playerId) throw new Error('Only the active player may act');
     this.validateAction(action);
     const actorSeat = hand.currentActorSeat;
     this.hand = this.advanceIfSettled(this.apply(hand, actorSeat, action));
+    return this.viewFor(playerId);
+  }
+
+  /** Host-only repository callers use this to reveal exactly one all-in street. */
+  advanceAllInRunout(): void {
+    const hand = this.requireHand();
+    if (!this.allInRunoutNextStreet(hand)) throw new Error('An all-in board is not ready to advance');
+    this.hand = hand.street === 'preflop'
+      ? advancePreflopToFlop(hand)
+      : hand.street === 'flop'
+        ? advanceFlopToTurn(hand)
+        : hand.street === 'turn'
+          ? advanceTurnToRiver(hand)
+          : runOutAllInToShowdown(hand);
+  }
+
+  /** A player who reached a contested showdown may make their own cards public. */
+  revealShowdownHand(playerId: string): ServerPlayerView {
+    const hand = this.requireHand();
+    const seat = hand.seats.find((candidate) => candidate.playerId === playerId);
+    if (!seat) throw new Error('Player is not seated in this game');
+    this.hand = revealShowdownSeat(hand, seat.seatNumber);
     return this.viewFor(playerId);
   }
 
@@ -267,12 +334,20 @@ export class ServerGameLifecycle {
     const contestingSeats = hand.seats.filter((seat) => seat.holeCards && !seat.isFolded);
     if (contestingSeats.length === 1) return finishUncontestedHand(hand);
     if (hand.pendingActorSeats.length > 0) return hand;
+    if (this.allInRunoutNextStreet(hand)) return hand;
     if (hand.street === 'preflop') return this.advanceIfSettled(advancePreflopToFlop(hand));
-    if (contestingSeats.length >= 2 && contestingSeats.every((seat) => seat.stack === 0)) {
-      return runOutAllInToShowdown(hand);
-    }
     if (hand.street === 'flop') return advanceFlopToTurn(hand);
     if (hand.street === 'turn') return advanceTurnToRiver(hand);
     return advanceRiverToShowdown(hand);
+  }
+
+  private allInRunoutNextStreet(hand: StartedHand): 'flop' | 'turn' | 'river' | 'showdown' | undefined {
+    if (hand.street === 'showdown' || hand.pendingActorSeats.length > 0) return undefined;
+    const contestingSeats = hand.seats.filter((seat) => seat.holeCards && !seat.isFolded);
+    if (contestingSeats.length < 2 || !contestingSeats.every((seat) => seat.stack === 0)) return undefined;
+    if (hand.street === 'preflop') return 'flop';
+    if (hand.street === 'flop') return 'turn';
+    if (hand.street === 'turn') return 'river';
+    return 'showdown';
   }
 }

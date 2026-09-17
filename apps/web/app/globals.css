@@ -472,6 +472,22 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .raise-control input { width: 100%; min-width: 0; height: 100%; font-variant-numeric: tabular-nums; }
 .action-bar .raise-control button { min-height: 44px; padding-inline: 18px; }
 .showdown-panel { border-radius: 20px; }
+.action-bar button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; transition: transform 140ms ease, filter 140ms ease, box-shadow 140ms ease; }
+.action-bar button > span { display: grid; width: 21px; height: 21px; border-radius: 50%; background: rgba(0,0,0,.12); place-items: center; font-size: .76rem; }
+.action-bar button:active:not(:disabled) { filter: brightness(1.08); transform: translateY(1px) scale(.985); }
+.action-bar .action-fold { border-color: rgba(255,172,172,.23); background: linear-gradient(135deg, rgba(159,52,62,.7), rgba(88,30,37,.85)); }
+.action-bar .action-fold > span { background: rgba(255,255,255,.12); }
+.action-bar .action-all-in { border-color: rgba(247,199,93,.32); background: linear-gradient(135deg, rgba(183,115,19,.74), rgba(81,45,8,.92)); box-shadow: 0 8px 20px rgba(146,89,11,.18); }
+.action-bar .action-all-in > span { color: #392000; background: #f6ce72; }
+.raise-control { border-color: rgba(104,228,187,.24); box-shadow: inset 0 1px rgba(255,255,255,.04); }
+.action-bar .raise-control button { color: #061d14; background: linear-gradient(135deg, #9bf2d1, #4bd8a7); }
+.seat-revealed-cards { display: flex; justify-content: center; gap: 2px; margin-top: 5px; direction: ltr; }
+.seat-revealed-cards .playing-card { width: 23px; padding: 2px; border-radius: 4px; box-shadow: 0 2px 5px rgba(0,0,0,.38); }
+.seat-revealed-cards .playing-card b { font-size: .52rem; }.seat-revealed-cards .playing-card i { font-size: .7rem; }
+.all-in-runout-panel { grid-column: 1 / -1; display: flex; align-items: center; justify-content: space-between; gap: 11px; padding: 9px 10px; border: 1px solid rgba(246,205,108,.32); border-radius: 13px; color: #f9edc9; background: linear-gradient(110deg, rgba(146,88,14,.29), rgba(21,46,33,.7)); }
+.all-in-runout-panel > div { display: flex; align-items: center; gap: 9px; }.all-in-runout-panel > div > span { display: grid; flex: 0 0 29px; width: 29px; height: 29px; border-radius: 10px; color: #3c2401; background: #f4cc6b; place-items: center; }
+.all-in-runout-panel p { display: grid; gap: 2px; }.all-in-runout-panel p strong { font-size: .8rem; }.all-in-runout-panel p small, .all-in-runout-panel > small { color: #d4dfd8; font-size: .66rem; }.all-in-runout-panel button, .reveal-hand-button { min-height: 38px; padding: 0 11px; border: 0; border-radius: 10px; color: #10251b; background: linear-gradient(135deg, #f7d87e, #dfa93f); cursor: pointer; font-weight: 900; white-space: nowrap; }.all-in-runout-panel button:disabled, .reveal-hand-button:disabled { cursor: wait; opacity: .6; }
+.showdown-hands { display: grid; gap: 6px; margin: 4px 0; }.showdown-hands > div { display: flex; align-items: center; justify-content: center; gap: 4px; min-height: 45px; padding: 6px; border: 1px solid rgba(255,255,255,.11); border-radius: 11px; background: rgba(0,0,0,.12); direction: ltr; }.showdown-hands > div > span { margin-inline-end: 5px; color: #f6e3ae; font-size: .74rem; direction: rtl; }.showdown-hands .playing-card { width: 30px; padding: 3px; border-radius: 5px; }.showdown-hands .playing-card b { font-size: .66rem; }.showdown-hands .playing-card i { font-size: .88rem; }.reveal-hand-button { min-height: 42px; color: #ddfff0; background: linear-gradient(135deg, #167b59, #0b4c38); }
 
 @media (max-width: 520px) {
   .table-shell { padding-inline: 7px; }
@@ -495,6 +511,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
   .action-bar > button { flex: initial; }
   .raise-control { width: auto; }
   .raise-control input { width: 100%; }
+  .all-in-runout-panel { align-items: stretch; flex-direction: column; }.all-in-runout-panel button { width: 100%; }.all-in-runout-panel > div { align-items: flex-start; }
 }
 
 @media (max-width: 370px) {

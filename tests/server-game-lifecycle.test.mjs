@@ -84,6 +84,11 @@ test('a street-closing action advances before its view is returned through flop,
   assert.ok(showdown.showdown, 'the player-safe view includes an authoritative showdown result');
   assert.ok(showdown.showdown.winners.length >= 1);
   assert.ok(showdown.showdown.winners.every((winner) => winner.chipsWon > 0));
+  assert.ok(showdown.exposedHands.some((hand) => hand.reason === 'winner'), 'a contested showdown reveals each winning hand');
+  const loser = seats.find((seat) => !showdown.showdown.winners.some((winner) => winner.playerId === seat.playerId));
+  assert.ok(loser, 'the showdown has a non-winning participant who may choose to show');
+  game.revealShowdownHand(loser.playerId);
+  assert.equal(game.viewFor(seats[0].playerId).exposedHands.find((hand) => hand.playerId === loser.playerId)?.reason, 'voluntary');
   assert.equal(showdown.seats.reduce((total, seat) => total + seat.stack, 0), 300, 'settled stacks return every committed chip to the table');
 });
 
@@ -118,7 +123,7 @@ test('server lifecycle supports the nine persisted lobby seats without exposing 
   assert.equal(view.holeCards.length, 2);
 });
 
-test('a settled preflop all-in runs out server-private board cards to showdown before emitting a view', () => {
+test('a settled preflop all-in exposes contenders and advances one board street at a time', () => {
   const game = new ServerGameLifecycle({
     seats: seats.map((seat) => ({ ...seat, stack: 25 })),
     dealerSeat: 1,
@@ -128,11 +133,29 @@ test('a settled preflop all-in runs out server-private board cards to showdown b
   game.start();
   game.applyAction(game.currentActorPlayerId(), { type: 'all-in' });
   game.applyAction(game.currentActorPlayerId(), { type: 'call' });
-  const showdown = game.applyAction(game.currentActorPlayerId(), { type: 'call' });
+  const waiting = game.applyAction(game.currentActorPlayerId(), { type: 'call' });
 
+  assert.equal(waiting.street, 'preflop');
+  assert.equal(waiting.communityCards.length, 0);
+  assert.equal(waiting.allInRunout?.nextStreet, 'flop');
+  assert.equal(waiting.exposedHands.filter((hand) => hand.reason === 'all-in').length, 3);
+  game.advanceAllInRunout();
+  assert.equal(game.viewFor('ada').street, 'flop');
+  assert.equal(game.viewFor('ada').communityCards.length, 3);
+  assert.equal(game.viewFor('ada').allInRunout?.nextStreet, 'turn');
+  game.advanceAllInRunout();
+  assert.equal(game.viewFor('ada').street, 'turn');
+  assert.equal(game.viewFor('ada').communityCards.length, 4);
+  game.advanceAllInRunout();
+  assert.equal(game.viewFor('ada').street, 'river');
+  assert.equal(game.viewFor('ada').communityCards.length, 5);
+  assert.equal(game.viewFor('ada').allInRunout?.nextStreet, 'showdown');
+  game.advanceAllInRunout();
+  const showdown = game.viewFor('ada');
   assert.equal(showdown.street, 'showdown');
   assert.equal(showdown.communityCards.length, 5);
   assert.equal(showdown.toCall, 0);
+  assert.equal(showdown.exposedHands.filter((hand) => hand.reason === 'all-in').length, 3, 'all-in cards remain visible through showdown');
 });
 
 test('the final fold immediately ends the hand and awards the full pot without dealing extra board cards', () => {
@@ -144,6 +167,7 @@ test('the final fold immediately ends the hand and awards the full pot without d
 
   assert.equal(result.street, 'showdown');
   assert.equal(result.communityCards.length, 0, 'an uncontested pot must not run out cards');
+  assert.equal(result.exposedHands.length, 0, 'a winner by folds never exposes private cards');
   assert.deepEqual(result.showdown?.winners.map((winner) => winner.playerId), ['ada']);
   assert.equal(result.showdown?.winners[0].chipsWon, 30);
   assert.deepEqual(result.seats.map((seat) => ({ playerId: seat.playerId, stack: seat.stack })), [

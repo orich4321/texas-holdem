@@ -271,6 +271,8 @@ export interface StartedHand {
   minimumRaiseIncrement: number;
   pot: number;
   seats: StartedHandSeat[];
+  /** Server-private showdown reveal state; deliberately omitted from ordinary JSON. */
+  revealedSeatNumbers: readonly number[];
   /** Server-private betting state; intentionally omitted from JSON/table views. */
   street: Street;
   communityCards: readonly Card[];
@@ -309,9 +311,9 @@ function freezeStartedSeats(seats: StartedHandSeat[]): StartedHandSeat[] {
   return Object.freeze(seats) as unknown as StartedHandSeat[];
 }
 
-function attachPrivateHandState<T extends Omit<StartedHand, 'street' | 'communityCards' | 'remainingDeck' | 'burnedCards' | 'smallBlindAmount' | 'bigBlindAmount' | 'streetPot' | 'pendingActorSeats' | 'raiseLockedSeats'>>(
+function attachPrivateHandState<T extends Omit<StartedHand, 'street' | 'communityCards' | 'remainingDeck' | 'burnedCards' | 'smallBlindAmount' | 'bigBlindAmount' | 'streetPot' | 'pendingActorSeats' | 'raiseLockedSeats' | 'revealedSeatNumbers'>>(
   hand: T,
-  state: Pick<StartedHand, 'street' | 'communityCards' | 'remainingDeck' | 'burnedCards' | 'smallBlindAmount' | 'bigBlindAmount' | 'streetPot' | 'pendingActorSeats' | 'raiseLockedSeats'>,
+  state: Pick<StartedHand, 'street' | 'communityCards' | 'remainingDeck' | 'burnedCards' | 'smallBlindAmount' | 'bigBlindAmount' | 'streetPot' | 'pendingActorSeats' | 'raiseLockedSeats'> & { revealedSeatNumbers?: readonly number[] },
 ): StartedHand {
   const freezePublicState = state.street !== 'preflop';
   if (freezePublicState) hand.seats = freezeStartedSeats(hand.seats);
@@ -325,6 +327,7 @@ function attachPrivateHandState<T extends Omit<StartedHand, 'street' | 'communit
     streetPot: { value: state.streetPot, enumerable: false },
     pendingActorSeats: { value: Object.freeze([...state.pendingActorSeats]), enumerable: false },
     raiseLockedSeats: { value: Object.freeze([...(state.raiseLockedSeats ?? [])]), enumerable: false },
+    revealedSeatNumbers: { value: Object.freeze([...(state.revealedSeatNumbers ?? [])]), enumerable: false },
   }) as unknown as StartedHand;
   authoritativeHands.add(authoritativeHand);
   return freezePublicState ? Object.freeze(authoritativeHand) : authoritativeHand;
@@ -332,9 +335,10 @@ function attachPrivateHandState<T extends Omit<StartedHand, 'street' | 'communit
 
 function preservePrivateHandState(
   source: StartedHand,
-  next: Omit<StartedHand, 'street' | 'communityCards' | 'remainingDeck' | 'burnedCards' | 'smallBlindAmount' | 'bigBlindAmount' | 'streetPot' | 'pendingActorSeats' | 'raiseLockedSeats'>,
+  next: Omit<StartedHand, 'street' | 'communityCards' | 'remainingDeck' | 'burnedCards' | 'smallBlindAmount' | 'bigBlindAmount' | 'streetPot' | 'pendingActorSeats' | 'raiseLockedSeats' | 'revealedSeatNumbers'>,
   pendingActorSeats: readonly number[] = source.pendingActorSeats,
   raiseLockedSeats: readonly number[] = source.raiseLockedSeats ?? [],
+  revealedSeatNumbers: readonly number[] = source.revealedSeatNumbers,
 ): StartedHand {
   if (!authoritativeHands.has(source)) {
     throw new Error('Started hand must be authoritative private state');
@@ -352,6 +356,7 @@ function preservePrivateHandState(
     streetPot: source.streetPot,
     pendingActorSeats,
     raiseLockedSeats,
+    revealedSeatNumbers,
   });
 }
 
@@ -360,7 +365,7 @@ export interface StartedHandSnapshot {
   version: 1;
   hand: {
     dealerSeat: number; smallBlindSeat: number; bigBlindSeat: number; currentActorSeat: number;
-    currentBet: number; minimumRaiseIncrement: number; pot: number; seats: readonly StartedHandSeat[];
+    currentBet: number; minimumRaiseIncrement: number; pot: number; seats: readonly StartedHandSeat[]; revealedSeatNumbers?: readonly number[];
     street: Street; communityCards: readonly Card[]; remainingDeck: readonly Card[]; burnedCards: readonly Card[];
     smallBlindAmount: number; bigBlindAmount: number; streetPot: number; pendingActorSeats: readonly number[]; raiseLockedSeats: readonly number[];
   };
@@ -378,7 +383,7 @@ export function serializeStartedHand(hand: StartedHand): StartedHandSnapshot {
   if (!authoritativeHands.has(hand)) throw new Error('Only authoritative private hands can be snapshotted');
   return { version: 1, hand: {
     dealerSeat: hand.dealerSeat, smallBlindSeat: hand.smallBlindSeat, bigBlindSeat: hand.bigBlindSeat, currentActorSeat: hand.currentActorSeat,
-    currentBet: hand.currentBet, minimumRaiseIncrement: hand.minimumRaiseIncrement, pot: hand.pot, seats: hand.seats.map(snapshotSeat), street: hand.street,
+    currentBet: hand.currentBet, minimumRaiseIncrement: hand.minimumRaiseIncrement, pot: hand.pot, seats: hand.seats.map(snapshotSeat), revealedSeatNumbers: [...hand.revealedSeatNumbers], street: hand.street,
     communityCards: hand.communityCards.map(snapshotCard), remainingDeck: hand.remainingDeck.map(snapshotCard), burnedCards: hand.burnedCards.map(snapshotCard),
     smallBlindAmount: hand.smallBlindAmount, bigBlindAmount: hand.bigBlindAmount, streetPot: hand.streetPot, pendingActorSeats: [...hand.pendingActorSeats], raiseLockedSeats: [...(hand.raiseLockedSeats ?? [])],
   } };
@@ -396,8 +401,9 @@ function isSnapshotCard(value: unknown): value is Card {
 export function hydrateStartedHandForVerifiedServerRecovery(snapshot: unknown): StartedHand {
   const source = snapshot && typeof snapshot === 'object' ? snapshot as Partial<StartedHandSnapshot> : undefined;
   const hand = source?.version === 1 && source.hand && typeof source.hand === 'object' ? source.hand : undefined;
-  if (!hand || !Array.isArray(hand.seats) || hand.seats.length < 2 || hand.seats.length > 9 || !Array.isArray(hand.communityCards) || !Array.isArray(hand.remainingDeck) || !Array.isArray(hand.burnedCards) || !Array.isArray(hand.pendingActorSeats) || !Array.isArray(hand.raiseLockedSeats) || !['preflop', 'flop', 'turn', 'river', 'showdown'].includes(hand.street as string)) throw new Error('Invalid private hand snapshot');
-  const values = [hand.dealerSeat, hand.smallBlindSeat, hand.bigBlindSeat, hand.currentActorSeat, hand.currentBet, hand.minimumRaiseIncrement, hand.pot, hand.smallBlindAmount, hand.bigBlindAmount, hand.streetPot, ...hand.pendingActorSeats, ...hand.raiseLockedSeats];
+  if (!hand || !Array.isArray(hand.seats) || hand.seats.length < 2 || hand.seats.length > 9 || !Array.isArray(hand.communityCards) || !Array.isArray(hand.remainingDeck) || !Array.isArray(hand.burnedCards) || !Array.isArray(hand.pendingActorSeats) || !Array.isArray(hand.raiseLockedSeats) || (hand.revealedSeatNumbers !== undefined && !Array.isArray(hand.revealedSeatNumbers)) || !['preflop', 'flop', 'turn', 'river', 'showdown'].includes(hand.street as string)) throw new Error('Invalid private hand snapshot');
+  const revealedSeatNumbers = hand.revealedSeatNumbers ?? [];
+  const values = [hand.dealerSeat, hand.smallBlindSeat, hand.bigBlindSeat, hand.currentActorSeat, hand.currentBet, hand.minimumRaiseIncrement, hand.pot, hand.smallBlindAmount, hand.bigBlindAmount, hand.streetPot, ...hand.pendingActorSeats, ...hand.raiseLockedSeats, ...revealedSeatNumbers];
   if (values.some((value) => !Number.isSafeInteger(value) || value < 0) || hand.minimumRaiseIncrement <= 0 || hand.smallBlindAmount <= 0 || hand.bigBlindAmount < hand.smallBlindAmount || hand.seats.some((seat) => !seat || !Number.isSafeInteger(seat.seatNumber) || typeof seat.playerId !== 'string' || seat.playerId.length === 0 || !Number.isSafeInteger(seat.stack) || seat.stack < 0 || !Number.isSafeInteger(seat.currentBet) || seat.currentBet < 0 || !Number.isSafeInteger(seat.totalCommitted) || seat.totalCommitted < 0 || (seat.holeCards !== undefined && (!Array.isArray(seat.holeCards) || seat.holeCards.length !== 2 || !seat.holeCards.every(isSnapshotCard))))) throw new Error('Invalid private hand snapshot');
   const cards = [...hand.seats.flatMap((seat) => seat.holeCards ?? []), ...hand.communityCards, ...hand.remainingDeck, ...hand.burnedCards];
   if (cards.length !== 52 || cards.some((card) => !isSnapshotCard(card)) || new Set(cards.map((card) => `${card.rank}-${card.suit}`)).size !== 52 || new Set(hand.seats.map((seat) => seat.seatNumber)).size !== hand.seats.length || new Set(hand.seats.map((seat) => seat.playerId)).size !== hand.seats.length) throw new Error('Invalid private hand snapshot');
@@ -415,12 +421,16 @@ export function hydrateStartedHandForVerifiedServerRecovery(snapshot: unknown): 
   const validBlindSeats = [hand.dealerSeat, hand.smallBlindSeat, hand.bigBlindSeat].every((seatNumber) => seatsByNumber.has(seatNumber));
   const pendingUnique = new Set(hand.pendingActorSeats);
   const locksUnique = new Set(hand.raiseLockedSeats);
-  if (!validBlindSeats || hand.smallBlindSeat === hand.bigBlindSeat || (!validUncontestedBoard && (hand.communityCards.length !== communityCardCount || hand.burnedCards.length !== burnedCardCount)) || committed !== hand.pot || currentBet !== hand.currentBet || hand.streetPot > hand.pot || pendingUnique.size !== hand.pendingActorSeats.length || locksUnique.size !== hand.raiseLockedSeats.length || hand.pendingActorSeats.some((seatNumber) => {
+  const revealedUnique = new Set(revealedSeatNumbers);
+  if (!validBlindSeats || hand.smallBlindSeat === hand.bigBlindSeat || (!validUncontestedBoard && (hand.communityCards.length !== communityCardCount || hand.burnedCards.length !== burnedCardCount)) || committed !== hand.pot || currentBet !== hand.currentBet || hand.streetPot > hand.pot || pendingUnique.size !== hand.pendingActorSeats.length || locksUnique.size !== hand.raiseLockedSeats.length || revealedUnique.size !== revealedSeatNumbers.length || (revealedSeatNumbers.length > 0 && (hand.street !== 'showdown' || revealedSeatNumbers.some((seatNumber) => {
+    const seat = seatsByNumber.get(seatNumber);
+    return !seat || !seat.holeCards || seat.isFolded === true;
+  }))) || hand.pendingActorSeats.some((seatNumber) => {
     const seat = seatsByNumber.get(seatNumber);
     return !seat || !seat.holeCards || seat.isFolded === true || seat.stack <= 0;
   }) || hand.raiseLockedSeats.some((seatNumber) => !seatsByNumber.has(seatNumber)) || (hand.pendingActorSeats.length > 0 && (!actor || !hand.pendingActorSeats.includes(hand.currentActorSeat))) || hand.seats.some((seat) => (!seat.holeCards && (seat.stack !== 0 || seat.currentBet !== 0 || seat.totalCommitted !== 0)) || (seat.holeCards && seat.holeCards.length !== 2))) throw new Error('Invalid private hand snapshot');
   return attachPrivateHandState({ dealerSeat: hand.dealerSeat, smallBlindSeat: hand.smallBlindSeat, bigBlindSeat: hand.bigBlindSeat, currentActorSeat: hand.currentActorSeat, currentBet: hand.currentBet, minimumRaiseIncrement: hand.minimumRaiseIncrement, pot: hand.pot, seats: hand.seats.map(snapshotSeat) }, {
-    street: hand.street, communityCards: hand.communityCards, remainingDeck: hand.remainingDeck, burnedCards: hand.burnedCards, smallBlindAmount: hand.smallBlindAmount, bigBlindAmount: hand.bigBlindAmount, streetPot: hand.streetPot, pendingActorSeats: hand.pendingActorSeats, raiseLockedSeats: hand.raiseLockedSeats,
+    street: hand.street, communityCards: hand.communityCards, remainingDeck: hand.remainingDeck, burnedCards: hand.burnedCards, smallBlindAmount: hand.smallBlindAmount, bigBlindAmount: hand.bigBlindAmount, streetPot: hand.streetPot, pendingActorSeats: hand.pendingActorSeats, raiseLockedSeats: hand.raiseLockedSeats, revealedSeatNumbers,
   });
 }
 
@@ -1150,6 +1160,26 @@ export function finishUncontestedHand(hand: StartedHand): StartedHand {
     pendingActorSeats: [],
     raiseLockedSeats: [],
   });
+}
+
+/**
+ * Records a voluntary showdown reveal without ever allowing a caller to
+ * supply cards. The authoritative hand remains the only source of them.
+ */
+export function revealShowdownSeat(hand: StartedHand, seatNumber: number): StartedHand {
+  if (!authoritativeHands.has(hand) || hand.street !== 'showdown' || !Number.isSafeInteger(seatNumber)) {
+    throw new Error('A showdown reveal requires an authoritative completed hand');
+  }
+  const seat = hand.seats.find((candidate) => candidate.seatNumber === seatNumber);
+  if (!seat?.holeCards || seat.isFolded === true) {
+    throw new Error('Only a player who reached showdown may reveal cards');
+  }
+  if (hand.revealedSeatNumbers.includes(seatNumber)) {
+    throw new Error('This showdown hand is already revealed');
+  }
+  return preservePrivateHandState(hand, {
+    ...hand,
+  }, undefined, undefined, Object.freeze([...hand.revealedSeatNumbers, seatNumber]));
 }
 
 /**

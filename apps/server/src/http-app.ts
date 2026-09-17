@@ -310,6 +310,42 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
     }
   });
 
+  routes.post('/rooms/:joinId/game/runout/next', async (request, response) => {
+    try {
+      const player = await roomRepository.findPlayerByRoomJoinIdAndAccessToken(
+        request.params.joinId,
+        parseCookieHeader(request.headers.cookie).poker_player_token,
+      );
+      if (!player) {
+        response.status(401).json({ error: { code: 'UNAUTHORIZED' } });
+        return;
+      }
+      await roomRepository.advanceAllInRunoutForHostAtomically({ joinId: request.params.joinId, hostPlayerId: player.id });
+      response.status(201).json({ roomId: request.params.joinId, status: 'IN_PROGRESS' });
+    } catch (error) {
+      console.error('All-in board advance failed', error);
+      response.status(409).json({ error: { code: 'ALL_IN_RUNOUT_UNAVAILABLE' } });
+    }
+  });
+
+  routes.post('/rooms/:joinId/game/reveal', async (request, response) => {
+    try {
+      const player = await roomRepository.findPlayerByRoomJoinIdAndAccessToken(
+        request.params.joinId,
+        parseCookieHeader(request.headers.cookie).poker_player_token,
+      );
+      if (!player) {
+        response.status(401).json({ error: { code: 'UNAUTHORIZED' } });
+        return;
+      }
+      const result = await roomRepository.revealShowdownHandAtomically({ roomId: player.roomId, playerId: player.id });
+      response.status(201).json(result.view);
+    } catch (error) {
+      console.error('Showdown reveal failed', error);
+      response.status(409).json({ error: { code: 'SHOWDOWN_REVEAL_UNAVAILABLE' } });
+    }
+  });
+
   routes.get('/rooms/:joinId', async (request, response) => {
     try {
       const room = await roomRepository.findRoomByJoinId(request.params.joinId);

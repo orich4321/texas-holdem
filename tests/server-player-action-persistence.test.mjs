@@ -3,14 +3,14 @@ import { Buffer } from 'node:buffer';
 import { test } from 'node:test';
 
 import { RoomRepository } from '../apps/server/src/persistence/room-repository.ts';
-import { applyPreflopRaise, startHand } from '../packages/poker-core/src/index.ts';
+import { advancePreflopToFlop, applyPreflopAllIn, applyPreflopCall, applyPreflopRaise, runOutAllInToShowdown, startHand } from '../packages/poker-core/src/index.ts';
 import { signPrivateHandSnapshot, hydrateSignedPrivateHandSnapshot } from '../apps/server/src/persistence/private-hand-snapshot.ts';
 
 const key = Buffer.from('a server-only snapshot signing key with adequate length', 'utf8');
 const keyId = 'test-current';
 const keyring = new Map([[keyId, key]]);
 const room = {
-  id: 'room-db-id', joinId: '0123456789abcdef', status: 'IN_PROGRESS',
+  id: 'room-db-id', joinId: '0123456789abcdef', hostPlayerId: 'host-id', status: 'IN_PROGRESS',
   players: [
     { id: 'host-id', displayName: 'אורי', currentStack: 100, createdAt: new Date('2026-01-01') },
     { id: 'player-1', displayName: 'נועה', currentStack: 100, createdAt: new Date('2026-01-02') },
@@ -82,4 +82,46 @@ test('invalid or out-of-turn action writes nothing', async () => {
     await assert.rejects(repository.persistPlayerActionAtomically({ roomId: room.id, playerId, action }), /action|active|raise/i);
     assert.deepEqual(db.calls.map(([name]) => name), playerId === 'host-id' ? [] : ['room.findUnique', 'room.updateMany', 'gameSnapshot.findFirst']);
   }
+});
+
+test('the host persists one all-in board street without exposing cards in the event payload', async () => {
+  const allInPreflop = applyPreflopCall(
+    applyPreflopAllIn(hydrateSignedPrivateHandSnapshot(initial, { roomId: room.id, sequence: 0 }, keyring).hand, 1),
+    2,
+  );
+  const allInSnapshot = signPrivateHandSnapshot(allInPreflop, { roomId: room.id, sequence: 0, keyId }, key);
+  const db = createDb({ latest: { sequence: 0, state: allInSnapshot } });
+  const repository = new RoomRepository(db, undefined, undefined, undefined, keyring);
+
+  const result = await repository.advanceAllInRunoutForHostAtomically({ joinId: room.joinId, hostPlayerId: 'host-id' });
+
+  assert.equal(result.sequence, 1);
+  assert.deepEqual(db.calls.find(([name]) => name === 'gameEvent.create')[1].data, {
+    roomId: room.id, sequence: 1, type: 'ALL_IN_RUNOUT_ADVANCED', payload: { street: 'flop' },
+  });
+  assert.equal(JSON.stringify(db.calls.find(([name]) => name === 'gameEvent.create')[1].data).includes('holeCards'), false);
+  const persisted = hydrateSignedPrivateHandSnapshot(db.calls.find(([name]) => name === 'gameSnapshot.create')[1].data.state, { roomId: room.id, sequence: 1 }, keyring);
+  assert.equal(persisted.hand.street, 'flop');
+  assert.equal(persisted.hand.communityCards.length, 3);
+});
+
+test('a voluntary showdown reveal is signed into the next snapshot without accepting client cards', async () => {
+  const allInPreflop = applyPreflopCall(
+    applyPreflopAllIn(hydrateSignedPrivateHandSnapshot(initial, { roomId: room.id, sequence: 0 }, keyring).hand, 1),
+    2,
+  );
+  const showdown = runOutAllInToShowdown(advancePreflopToFlop(allInPreflop));
+  const showdownSnapshot = signPrivateHandSnapshot(showdown, { roomId: room.id, sequence: 0, keyId }, key);
+  const db = createDb({ latest: { sequence: 0, state: showdownSnapshot } });
+  const repository = new RoomRepository(db, undefined, undefined, undefined, keyring);
+
+  const result = await repository.revealShowdownHandAtomically({ roomId: room.id, playerId: 'player-1' });
+
+  assert.equal(result.sequence, 1);
+  assert.deepEqual(db.calls.find(([name]) => name === 'gameEvent.create')[1].data, {
+    roomId: room.id, sequence: 1, type: 'SHOWDOWN_HAND_REVEALED', payload: { playerId: 'player-1' },
+  });
+  assert.equal(JSON.stringify(db.calls.find(([name]) => name === 'gameEvent.create')[1].data).includes('holeCards'), false);
+  const persisted = hydrateSignedPrivateHandSnapshot(db.calls.find(([name]) => name === 'gameSnapshot.create')[1].data.state, { roomId: room.id, sequence: 1 }, keyring);
+  assert.deepEqual(persisted.hand.revealedSeatNumbers, [2]);
 });
