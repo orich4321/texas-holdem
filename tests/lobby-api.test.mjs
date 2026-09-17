@@ -32,6 +32,10 @@ test('mobile table UI keeps the player anchored, reconnects safely, and exposes 
   assert.match(table, /type="range"/);
   assert.match(table, /raise-quick-actions/);
   assert.doesNotMatch(table, /inputMode="numeric"/);
+  assert.match(table, /showRaiseControls/);
+  assert.match(table, /game\/final-hand/);
+  assert.match(table, /final-summary/);
+  assert.match(table, /players\/\$\{encodeURIComponent\(targetPlayerId\)\}\/remove/);
   assert.match(styles, /\.player-panel\s*\{[^}]*position:\s*sticky/s);
   assert.match(styles, /\.action-bar button\s*\{[^}]*min-height:\s*48px/s);
   assert.match(lobby, /lobby\.settings\.initialStack\.toLocaleString\('he-IL'\)/);

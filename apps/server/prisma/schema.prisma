@@ -40,12 +40,14 @@ model Player {
   initialStack Int
   currentStack    Int
   accessTokenHash String @unique
+  leftAt       DateTime?
   room            Room     @relation("RoomPlayers", fields: [roomId], references: [id], onDelete: Cascade)
   hostedRooms  Room[]   @relation("RoomHost")
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
   @@index([roomId])
+  @@index([roomId, leftAt])
   @@unique([roomId, id])
 }
 

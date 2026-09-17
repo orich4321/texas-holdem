@@ -124,7 +124,13 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
     return <main className="lobby-shell"><p className="lobby-loading" role="status">בודקים את ההרשאות ומעבירים אתכם להזמנה…</p></main>;
   }
 
-  if (lobby.status === 'IN_PROGRESS') return <TableClient joinId={joinId} isHost={lobby.isHost} />;
+  if ((lobby.status === 'IN_PROGRESS' || lobby.status === 'COMPLETED') && lobby.isParticipant) {
+    return <TableClient joinId={joinId} isHost={lobby.isHost} />;
+  }
+
+  if (lobby.status === 'COMPLETED') {
+    return <main className="lobby-shell"><section className="lobby-error"><h1>המשחק כבר הסתיים</h1><p>רק משתתפי השולחן יכולים לפתוח את הסיכום הסופי.</p></section></main>;
+  }
 
   return (
     <main className="lobby-shell">

@@ -23,6 +23,13 @@ type ExposedHand = {
   reason: 'all-in' | 'winner' | 'voluntary';
 };
 type AllInRunout = { nextStreet: 'flop' | 'turn' | 'river' | 'showdown' };
+type FinalSummary = {
+  version: number;
+  room: { joinId: string; initialStack: number; smallBlind: number; bigBlind: number };
+  standings: readonly { displayName: string; initialStack: number; finalStack: number; net: number }[];
+  hands: readonly unknown[];
+  events: readonly unknown[];
+};
 type PlayerView = {
   playerId: string;
   street: 'preflop' | 'flop' | 'turn' | 'river' | 'showdown';
@@ -64,6 +71,18 @@ function isAllInRunout(value: unknown): value is AllInRunout {
     && ['flop', 'turn', 'river', 'showdown'].includes((value as Record<string, unknown>).nextStreet as string);
 }
 
+function isFinalSummary(value: unknown, joinId: string): value is FinalSummary {
+  if (value === null || typeof value !== 'object') return false;
+  const summary = value as Record<string, unknown>;
+  return summary.version === 1
+    && summary.room !== null && typeof summary.room === 'object'
+    && (summary.room as Record<string, unknown>).joinId === joinId
+    && Array.isArray(summary.standings)
+    && summary.standings.every((standing) => standing !== null && typeof standing === 'object'
+      && ['displayName', 'initialStack', 'finalStack', 'net'].every((key) => typeof (standing as Record<string, unknown>)[key] === (key === 'displayName' ? 'string' : 'number')))
+    && Array.isArray(summary.hands) && Array.isArray(summary.events);
+}
+
 function isPlayerView(value: unknown): value is PlayerView {
   if (value === null || typeof value !== 'object') return false;
   const view = value as Record<string, unknown>;
@@ -98,6 +117,10 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   const [startingNextHand, setStartingNextHand] = useState(false);
   const [advancingRunout, setAdvancingRunout] = useState(false);
   const [revealingHand, setRevealingHand] = useState(false);
+  const [showRaiseControls, setShowRaiseControls] = useState(false);
+  const [waitingForNextHand, setWaitingForNextHand] = useState(false);
+  const [finalSummary, setFinalSummary] = useState<FinalSummary>();
+  const [managingPlayerId, setManagingPlayerId] = useState<string>();
 
   useEffect(() => {
     let active = true;
@@ -105,8 +128,16 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
       try {
         const response = await globalThis.fetch(`${SERVER_URL}/rooms/${encodeURIComponent(joinId)}/game`, { credentials: 'include', cache: 'no-store' });
         const next = await response.json();
+        if (response.status === 409 && (next as { error?: { code?: string } })?.error?.code === 'GAME_NOT_AVAILABLE') {
+          if (active) {
+            setWaitingForNextHand(true);
+            setStatus('הצטרפתם בין ידיים — ממתינים למארח שיתחיל את היד הבאה…');
+          }
+          return;
+        }
         if (!response.ok || !isPlayerView(next)) throw new Error('Invalid player view');
         if (!active) return;
+        setWaitingForNextHand(false);
         setView(next);
         setStatus(next.street === 'showdown' ? 'היד הסתיימה' : 'מחוברים לשולחן');
       } catch {
@@ -182,6 +213,22 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
       : view.raise!.minRaiseTo);
   }, [view?.raise?.minRaiseTo, view?.raise?.maxRaiseTo]);
 
+  useEffect(() => {
+    if (view?.street !== 'showdown') return;
+    let active = true;
+    void globalThis.fetch(`${SERVER_URL}/rooms/${encodeURIComponent(joinId)}/final-summary`, { credentials: 'include', cache: 'no-store' })
+      .then(async (response) => ({ response, body: await response.json() }))
+      .then(({ response, body }) => {
+        if (active && response.ok && isFinalSummary(body, joinId)) setFinalSummary(body);
+      })
+      .catch(() => undefined);
+    return () => { active = false; };
+  }, [joinId, view?.street, view?.showdown]);
+
+  useEffect(() => {
+    if (!isTurn || !view?.raise) setShowRaiseControls(false);
+  }, [isTurn, view?.raise]);
+
   async function act(action: PlayerAction) {
     if (!isTurn || pending) return;
     setPending(true);
@@ -231,6 +278,59 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
     }
   }
 
+  async function startFinalHand() {
+    if (!isHost || view?.street !== 'showdown' || startingNextHand) return;
+    setStartingNextHand(true);
+    try {
+      const response = await globalThis.fetch(`${SERVER_URL}/rooms/${encodeURIComponent(joinId)}/game/final-hand`, {
+        method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json' },
+      });
+      if (!response.ok) throw new Error('Final hand unavailable');
+      setStatus('מחלקים את היד האחרונה…');
+    } catch {
+      setStatus('לא הצלחנו להתחיל את הסיבוב האחרון. נסו שוב.');
+    } finally {
+      setStartingNextHand(false);
+    }
+  }
+
+  async function removePlayerBetweenHands(targetPlayerId: string, playerName: string) {
+    if (!isHost || view?.street !== 'showdown' || managingPlayerId) return;
+    if (!globalThis.confirm(`להוציא את ${playerName} מהשולחן לפני היד הבאה?`)) return;
+    setManagingPlayerId(targetPlayerId);
+    try {
+      const response = await globalThis.fetch(`${SERVER_URL}/rooms/${encodeURIComponent(joinId)}/players/${encodeURIComponent(targetPlayerId)}/remove`, {
+        method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json' },
+      });
+      if (!response.ok) throw new Error('Player removal unavailable');
+      setStatus(`${playerName} יצא/ה מהשולחן. היד הבאה תחולק בלעדיו/ה.`);
+    } catch {
+      setStatus('לא הצלחנו להוציא את השחקן/ית. אפשר להוציא שחקנים רק בין ידיים.');
+    } finally {
+      setManagingPlayerId(undefined);
+    }
+  }
+
+  async function copyInvitationForNextHand() {
+    try {
+      await globalThis.navigator.clipboard.writeText(new URL(`/r/${encodeURIComponent(joinId)}`, globalThis.location.origin).toString());
+      setStatus('קישור ההזמנה הועתק. חברים יכולים להצטרף בין ידיים וייכנסו ליד הבאה.');
+    } catch {
+      setStatus('לא הצלחנו להעתיק את הקישור. אפשר להעתיק אותו משורת הכתובת.');
+    }
+  }
+
+  function downloadFinalSummary() {
+    if (!finalSummary) return;
+    const blob = new Blob([JSON.stringify(finalSummary, null, 2)], { type: 'application/json' });
+    const url = globalThis.URL.createObjectURL(blob);
+    const link = globalThis.document.createElement('a');
+    link.href = url;
+    link.download = `texas-holdem-${joinId}-summary.json`;
+    link.click();
+    globalThis.URL.revokeObjectURL(url);
+  }
+
   async function advanceAllInRunout() {
     if (!isHost || !view?.allInRunout || advancingRunout) return;
     setAdvancingRunout(true);
@@ -265,7 +365,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
     }
   }
 
-  if (!view) return <main className="table-shell"><p className="table-connection" role="status">{status}</p></main>;
+  if (!view) return <main className="table-shell"><p className="table-connection" role="status">{waitingForNextHand ? '♠ ' : ''}{status}</p></main>;
 
   const turnMessage = view.street === 'showdown'
     ? 'היד הסתיימה — התוצאות מוכנות'
@@ -313,7 +413,8 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
           <button type="button" className="action-fold" disabled={pending} onClick={() => void act({ type: 'fold' })}><span aria-hidden="true">✕</span> פרישה</button>
           <button type="button" className="action-primary" disabled={pending} onClick={() => void act(view.toCall === 0 ? { type: 'check' } : { type: 'call' })}><span aria-hidden="true">✓</span> {view.toCall === 0 ? 'צ׳ק' : `השוואה · ${view.toCall.toLocaleString('he-IL')}`}</button>
           <button type="button" className="action-all-in" disabled={pending} onClick={() => void act({ type: 'all-in' })}><span aria-hidden="true">⚡</span> אול אין</button>
-          {view.raise ? <div className="raise-control" aria-label="בחירת סכום העלאה">
+          {view.raise ? <button type="button" className="action-raise-toggle" disabled={pending} aria-expanded={showRaiseControls} onClick={() => setShowRaiseControls((shown) => !shown)}><span aria-hidden="true">＋</span> הימור</button> : null}
+          {view.raise && showRaiseControls ? <div className="raise-control" aria-label="בחירת סכום העלאה">
             <div className="raise-amount"><span>העלאה עד</span><strong>{(raiseTo ?? view.raise.minRaiseTo).toLocaleString('he-IL')}</strong><small>צ׳יפים</small></div>
             <input
               type="range"
@@ -351,7 +452,24 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
           {view.exposedHands.map((hand) => <div key={hand.playerId}><span>{hand.playerName}{hand.reason === 'winner' ? ' · מנצח/ת' : ''}</span><PlayingCard card={hand.holeCards[0]} /><PlayingCard card={hand.holeCards[1]} /></div>)}
         </div> : null}
         {ownSeat && !ownSeat.isFolded && !view.exposedHands.some((hand) => hand.playerId === view.playerId) ? <button type="button" className="reveal-hand-button" disabled={revealingHand} onClick={() => void revealHand()}>{revealingHand ? 'חושפים…' : 'חשיפת הקלפים שלי'}</button> : null}
-        {isHost ? <button type="button" className="next-hand-button" disabled={startingNextHand} onClick={() => void startNextHand()}>{startingNextHand ? 'מחלקים…' : 'התחלת היד הבאה'}</button> : <small>המארח יכול להתחיל את היד הבאה.</small>}
+        {isHost && !finalSummary ? <div className="host-between-hands" aria-label="ניהול השולחן בין ידיים">
+          <p><strong>ניהול בין ידיים</strong><small>אפשר להוסיף חברים דרך ההזמנה או להוציא שחקנים לפני החלוקה הבאה.</small></p>
+          <div className="host-between-actions">
+            <button type="button" onClick={() => void copyInvitationForNextHand()}>הוספת שחקנים · העתקת הזמנה</button>
+            <button type="button" className="next-hand-button" disabled={startingNextHand} onClick={() => void startNextHand()}>{startingNextHand ? 'מחלקים…' : 'היד הבאה'}</button>
+            <button type="button" className="final-hand-button" disabled={startingNextHand} onClick={() => void startFinalHand()}>סיבוב אחרון</button>
+          </div>
+          {view.seats.filter((seat) => seat.playerId !== view.playerId).length > 0 ? <div className="host-player-removals">
+            {view.seats.filter((seat) => seat.playerId !== view.playerId).map((seat) => <button key={seat.playerId} type="button" disabled={Boolean(managingPlayerId)} onClick={() => void removePlayerBetweenHands(seat.playerId, seat.playerName)}>{managingPlayerId === seat.playerId ? 'מוציאים…' : `הוצאת ${seat.playerName}`}</button>)}
+          </div> : null}
+        </div> : !finalSummary ? <small>המארח יכול להתחיל את היד הבאה.</small> : null}
+      </section> : null}
+      {finalSummary ? <section className="final-summary" aria-live="polite" aria-label="סיכום המשחק">
+        <p>המשחק הסתיים</p>
+        <h2>סיכום סופי</h2>
+        <ul>{finalSummary.standings.map((standing) => <li key={standing.displayName}><strong>{standing.displayName}</strong><span>{standing.finalStack.toLocaleString('he-IL')} צ׳יפים · {standing.net >= 0 ? '+' : ''}{standing.net.toLocaleString('he-IL')}</span></li>)}</ul>
+        <small>{finalSummary.hands.length} ידיים הסתיימו · פירוט הפעולות והתשלומים נשמר בקובץ.</small>
+        <button type="button" onClick={downloadFinalSummary}>הורדת סיכום JSON</button>
       </section> : null}
     </main>
   );

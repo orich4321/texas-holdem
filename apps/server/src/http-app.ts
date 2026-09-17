@@ -16,6 +16,7 @@ const DEFAULT_SMALL_BLIND = 5;
 const DEFAULT_BIG_BLIND = 10;
 const DEFAULT_MAX_PLAYERS = 9;
 const PLAYER_SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1_000;
+const PLAYER_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 type OriginPolicy = (origin: string | undefined) => boolean;
 
@@ -213,6 +214,13 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
         response.status(409).json({ error: { code: 'ALREADY_JOINED' } });
         return;
       }
+      if (await roomRepository.hasExistingPlayerSessionInRoom(
+        request.params.joinId,
+        parseCookieHeader(request.headers.cookie).poker_player_token,
+      )) {
+        response.status(409).json({ error: { code: 'ALREADY_JOINED' } });
+        return;
+      }
       const result = await roomRepository.joinWaitingRoom(request.params.joinId, {
         id: randomUUID(),
         ...input,
@@ -335,6 +343,44 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
     }
   });
 
+  routes.post('/rooms/:joinId/game/final-hand', async (request, response) => {
+    try {
+      const player = await findAuthenticatedHost(request.params.joinId, request.headers.cookie);
+      if (!player) {
+        response.status(403).json({ error: { code: 'HOST_FORBIDDEN' } });
+        return;
+      }
+      await roomRepository.startNextHandForHostAtomically({ joinId: request.params.joinId, hostPlayerId: player.id, finalHand: true });
+      response.status(201).json({ roomId: request.params.joinId, status: 'IN_PROGRESS', finalHand: true });
+    } catch (error) {
+      console.error('Final hand failed', error);
+      response.status(409).json({ error: { code: 'FINAL_HAND_UNAVAILABLE' } });
+    }
+  });
+
+  routes.post('/rooms/:joinId/players/:playerId/remove', async (request, response) => {
+    if (!PLAYER_ID_PATTERN.test(request.params.playerId)) {
+      response.status(400).json({ error: { code: 'INVALID_REQUEST' } });
+      return;
+    }
+    try {
+      const player = await findAuthenticatedHost(request.params.joinId, request.headers.cookie);
+      if (!player) {
+        response.status(403).json({ error: { code: 'HOST_FORBIDDEN' } });
+        return;
+      }
+      await roomRepository.removePlayerBetweenHandsForHostAtomically({
+        joinId: request.params.joinId,
+        hostPlayerId: player.id,
+        targetPlayerId: request.params.playerId,
+      });
+      response.status(201).json({ roomId: request.params.joinId, removedPlayerId: request.params.playerId });
+    } catch (error) {
+      console.error('Player removal failed', error);
+      response.status(409).json({ error: { code: 'PLAYER_REMOVAL_UNAVAILABLE' } });
+    }
+  });
+
   routes.post('/rooms/:joinId/game/runout/next', async (request, response) => {
     try {
       const player = await findAuthenticatedHost(request.params.joinId, request.headers.cookie);
@@ -368,10 +414,32 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
     }
   });
 
+  routes.get('/rooms/:joinId/final-summary', async (request, response) => {
+    try {
+      const player = await roomRepository.findPlayerByRoomJoinIdAndAccessToken(
+        request.params.joinId,
+        parseCookieHeader(request.headers.cookie).poker_player_token,
+      );
+      if (!player) {
+        response.status(401).json({ error: { code: 'UNAUTHORIZED' } });
+        return;
+      }
+      const summary = await roomRepository.getFinalSummaryForPlayer(player.roomId, player.id);
+      if (!summary) {
+        response.status(409).json({ error: { code: 'FINAL_SUMMARY_UNAVAILABLE' } });
+        return;
+      }
+      response.json(summary);
+    } catch (error) {
+      console.error('Final summary lookup failed', error);
+      response.status(500).json({ error: { code: 'INTERNAL_ERROR' } });
+    }
+  });
+
   routes.get('/rooms/:joinId', async (request, response) => {
     try {
       const room = await roomRepository.findRoomByJoinId(request.params.joinId);
-      if (!room || (room.status !== 'WAITING' && room.status !== 'IN_PROGRESS')) {
+      if (!room || (room.status !== 'WAITING' && room.status !== 'IN_PROGRESS' && room.status !== 'COMPLETED')) {
         response.status(404).json({ error: { code: 'ROOM_NOT_FOUND' } });
         return;
       }

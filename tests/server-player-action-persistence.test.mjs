@@ -23,7 +23,7 @@ const initial = signPrivateHandSnapshot(startHand({
 const raised = applyPreflopRaise(hydrateSignedPrivateHandSnapshot(initial, { roomId: room.id, sequence: 0 }, keyring).hand, 1, 20);
 const raisedSnapshot = signPrivateHandSnapshot(raised, { roomId: room.id, sequence: 1, keyId }, key);
 
-function createDb({ latest = { sequence: 0, state: initial } } = {}) {
+function createDb({ latest = { sequence: 0, state: initial }, finalHandSequence = null } = {}) {
   const calls = [];
   const tx = {
     room: {
@@ -34,7 +34,10 @@ function createDb({ latest = { sequence: 0, state: initial } } = {}) {
       findFirst: async (args) => { calls.push(['gameSnapshot.findFirst', args]); return latest; },
       create: async (args) => { calls.push(['gameSnapshot.create', args]); return args.data; },
     },
-    gameEvent: { create: async (args) => { calls.push(['gameEvent.create', args]); return args.data; } },
+    gameEvent: {
+      create: async (args) => { calls.push(['gameEvent.create', args]); return args.data; },
+      findFirst: async (args) => { calls.push(['gameEvent.findFirst', args]); return finalHandSequence === null ? null : { sequence: finalHandSequence }; },
+    },
     player: { update: async (args) => { calls.push(['player.update', args]); return args.data; } },
     settlement: { create: async (args) => { calls.push(['settlement.create', args]); return args.data; } },
   };
@@ -69,6 +72,17 @@ test('the last fold atomically persists the uncontested winner and updated chip 
   assert.deepEqual(result.view.seats.map((seat) => [seat.playerId, seat.stack]), [['host-id', 110], ['player-1', 90]]);
   assert.deepEqual(db.calls.filter(([name]) => name === 'player.update').map(([, args]) => args.data.currentStack).sort((a, b) => a - b), [90, 110]);
   assert.equal(db.calls.filter(([name]) => name === 'settlement.create').length, 1);
+});
+
+test('settling the signed final hand completes the room atomically', async () => {
+  const db = createDb({ latest: { sequence: 1, state: raisedSnapshot }, finalHandSequence: 1 });
+  const repository = new RoomRepository(db, undefined, undefined, undefined, keyring);
+
+  const result = await repository.persistPlayerActionAtomically({ roomId: room.id, playerId: 'player-1', action: { type: 'fold' } });
+
+  assert.equal(result.view.street, 'showdown');
+  assert.ok(db.calls.some(([name, args]) => name === 'room.updateMany' && args.data.status === 'COMPLETED'));
+  assert.deepEqual(db.calls.find(([name]) => name === 'gameEvent.create')[1].data.type, 'PLAYER_ACTION');
 });
 
 test('invalid or out-of-turn action writes nothing', async () => {
