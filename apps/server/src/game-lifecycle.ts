@@ -23,6 +23,7 @@ import {
   advancePreflopToFlop,
   advanceRiverToShowdown,
   advanceTurnToRiver,
+  compareFiveCardHands,
   finishUncontestedHand,
   getFlopLegalActions,
   getPreflopLegalActions,
@@ -95,9 +96,27 @@ export interface ServerPlayerView {
     nextStreet: 'flop' | 'turn' | 'river' | 'showdown';
   }>;
   showdown?: Readonly<{
-    winners: readonly { seatNumber: number; playerId: string; playerName: string; chipsWon: number }[];
+    winners: readonly { seatNumber: number; playerId: string; playerName: string; chipsWon: number; winningCards?: readonly Card[] }[];
     pots: readonly Pick<ShowdownPot, 'amount' | 'winnerSeatNumbers'>[];
   }>;
+}
+
+function bestFiveCards(cards: readonly Card[]): readonly Card[] {
+  if (cards.length !== 7) throw new Error('A winning poker hand requires seven cards');
+  let best = cards.slice(0, 5);
+  for (let first = 0; first < cards.length - 4; first += 1) {
+    for (let second = first + 1; second < cards.length - 3; second += 1) {
+      for (let third = second + 1; third < cards.length - 2; third += 1) {
+        for (let fourth = third + 1; fourth < cards.length - 1; fourth += 1) {
+          for (let fifth = fourth + 1; fifth < cards.length; fifth += 1) {
+            const candidate = [cards[first], cards[second], cards[third], cards[fourth], cards[fifth]];
+            if (compareFiveCardHands(candidate, best) === 1) best = candidate;
+          }
+        }
+      }
+    }
+  }
+  return Object.freeze(best.map((card) => Object.freeze({ ...card })));
 }
 
 /**
@@ -249,6 +268,9 @@ export class ServerGameLifecycle {
                 playerId: seat.playerId,
                 playerName: this.namesByPlayerId.get(seat.playerId)!,
                 chipsWon: showdown.seats.find((settledSeat) => settledSeat.seatNumber === seat.seatNumber)!.stack - seat.stack,
+                ...(contestingSeats.length >= 2 && hand.communityCards.length === 5 && seat.holeCards
+                  ? { winningCards: bestFiveCards([...seat.holeCards, ...hand.communityCards]) }
+                  : {}),
               })),
           ),
           pots: Object.freeze(showdown.pots.map((pot) => Object.freeze({

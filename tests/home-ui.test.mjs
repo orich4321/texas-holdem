@@ -44,9 +44,9 @@ test('home presents the focused Hebrew room-hosting flow with an accessible dark
   assert.match(layout, /<html lang="he" dir="rtl">/);
   assert.match(layout, /import ['"]\.\/globals\.css['"]/);
 
-  assert.match(page, /הולדם/);
+  assert.match(page, /פוקר/);
   assert.match(page, /כינוי/);
-  assert.match(page, /פתח חדר/);
+  assert.match(page, /פתחו שולחן פרטי/);
   assert.match(page, /המארח.*קישור/s);
   assert.doesNotMatch(page, /קוד חדר|הצטרף לחדר/);
 
@@ -68,20 +68,23 @@ test('home footer text meets WCAG AA contrast against the page background', asyn
   );
 });
 
-test('home shell reserves an in-flow footer and remains vertically scrollable', async () => {
+test('main app shells fill the dynamic viewport without page-level scrolling', async () => {
   const styles = await source('apps/web/app/globals.css');
   const shell = rule(styles, '.home-shell');
-  const footer = rule(styles, '.home-shell > footer');
+  const document = rule(styles, 'html, body');
+  const roster = rule(styles, '.lobby-roster ul');
 
-  assert.match(shell, /grid-template-rows:\s*minmax\(min-content,\s*1fr\)\s+auto/);
+  assert.match(shell, /grid-template-rows:\s*auto\s+minmax\(0,\s*1fr\)\s+auto/);
+  assert.match(shell, /height:\s*100dvh/);
   assert.doesNotMatch(shell, /overflow(?:-y)?:\s*hidden/);
-  assert.doesNotMatch(footer, /position:\s*absolute/);
+  assert.match(document, /overflow:\s*hidden/);
+  assert.match(roster, /overflow-y:\s*auto/);
 });
 
 test('home typography rules are scoped and use logical alignment', async () => {
   const styles = await source('apps/web/app/globals.css');
 
-  assert.match(styles, /\.home-card\s+h1\s*\{/);
+  assert.match(styles, /\.home-hero\s+h1\s*\{/);
   assert.match(styles, /\.home-shell\s*>\s*footer\s*\{/);
   assert.doesNotMatch(styles, /(?:^|\n)h1\s*\{/);
   assert.doesNotMatch(styles, /(?:^|\n)footer\s*\{/);

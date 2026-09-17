@@ -30,14 +30,26 @@ test('mobile table UI keeps the player anchored, reconnects safely, and exposes 
   assert.match(table, /reconnectionDelayMax:\s*10_000/);
   assert.match(table, /document\.addEventListener\('visibilitychange'/);
   assert.match(table, /type="range"/);
+  assert.match(table, /step=\{view\.raise\.minimumIncrement\}/);
   assert.match(table, /raise-quick-actions/);
   assert.doesNotMatch(table, /inputMode="numeric"/);
-  assert.match(table, /showRaiseControls/);
+  assert.match(table, /useState\(false\).*showRaiseControls|showRaiseControls.*useState\(false\)/s);
+  assert.match(table, /view\.raise && showRaiseControls \? <div className="raise-control"/);
+  assert.match(table, /onClick=\{\(\) => setShowRaiseControls\(\(shown\) => !shown\)\}/);
+  assert.doesNotMatch(table, /className="action-all-in"/);
+  assert.match(table, /onClick=\{\(\) => setRaiseTo\(view\.raise!\.maxRaiseTo\)\}>אול אין/);
   assert.match(table, /game\/final-hand/);
   assert.match(table, /final-summary/);
   assert.match(table, /players\/\$\{encodeURIComponent\(targetPlayerId\)\}\/remove/);
+  assert.doesNotMatch(table, /className="showdown-panel"/);
+  assert.match(table, /table-seat-winner/);
+  assert.match(table, /playing-card-winning/);
+  assert.match(table, /view\.seats\.filter\(\(seat\) => !seat\.isFolded\)\.length >= 2/);
+  assert.match(table, /'לחשוף את היד שלי'/);
+  assert.match(styles, /\.table-seat-winner\s*\{/);
+  assert.match(styles, /\.playing-card-winning\s*\{/);
   assert.match(styles, /\.player-panel\s*\{[^}]*position:\s*sticky/s);
-  assert.match(styles, /\.action-bar button\s*\{[^}]*min-height:\s*48px/s);
+  assert.match(styles, /\.action-bar button\s*\{[^}]*min-height:\s*44px/s);
   assert.match(lobby, /lobby\.settings\.initialStack\.toLocaleString\('he-IL'\)/);
   assert.doesNotMatch(lobby, />1,000 צ׳יפים</);
 });
@@ -55,7 +67,7 @@ test('production uses the same-origin game service and the host route never offe
   assert.match(table, /process\.env\.NODE_ENV === 'production'\s*\? '\/server'/);
   assert.match(lobby, /isHostRoute && lobby && !lobby\.isHost/);
   assert.match(lobby, /location\.replace\(`\/r\/\$\{encodeURIComponent\(joinId\)\}`\)/);
-  assert.match(lobby, /אתם המארחים וכבר יושבים בשולחן הזה/);
+  assert.match(lobby, /אתם כבר יושבים בשולחן כמארחים/);
   assert.doesNotMatch(lobby, /\{lobby\.players\.length\}<b>\/{lobby\.settings\.maxPlayers}/);
 });
 

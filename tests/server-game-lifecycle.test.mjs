@@ -86,6 +86,10 @@ test('a street-closing action advances before its view is returned through flop,
   assert.ok(showdown.showdown, 'the player-safe view includes an authoritative showdown result');
   assert.ok(showdown.showdown.winners.length >= 1);
   assert.ok(showdown.showdown.winners.every((winner) => winner.chipsWon > 0));
+  assert.ok(showdown.showdown.winners.every((winner) => winner.winningCards?.length === 5));
+  assert.ok(showdown.showdown.winners.every((winner) => winner.winningCards.every((card) =>
+    [...showdown.communityCards, ...showdown.exposedHands.find((hand) => hand.playerId === winner.playerId).holeCards]
+      .some((candidate) => candidate.rank === card.rank && candidate.suit === card.suit))));
   assert.ok(showdown.exposedHands.some((hand) => hand.reason === 'winner'), 'a contested showdown reveals each winning hand');
   const loser = seats.find((seat) => !showdown.showdown.winners.some((winner) => winner.playerId === seat.playerId));
   assert.ok(loser, 'the showdown has a non-winning participant who may choose to show');

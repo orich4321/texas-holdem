@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { io } from 'socket.io-client';
+import { AppBrand } from '../../ui';
 
 declare const process: { env: { NODE_ENV?: string; NEXT_PUBLIC_GAME_URL?: string; NEXT_PUBLIC_SERVER_URL?: string } };
 
@@ -12,7 +13,7 @@ const SERVER_URL = process.env.NODE_ENV === 'production'
 type Card = { rank: string; suit: string };
 type PlayerAction = { type: 'check' | 'call' | 'fold' | 'all-in' } | { type: 'raise'; raiseTo: number };
 type Showdown = {
-  winners: readonly { seatNumber: number; playerId: string; playerName: string; chipsWon: number }[];
+  winners: readonly { seatNumber: number; playerId: string; playerName: string; chipsWon: number; winningCards?: readonly Card[] }[];
   pots: readonly { amount: number; winnerSeatNumbers: readonly number[] }[];
 };
 type ExposedHand = {
@@ -101,12 +102,16 @@ function isPlayerView(value: unknown): value is PlayerView {
     && (view.allInRunout === undefined || isAllInRunout(view.allInRunout));
 }
 
-function PlayingCard({ card, hidden = false, placeholder = false }: { card?: Card; hidden?: boolean; placeholder?: boolean }) {
+function cardKey(card: Card) {
+  return `${card.rank}-${card.suit}`;
+}
+
+function PlayingCard({ card, hidden = false, placeholder = false, highlighted = false }: { card?: Card; hidden?: boolean; placeholder?: boolean; highlighted?: boolean }) {
   if (placeholder) return <span className="playing-card playing-card-slot" aria-hidden="true" />;
   if (hidden || !card) return <span className="playing-card playing-card-back" aria-label="קלף סגור">♠</span>;
   const suit = suits[card.suit] ?? '?';
   const red = card.suit === 'hearts' || card.suit === 'diamonds';
-  return <span className={`playing-card${red ? ' playing-card-red' : ''}`} aria-label={`${card.rank} ${card.suit}`}><b>{card.rank}</b><i>{suit}</i></span>;
+  return <span className={`playing-card${red ? ' playing-card-red' : ''}${highlighted ? ' playing-card-winning' : ''}`} aria-label={`${card.rank} ${card.suit}`}><b>{card.rank}</b><i>{suit}</i></span>;
 }
 
 export default function TableClient({ joinId, isHost }: { joinId: string; isHost: boolean }) {
@@ -202,6 +207,15 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   const isTurn = Boolean(view && ownSeat && view.currentActorSeat === ownSeat.seatNumber && view.street !== 'showdown' && !view.allInRunout);
   const activeSeat = view?.seats.find((seat) => seat.seatNumber === view.currentActorSeat);
   const exposedBySeat = useMemo(() => new Map(view?.exposedHands.map((hand) => [hand.seatNumber, hand])), [view]);
+  const winnerSeatNumbers = useMemo(() => new Set(view?.showdown?.winners.map((winner) => winner.seatNumber) ?? []), [view?.showdown]);
+  const winningCardKeys = useMemo(() => new Set(view?.showdown?.winners.flatMap((winner) => winner.winningCards?.map(cardKey) ?? []) ?? []), [view?.showdown]);
+  const canRevealAtShowdown = Boolean(
+    view?.street === 'showdown'
+    && ownSeat
+    && !ownSeat.isFolded
+    && view.seats.filter((seat) => !seat.isFolded).length >= 2
+    && !view.exposedHands.some((hand) => hand.playerId === view.playerId),
+  );
 
   useEffect(() => {
     if (!view?.raise) {
@@ -259,7 +273,9 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
     if (!view?.raise || !ownSeat) return;
     const afterCalling = ownSeat.currentBet + view.toCall;
     const target = afterCalling + Math.ceil(view.pot * fraction);
-    setRaiseTo(Math.max(view.raise.minRaiseTo, Math.min(view.raise.maxRaiseTo, target)));
+    const steps = Math.ceil((target - view.raise.minRaiseTo) / view.raise.minimumIncrement);
+    const legalTarget = view.raise.minRaiseTo + Math.max(0, steps) * view.raise.minimumIncrement;
+    setRaiseTo(Math.max(view.raise.minRaiseTo, Math.min(view.raise.maxRaiseTo, legalTarget)));
   }
 
   async function startNextHand() {
@@ -368,7 +384,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   if (!view) return <main className="table-shell"><p className="table-connection" role="status">{waitingForNextHand ? '♠ ' : ''}{status}</p></main>;
 
   const turnMessage = view.street === 'showdown'
-    ? 'היד הסתיימה — התוצאות מוכנות'
+    ? 'היד הסתיימה'
     : view.allInRunout
       ? `כולם באול אין — ממתינים לחשיפת ${streetNames[view.allInRunout.nextStreet]}`
     : isTurn
@@ -378,41 +394,41 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   return (
     <main className="table-shell" dir="rtl">
       <header className="table-header">
-        <a href={`/r/${joinId}`}><span aria-hidden="true">♠</span> הולדם חברים</a>
-        <div><span>שלב</span><strong>{streetNames[view.street]}</strong></div>
-        <div><span>קופה</span><strong>{view.pot.toLocaleString('he-IL')}</strong></div>
+        <a href={`/r/${joinId}`} aria-label="חזרה ללובי"><AppBrand compact /></a>
+        <div className="table-round"><span>שלב במשחק</span><strong>{streetNames[view.street]}</strong></div>
+        <div className="table-header-pot"><span>קופה נוכחית</span><strong><i aria-hidden="true" />{view.pot.toLocaleString('he-IL')}</strong></div>
       </header>
       <p className={`turn-banner${isTurn ? ' turn-banner-active' : ''}`} role="status" aria-live="polite"><span aria-hidden="true" />{turnMessage}</p>
       <section className="poker-table" aria-label="שולחן טקסס הולדם">
         <div className="table-felt">
-          <div className="table-pot"><span>קופה</span><strong>{view.pot.toLocaleString('he-IL')}</strong></div>
+          <div className="table-pot"><span><i aria-hidden="true" /> קופה</span><strong>{view.pot.toLocaleString('he-IL')}</strong></div>
           <div className="community-cards" aria-label="קלפי קהילה">
-            {Array.from({ length: 5 }, (_, index) => <PlayingCard key={index} card={view.communityCards[index]} placeholder={!view.communityCards[index]} />)}
+            {Array.from({ length: 5 }, (_, index) => <PlayingCard key={index} card={view.communityCards[index]} placeholder={!view.communityCards[index]} highlighted={Boolean(view.communityCards[index] && winningCardKeys.has(cardKey(view.communityCards[index])))} />)}
           </div>
           <div className="table-seats">
             {orderedSeats.map((seat) => {
               const isYou = seat.playerId === view.playerId;
               const isActor = seat.seatNumber === view.currentActorSeat && view.street !== 'showdown' && !view.allInRunout;
               const exposed = exposedBySeat.get(seat.seatNumber);
-              return <article key={seat.playerId} className={`table-seat${isYou ? ' table-seat-self' : ''}${isActor ? ' table-seat-active' : ''}${seat.isFolded ? ' table-seat-folded' : ''}`}>
-                <span className="seat-number">{seat.seatNumber === view.dealerSeat ? 'D' : seat.seatNumber}</span>
-                <strong>{seat.playerName}{isYou ? ' (אתם)' : ''}</strong>
-                <small>{seat.isFolded ? 'פרש' : `${seat.stack.toLocaleString('he-IL')} צ׳יפים`}</small>
+              const isWinner = winnerSeatNumbers.has(seat.seatNumber);
+              return <article key={seat.playerId} className={`table-seat${isYou ? ' table-seat-self' : ''}${isActor ? ' table-seat-active' : ''}${isWinner ? ' table-seat-winner' : ''}${seat.isFolded ? ' table-seat-folded' : ''}`}>
+                <span className={`seat-number${seat.seatNumber === view.dealerSeat ? ' dealer-button' : ''}`}>{seat.seatNumber === view.dealerSeat ? 'D' : seat.seatNumber}</span>
+                <strong>{seat.playerName}{isYou ? ' · אתם' : ''}</strong>
+                <small>{seat.isFolded ? 'פרש/ה מהיד' : <><i aria-hidden="true" />{seat.stack.toLocaleString('he-IL')} צ׳יפים</>}</small>
                 {seat.currentBet > 0 ? <em>הימור {seat.currentBet.toLocaleString('he-IL')}</em> : null}
-                {exposed ? <div className="seat-revealed-cards" aria-label={`הקלפים של ${seat.playerName}`}><PlayingCard card={exposed.holeCards[0]} /><PlayingCard card={exposed.holeCards[1]} /></div> : null}
+                {exposed ? <div className="seat-revealed-cards" aria-label={`הקלפים של ${seat.playerName}`}><PlayingCard card={exposed.holeCards[0]} highlighted={winningCardKeys.has(cardKey(exposed.holeCards[0]))} /><PlayingCard card={exposed.holeCards[1]} highlighted={winningCardKeys.has(cardKey(exposed.holeCards[1]))} /></div> : null}
               </article>;
             })}
           </div>
         </div>
       </section>
       <section className="player-panel" aria-label="היד שלכם">
-        <div className="your-hand"><p>היד שלכם</p><div className="hole-cards"><PlayingCard card={view.holeCards[0]} /><PlayingCard card={view.holeCards[1]} /></div></div>
-        <div className="your-stack"><span>הערימה שלכם</span><strong>{ownSeat?.stack.toLocaleString('he-IL') ?? '—'}</strong><small>צ׳יפים</small></div>
+        <div className="your-hand"><p><span aria-hidden="true">◆</span> הקלפים שלכם</p><div className="hole-cards"><PlayingCard card={view.holeCards[0]} /><PlayingCard card={view.holeCards[1]} /></div></div>
+        <div className="your-stack"><span>הערימה שלכם</span><strong><i aria-hidden="true" />{ownSeat?.stack.toLocaleString('he-IL') ?? '—'}</strong><small>צ׳יפים</small></div>
         {status.includes('נכשל') || status.includes('לא זמינה') ? <p className="table-status" role="alert">{status}</p> : null}
         {isTurn ? <div className="action-bar" aria-label="פעולות בתור שלכם">
           <button type="button" className="action-fold" disabled={pending} onClick={() => void act({ type: 'fold' })}><span aria-hidden="true">✕</span> פרישה</button>
           <button type="button" className="action-primary" disabled={pending} onClick={() => void act(view.toCall === 0 ? { type: 'check' } : { type: 'call' })}><span aria-hidden="true">✓</span> {view.toCall === 0 ? 'צ׳ק' : `השוואה · ${view.toCall.toLocaleString('he-IL')}`}</button>
-          <button type="button" className="action-all-in" disabled={pending} onClick={() => void act({ type: 'all-in' })}><span aria-hidden="true">⚡</span> אול אין</button>
           {view.raise ? <button type="button" className="action-raise-toggle" disabled={pending} aria-expanded={showRaiseControls} onClick={() => setShowRaiseControls((shown) => !shown)}><span aria-hidden="true">＋</span> הימור</button> : null}
           {view.raise && showRaiseControls ? <div className="raise-control" aria-label="בחירת סכום העלאה">
             <div className="raise-amount"><span>העלאה עד</span><strong>{(raiseTo ?? view.raise.minRaiseTo).toLocaleString('he-IL')}</strong><small>צ׳יפים</small></div>
@@ -421,7 +437,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
               aria-label="בחירת סכום העלאה"
               min={view.raise.minRaiseTo}
               max={view.raise.maxRaiseTo}
-              step={1}
+              step={view.raise.minimumIncrement}
               value={raiseTo ?? view.raise.minRaiseTo}
               onChange={(event) => setRaiseTo(Number(event.target.value))}
               disabled={pending}
@@ -440,37 +456,28 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
           <div><span aria-hidden="true">⚡</span><p><strong>כולם באול אין</strong><small>הקלפים של המשתתפים פתוחים. המארח חושף את {streetNames[view.allInRunout.nextStreet]}.</small></p></div>
           {isHost ? <button type="button" disabled={advancingRunout} onClick={() => void advanceAllInRunout()}>{advancingRunout ? 'חושפים…' : `חשיפת ${streetNames[view.allInRunout.nextStreet]}`}</button> : <small>ממתינים למארח.</small>}
         </div> : null}
-      </section>
-      {view.showdown ? <section className="showdown-panel" aria-live="polite" aria-label="תוצאות היד">
-        <p>תוצאות היד</p>
-        <h2>{view.showdown.winners.length === 1 ? `${view.showdown.winners[0].playerName} זכה/זכתה ביד` : 'היד התחלקה בין המנצחים'}</h2>
-        <ul>
-          {view.showdown.winners.map((winner) => <li key={winner.playerId}><strong>{winner.playerName}</strong><span>קיבל/ה {winner.chipsWon.toLocaleString('he-IL')} צ׳יפים</span></li>)}
-        </ul>
-        {view.showdown.pots.length > 1 ? <small>{view.showdown.pots.map((pot, index) => `קופה ${index + 1}: ${pot.amount.toLocaleString('he-IL')}`).join(' · ')}</small> : null}
-        {view.exposedHands.length > 0 ? <div className="showdown-hands" aria-label="קלפים שנחשפו">
-          {view.exposedHands.map((hand) => <div key={hand.playerId}><span>{hand.playerName}{hand.reason === 'winner' ? ' · מנצח/ת' : ''}</span><PlayingCard card={hand.holeCards[0]} /><PlayingCard card={hand.holeCards[1]} /></div>)}
+        {view.showdown && !finalSummary ? <div className="between-hands-controls" aria-label="פעולות בין ידיים">
+          {canRevealAtShowdown ? <button type="button" className="reveal-hand-button" disabled={revealingHand} onClick={() => void revealHand()}>{revealingHand ? 'חושפים…' : 'לחשוף את היד שלי'}</button> : null}
+          {isHost ? <div className="host-between-hands" aria-label="ניהול השולחן בין ידיים">
+            <p><strong>ניהול בין ידיים</strong><small>אפשר להוסיף חברים דרך ההזמנה או להוציא שחקנים לפני החלוקה הבאה.</small></p>
+            <div className="host-between-actions">
+              <button type="button" onClick={() => void copyInvitationForNextHand()}>הוספת שחקנים · העתקת הזמנה</button>
+              <button type="button" className="next-hand-button" disabled={startingNextHand} onClick={() => void startNextHand()}>{startingNextHand ? 'מחלקים…' : 'היד הבאה'}</button>
+              <button type="button" className="final-hand-button" disabled={startingNextHand} onClick={() => void startFinalHand()}>סיבוב אחרון</button>
+            </div>
+            {view.seats.filter((seat) => seat.playerId !== view.playerId).length > 0 ? <div className="host-player-removals">
+              {view.seats.filter((seat) => seat.playerId !== view.playerId).map((seat) => <button key={seat.playerId} type="button" disabled={Boolean(managingPlayerId)} onClick={() => void removePlayerBetweenHands(seat.playerId, seat.playerName)}>{managingPlayerId === seat.playerId ? 'מוציאים…' : `הוצאת ${seat.playerName}`}</button>)}
+            </div> : null}
+          </div> : <small>המארח יכול להתחיל את היד הבאה.</small>}
         </div> : null}
-        {ownSeat && !ownSeat.isFolded && !view.exposedHands.some((hand) => hand.playerId === view.playerId) ? <button type="button" className="reveal-hand-button" disabled={revealingHand} onClick={() => void revealHand()}>{revealingHand ? 'חושפים…' : 'חשיפת הקלפים שלי'}</button> : null}
-        {isHost && !finalSummary ? <div className="host-between-hands" aria-label="ניהול השולחן בין ידיים">
-          <p><strong>ניהול בין ידיים</strong><small>אפשר להוסיף חברים דרך ההזמנה או להוציא שחקנים לפני החלוקה הבאה.</small></p>
-          <div className="host-between-actions">
-            <button type="button" onClick={() => void copyInvitationForNextHand()}>הוספת שחקנים · העתקת הזמנה</button>
-            <button type="button" className="next-hand-button" disabled={startingNextHand} onClick={() => void startNextHand()}>{startingNextHand ? 'מחלקים…' : 'היד הבאה'}</button>
-            <button type="button" className="final-hand-button" disabled={startingNextHand} onClick={() => void startFinalHand()}>סיבוב אחרון</button>
-          </div>
-          {view.seats.filter((seat) => seat.playerId !== view.playerId).length > 0 ? <div className="host-player-removals">
-            {view.seats.filter((seat) => seat.playerId !== view.playerId).map((seat) => <button key={seat.playerId} type="button" disabled={Boolean(managingPlayerId)} onClick={() => void removePlayerBetweenHands(seat.playerId, seat.playerName)}>{managingPlayerId === seat.playerId ? 'מוציאים…' : `הוצאת ${seat.playerName}`}</button>)}
-          </div> : null}
-        </div> : !finalSummary ? <small>המארח יכול להתחיל את היד הבאה.</small> : null}
-      </section> : null}
-      {finalSummary ? <section className="final-summary" aria-live="polite" aria-label="סיכום המשחק">
+      </section>
+      {finalSummary ? <div className="modal-backdrop"><section className="final-summary" aria-live="polite" aria-label="סיכום המשחק">
         <p>המשחק הסתיים</p>
         <h2>סיכום סופי</h2>
         <ul>{finalSummary.standings.map((standing) => <li key={standing.displayName}><strong>{standing.displayName}</strong><span>{standing.finalStack.toLocaleString('he-IL')} צ׳יפים · {standing.net >= 0 ? '+' : ''}{standing.net.toLocaleString('he-IL')}</span></li>)}</ul>
         <small>{finalSummary.hands.length} ידיים הסתיימו · פירוט הפעולות והתשלומים נשמר בקובץ.</small>
         <button type="button" onClick={downloadFinalSummary}>הורדת סיכום JSON</button>
-      </section> : null}
+      </section></div> : null}
     </main>
   );
 }

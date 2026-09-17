@@ -2,6 +2,7 @@
 
 import { type FormEvent, useState } from 'react';
 import { DEFAULT_ROOM_SETTINGS, EMPTY_NICKNAME_MESSAGE, submitRoomCreation, type RoomSettings } from './room-creation';
+import { AppBrand, IconBadge } from './ui';
 
 export default function HomePage() {
   const [nickname, setNickname] = useState('');
@@ -38,20 +39,24 @@ export default function HomePage() {
 
   return (
     <main className="home-shell">
-      <div className="ambient ambient-top" aria-hidden="true" />
-      <div className="ambient ambient-bottom" aria-hidden="true" />
+      <div className="app-aurora" aria-hidden="true" />
+      <header className="home-topbar"><AppBrand compact /><span>שולחן פרטי · הזמנה בלבד</span></header>
 
-      <section className="home-card" aria-labelledby="home-title">
-        <div className="brand-mark" aria-hidden="true">
-          <span className="brand-card brand-card-back">K</span>
-          <span className="brand-card brand-card-front">A</span>
+      <section className="home-layout" aria-labelledby="home-title">
+        <div className="home-hero">
+          <div className="hero-cards" aria-hidden="true"><span>A<small>♠</small></span><span>K<small>♥</small></span></div>
+          <p className="eyebrow">הערב שלכם. השולחן שלכם.</p>
+          <h1 id="home-title">פוקר עם חברים,<br /><em>כמו שצריך.</em></h1>
+          <p className="invitation">פותחים שולחן פרטי, שולחים קישור ומתחילים לשחק — בלי הורדות ובלי הרשמה.</p>
+          <div className="home-benefits" aria-label="יתרונות השולחן">
+            <span><IconBadge>♟</IconBadge> עד 9 שחקנים</span>
+            <span><IconBadge>⚡</IconBadge> משחק בזמן אמת</span>
+            <span><IconBadge>⌁</IconBadge> חוזרים בדיוק לאותה יד</span>
+          </div>
         </div>
 
-        <p className="eyebrow">השולחן הפרטי שלכם</p>
-        <h1 id="home-title">הולדם חברים</h1>
-        <p className="invitation">
-          ערב פוקר מתחיל כאן. בוחרים כינוי, פותחים שולחן ומזמינים את החבר׳ה.
-        </p>
+        <div className="home-card">
+          <div className="home-card-heading"><span>01</span><div><p>פתיחת שולחן</p><small>הגדירו את המשחק והזמינו חברים</small></div></div>
 
         <form className="host-form" onSubmit={handleSubmit}>
           <label htmlFor="nickname">כינוי בשולחן</label>
@@ -68,7 +73,7 @@ export default function HomePage() {
             aria-describedby={status ? 'host-status' : undefined}
           />
           <fieldset className="game-settings" disabled={pending}>
-            <legend>הגדרות השולחן</legend>
+            <legend>מבנה המשחק</legend>
             <label>צ׳יפים לכל שחקן<input inputMode="numeric" type="number" min="100" max="1000000" value={settings.initialStack} onChange={(event) => setSettings((current) => ({ ...current, initialStack: Number(event.target.value) }))} /></label>
             <div className="game-settings-row">
               <label>סמול בליינד<input inputMode="numeric" type="number" min="1" max="100000" value={settings.smallBlind} onChange={(event) => setSettings((current) => ({ ...current, smallBlind: Number(event.target.value) }))} /></label>
@@ -77,7 +82,7 @@ export default function HomePage() {
             <small>כל מי שמצטרף מקבל את אותה ערימת פתיחה.</small>
           </fieldset>
           <button type="submit" disabled={pending}>
-            {pending ? 'פותחים חדר…' : 'פתח חדר'}
+            <span aria-hidden="true">♠</span>{pending ? 'פותחים שולחן…' : 'פתחו שולחן פרטי'}
           </button>
           {status ? (
             <p id="host-status" className="host-status" role="status" aria-live="polite">
@@ -86,13 +91,11 @@ export default function HomePage() {
           ) : null}
         </form>
 
-        <p className="share-note">
-          <span aria-hidden="true">↗</span>
-          המארח יקבל קישור אישי לשיתוף עם כולם
-        </p>
+          <p className="share-note"><span aria-hidden="true">◆</span> המארח יקבל קישור אישי לשיתוף עם כולם</p>
+        </div>
       </section>
 
-      <footer>משחק ביתי. אווירה של שולחן אמיתי.</footer>
+      <footer><span>© HOLD&apos;EM PRIVATE TABLE</span><span>משחק ביתי. אווירה של שולחן אמיתי.</span></footer>
     </main>
   );
 }

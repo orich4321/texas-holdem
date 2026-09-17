@@ -9,6 +9,7 @@ import {
   startLobbyGame,
 } from '../../lobby-api';
 import TableClient from './table-client';
+import { AppBrand, StateScreen } from '../../ui';
 
 type LobbyClientProps = { joinId: string; isHostRoute?: boolean };
 
@@ -102,26 +103,24 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
   }
 
   if (loading && !lobby) {
-    return <main className="lobby-shell" aria-busy="true"><p className="lobby-loading">טוענים את השולחן…</p></main>;
+    return <StateScreen icon="♠" title="מכינים את השולחן"><p className="state-loading" aria-busy="true">טוענים את החדר הפרטי…</p></StateScreen>;
   }
 
   if (loadError && !lobby) {
     return (
-      <main className="lobby-shell">
-        <section className="lobby-error" aria-labelledby="lobby-error-title">
-          <p aria-hidden="true">♠</p>
-          <h1 id="lobby-error-title">החדר לא זמין כרגע</h1>
+      <StateScreen icon="!" title="החדר לא זמין כרגע">
+        <div className="lobby-error" aria-labelledby="lobby-error-title">
           <p role="alert">{loadError}</p>
           <button type="button" onClick={() => void refreshLobby()} disabled={loading}>נסו שוב</button>
-        </section>
-      </main>
+        </div>
+      </StateScreen>
     );
   }
 
   if (!lobby) return null;
 
   if (isHostRoute && !lobby.isHost) {
-    return <main className="lobby-shell"><p className="lobby-loading" role="status">בודקים את ההרשאות ומעבירים אתכם להזמנה…</p></main>;
+    return <StateScreen icon="♠" title="בודקים הרשאות"><p role="status">מעבירים אתכם למסך ההזמנה…</p></StateScreen>;
   }
 
   if ((lobby.status === 'IN_PROGRESS' || lobby.status === 'COMPLETED') && lobby.isParticipant) {
@@ -129,75 +128,81 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
   }
 
   if (lobby.status === 'COMPLETED') {
-    return <main className="lobby-shell"><section className="lobby-error"><h1>המשחק כבר הסתיים</h1><p>רק משתתפי השולחן יכולים לפתוח את הסיכום הסופי.</p></section></main>;
+    return <StateScreen icon="♠" title="המשחק כבר הסתיים"><p>רק משתתפי השולחן יכולים לפתוח את הסיכום הסופי.</p></StateScreen>;
   }
 
   return (
     <main className="lobby-shell">
-      <div className="lobby-glow lobby-glow-top" aria-hidden="true" />
-      <div className="lobby-glow lobby-glow-bottom" aria-hidden="true" />
+      <div className="app-aurora" aria-hidden="true" />
+      <header className="lobby-topbar"><AppBrand compact /><span className="private-pill"><i /> שולחן פרטי</span></header>
       <section className="lobby-card" aria-labelledby="lobby-title">
         <header className="lobby-header">
-          <p className="lobby-kicker"><span aria-hidden="true">♠</span> שולחן פרטי</p>
+          <p className="lobby-kicker">LOBBY · {joinId.slice(0, 6).toUpperCase()}</p>
           <h1 id="lobby-title">מחכים לשחקנים</h1>
           <p>הצטרפו, שתפו את הקישור, וכשהחברים כאן — מתחילים.</p>
         </header>
 
-        <div className="lobby-host" aria-label={`המארח: ${lobby.host.displayName}`}>
-          <span className="lobby-avatar" aria-hidden="true">♛</span>
-          <div><span>המארח</span><strong>{lobby.host.displayName}</strong></div>
-          <span className="lobby-host-chip">בשולחן</span>
-        </div>
-
-        <section className="lobby-roster" aria-labelledby="roster-title">
-          <div className="lobby-roster-heading">
-            <h2 id="roster-title">השחקנים בשולחן</h2>
-            <span aria-label={`${lobby.players.length} ${lobby.players.length === 1 ? 'שחקן' : 'שחקנים'}`}>{lobby.players.length}</span>
-          </div>
-          <ul>
-            {lobby.players.map((player, index) => (
-              <li key={`${player.displayName}-${index}`}>
-                <span className="lobby-seat" aria-hidden="true">{index + 1}</span>
-                <strong>{player.displayName}</strong>
-                <span>{player.currentStack.toLocaleString('he-IL')} <small>צ׳יפים</small></span>
-              </li>
-            ))}
-          </ul>
-        </section>
-
-        <section className="lobby-settings" aria-label="הגדרות המשחק">
-          <p>הגדרות המשחק</p>
-          <div><span>ערימת פתיחה</span><strong>{lobby.settings.initialStack.toLocaleString('he-IL')}</strong><small>צ׳יפים</small></div>
-          <div><span>בליינדים</span><strong>{lobby.settings.smallBlind}/{lobby.settings.bigBlind}</strong></div>
-        </section>
-
-        <div className="lobby-share">
-          <div><strong>מזמינים עוד חברים?</strong><span>שולחים להם את הקישור האישי לשולחן.</span></div>
-          <button type="button" onClick={() => void copyInvitation()}>העתקת קישור</button>
-          {copied ? <p role="status" aria-live="polite">{copied}</p> : null}
-        </div>
-
-        {lobby.canStart ? (
-          <button type="button" className="lobby-start" onClick={() => void handleStart()} disabled={starting}>
-            {starting ? 'מחלקים קלפים…' : 'התחילו את היד'}
-          </button>
-        ) : null}
-
-        {isHostRoute && lobby.isHost ? (
-          <p className="lobby-already-joined" role="status">אתם המארחים וכבר יושבים בשולחן הזה.</p>
-        ) : lobby.isParticipant ? (
-          <p className="lobby-already-joined" role="status">אתם כבר יושבים בשולחן הזה.</p>
-        ) : (
-          <form className="lobby-join-form" onSubmit={handleJoin}>
-            <div className="lobby-form-heading"><h2>הצטרפו לשולחן</h2><span>{lobby.settings.initialStack.toLocaleString('he-IL')} צ׳יפים</span></div>
-            <label htmlFor="lobby-nickname">הכינוי שלכם</label>
-            <div className="lobby-input-row">
-              <input id="lobby-nickname" name="nickname" type="text" autoComplete="nickname" maxLength={24} placeholder="איך לקרוא לכם?" value={nickname} onChange={(event) => setNickname(event.target.value)} disabled={joining} aria-describedby={joinMessage ? 'join-status' : undefined} />
-              <button type="submit" disabled={joining}>{joining ? 'מצטרפים…' : 'הצטרפות'}</button>
+        <div className="lobby-content">
+          <div className="lobby-main-column">
+            <div className="lobby-host" aria-label={`המארח: ${lobby.host.displayName}`}>
+              <span className="lobby-avatar" aria-hidden="true">♛</span>
+              <div><span>מנהל השולחן</span><strong>{lobby.host.displayName}</strong></div>
+              <span className="lobby-host-chip"><i /> מחובר</span>
             </div>
-            {joinMessage ? <p id="join-status" className="lobby-status" role="status" aria-live="polite">{joinMessage}</p> : null}
-          </form>
-        )}
+
+            <section className="lobby-roster" aria-labelledby="roster-title">
+              <div className="lobby-roster-heading">
+                <h2 id="roster-title">השחקנים בשולחן</h2>
+                <span aria-label={`${lobby.players.length} ${lobby.players.length === 1 ? 'שחקן' : 'שחקנים'}`}>{lobby.players.length} / 9</span>
+              </div>
+              <ul>
+                {lobby.players.map((player, index) => (
+                  <li key={`${player.displayName}-${index}`}>
+                    <span className="lobby-seat" aria-hidden="true">{index + 1}</span>
+                    <strong>{player.displayName}</strong>
+                    <span>{player.currentStack.toLocaleString('he-IL')} <small>צ׳יפים</small></span>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          </div>
+
+          <aside className="lobby-side-column">
+            <section className="lobby-settings" aria-label="הגדרות המשחק">
+              <p>פרטי המשחק</p>
+              <div><span>ערימת פתיחה</span><strong>{lobby.settings.initialStack.toLocaleString('he-IL')}</strong><small>צ׳יפים</small></div>
+              <div><span>בליינדים</span><strong>{lobby.settings.smallBlind}/{lobby.settings.bigBlind}</strong></div>
+            </section>
+
+            <div className="lobby-share">
+              <div><strong>מזמינים חברים</strong><span>הקישור פותח את מסך האורח, ללא הרשאות מארח.</span></div>
+              <button type="button" onClick={() => void copyInvitation()}><span aria-hidden="true">↗</span> העתקת קישור</button>
+              {copied ? <p role="status" aria-live="polite">{copied}</p> : null}
+            </div>
+
+            {lobby.canStart ? (
+              <button type="button" className="lobby-start" onClick={() => void handleStart()} disabled={starting}>
+                <span aria-hidden="true">♠</span>{starting ? 'מחלקים קלפים…' : 'התחילו את היד'}
+              </button>
+            ) : null}
+
+            {isHostRoute && lobby.isHost ? (
+              <p className="lobby-already-joined" role="status"><span aria-hidden="true">✓</span> אתם כבר יושבים בשולחן כמארחים.</p>
+            ) : lobby.isParticipant ? (
+              <p className="lobby-already-joined" role="status"><span aria-hidden="true">✓</span> אתם כבר יושבים בשולחן הזה.</p>
+            ) : (
+              <form className="lobby-join-form" onSubmit={handleJoin}>
+                <div className="lobby-form-heading"><h2>הצטרפות לשולחן</h2><span>{lobby.settings.initialStack.toLocaleString('he-IL')} צ׳יפים</span></div>
+                <label htmlFor="lobby-nickname">הכינוי שלכם</label>
+                <div className="lobby-input-row">
+                  <input id="lobby-nickname" name="nickname" type="text" autoComplete="nickname" maxLength={24} placeholder="איך לקרוא לכם?" value={nickname} onChange={(event) => setNickname(event.target.value)} disabled={joining} aria-describedby={joinMessage ? 'join-status' : undefined} />
+                  <button type="submit" disabled={joining}>{joining ? 'מצטרפים…' : 'שבו בשולחן'}</button>
+                </div>
+                {joinMessage ? <p id="join-status" className="lobby-status" role="status" aria-live="polite">{joinMessage}</p> : null}
+              </form>
+            )}
+          </aside>
+        </div>
       </section>
     </main>
   );
