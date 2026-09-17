@@ -16,7 +16,7 @@ test('lobby shell preserves vertical scrolling for a full nine-player mobile tab
   assert.doesNotMatch(shellRule, /overflow-y\s*:\s*(?:hidden|clip)/);
 });
 
-test('mobile table UI keeps the player anchored, leaves unrevealed board slots empty, and exposes thumb-sized actions', async () => {
+test('mobile table UI keeps the player anchored, reconnects safely, and exposes slider-based thumb-sized actions', async () => {
   const [table, lobby, styles] = await Promise.all([
     readFile(resolve(root, 'apps/web/app/r/[joinId]/table-client.tsx'), 'utf8'),
     readFile(resolve(root, 'apps/web/app/r/[joinId]/lobby-client.tsx'), 'utf8'),
@@ -26,6 +26,12 @@ test('mobile table UI keeps the player anchored, leaves unrevealed board slots e
   assert.match(table, /const orderedSeats = useMemo/);
   assert.match(table, /playing-card-slot/);
   assert.match(table, /className="action-primary"/);
+  assert.match(table, /socket\.on\('game:state'/);
+  assert.match(table, /reconnectionDelayMax:\s*10_000/);
+  assert.match(table, /document\.addEventListener\('visibilitychange'/);
+  assert.match(table, /type="range"/);
+  assert.match(table, /raise-quick-actions/);
+  assert.doesNotMatch(table, /inputMode="numeric"/);
   assert.match(styles, /\.player-panel\s*\{[^}]*position:\s*sticky/s);
   assert.match(styles, /\.action-bar button\s*\{[^}]*min-height:\s*48px/s);
   assert.match(lobby, /lobby\.settings\.initialStack\.toLocaleString\('he-IL'\)/);
@@ -43,7 +49,8 @@ test('production uses the same-origin game service and the host route never offe
   assert.match(creation, /process\.env\.NODE_ENV === 'production'\s*\? '\/server'/);
   assert.match(lobbyApi, /process\.env\.NODE_ENV === 'production'\s*\? '\/server'/);
   assert.match(table, /process\.env\.NODE_ENV === 'production'\s*\? '\/server'/);
-  assert.match(lobby, /\{isHostRoute \? \(/);
+  assert.match(lobby, /isHostRoute && lobby && !lobby\.isHost/);
+  assert.match(lobby, /location\.replace\(`\/r\/\$\{encodeURIComponent\(joinId\)\}`\)/);
   assert.match(lobby, /אתם המארחים וכבר יושבים בשולחן הזה/);
   assert.doesNotMatch(lobby, /\{lobby\.players\.length\}<b>\/{lobby\.settings\.maxPlayers}/);
 });

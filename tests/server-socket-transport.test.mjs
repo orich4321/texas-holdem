@@ -85,3 +85,44 @@ test('socket transport restores and fans out each player’s own view without br
   assert.deepEqual(socket.emitted.at(-1), ['game:state', views[0]]);
   assert.equal(JSON.stringify(socket.emitted).includes('hearts'), false);
 });
+
+test('a reconnect authenticates the same durable player session and restores that player’s current view', async () => {
+  let middleware;
+  let connection;
+  let recoveries = 0;
+  const io = { use(fn) { middleware = fn; }, on(_name, fn) { connection = fn; } };
+  const view = { playerId: 'player-1', street: 'turn', holeCards: [{ rank: 'A', suit: 'spades' }, { rank: 'K', suit: 'spades' }] };
+  const repository = {
+    async findPlayerByRoomJoinIdAndAccessToken(joinId, tokenValue) {
+      assert.equal(joinId, '0123456789abcdef');
+      assert.equal(tokenValue, token);
+      return { id: 'player-1', roomId: 'db-room-1', displayName: 'אורי' };
+    },
+    async recoverLatestPlayerViewForPlayer(roomId, playerId) {
+      recoveries += 1;
+      assert.deepEqual({ roomId, playerId }, { roomId: 'db-room-1', playerId: 'player-1' });
+      return view;
+    },
+    async persistPlayerActionAtomically() { throw new Error('not used'); },
+  };
+  attachSocketSessionTransport(io, repository);
+
+  const connect = async () => {
+    const handlers = {};
+    const socket = {
+      handshake: { auth: { roomJoinId: '0123456789abcdef' }, headers: { cookie: `poker_player_token=${token}` } }, data: {}, emitted: [],
+      join() {}, emit(name, payload) { this.emitted.push([name, payload]); }, on(name, handler) { handlers[name] = handler; },
+    };
+    await new Promise((resolve, reject) => middleware(socket, (error) => error ? reject(error) : resolve()));
+    connection(socket);
+    await new Promise((resolve) => setImmediate(resolve));
+    return socket;
+  };
+
+  const first = await connect();
+  const resumed = await connect();
+  assert.equal(recoveries, 2);
+  assert.deepEqual(first.emitted.at(-1), ['game:state', view]);
+  assert.deepEqual(resumed.emitted.at(-1), ['game:state', view]);
+  assert.equal(resumed.data.session.playerId, 'player-1');
+});

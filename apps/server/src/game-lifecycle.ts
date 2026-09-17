@@ -68,6 +68,12 @@ export interface ServerPlayerView {
   communityCards: readonly Card[];
   pot: number;
   toCall: number;
+  /** Present only for the active, authenticated player when a full raise is legal. */
+  raise?: Readonly<{
+    minRaiseTo: number;
+    maxRaiseTo: number;
+    minimumIncrement: number;
+  }>;
   holeCards: readonly [Card, Card];
   seats: readonly {
     seatNumber: number;
@@ -170,7 +176,10 @@ export class ServerGameLifecycle {
     const requestingSeat = hand.seats.find((seat) => seat.playerId === playerId);
     if (!requestingSeat?.holeCards) throw new Error('Player is not seated in this game');
     const allInRunout = this.allInRunoutNextStreet(hand);
-    const toCall = hand.street === 'showdown' || allInRunout ? 0 : this.legalActions(hand).toCall;
+    const legalActions = hand.street === 'showdown' || allInRunout || hand.currentActorSeat !== requestingSeat.seatNumber
+      ? undefined
+      : this.legalActions(hand);
+    const toCall = legalActions?.toCall ?? 0;
     const showdown = hand.street === 'showdown' ? this.showdownResult(hand) : undefined;
     const settledStacks = showdown
       ? new Map(showdown.seats.map((seat) => [seat.seatNumber, seat.stack]))
@@ -211,7 +220,14 @@ export class ServerGameLifecycle {
       currentActorSeat: hand.currentActorSeat,
       communityCards: Object.freeze(hand.communityCards.map((card) => Object.freeze({ ...card }))),
       pot: hand.pot,
-      toCall: hand.currentActorSeat === requestingSeat.seatNumber ? toCall : 0,
+      toCall,
+      ...(legalActions?.canRaise && legalActions.minRaiseTo !== null && legalActions.maxRaiseTo !== null ? {
+        raise: Object.freeze({
+          minRaiseTo: legalActions.minRaiseTo,
+          maxRaiseTo: legalActions.maxRaiseTo,
+          minimumIncrement: hand.minimumRaiseIncrement,
+        }),
+      } : {}),
       holeCards: Object.freeze(requestingSeat.holeCards.map((card) => Object.freeze({ ...card }))) as unknown as readonly [Card, Card],
       seats: Object.freeze(hand.seats.map((seat) => Object.freeze({
         seatNumber: seat.seatNumber,

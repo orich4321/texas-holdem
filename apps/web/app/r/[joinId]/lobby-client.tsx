@@ -50,6 +50,14 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
     }
   }, [isHostRoute, joinId, lobby?.isHost]);
 
+  useEffect(() => {
+    // Knowing the /host pathname never conveys authority. A session that is
+    // not the persisted room owner is sent to the ordinary invitation flow.
+    if (isHostRoute && lobby && !lobby.isHost) {
+      globalThis.location.replace(`/r/${encodeURIComponent(joinId)}`);
+    }
+  }, [isHostRoute, joinId, lobby]);
+
   async function handleJoin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (joining) return;
@@ -112,6 +120,10 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
 
   if (!lobby) return null;
 
+  if (isHostRoute && !lobby.isHost) {
+    return <main className="lobby-shell"><p className="lobby-loading" role="status">בודקים את ההרשאות ומעבירים אתכם להזמנה…</p></main>;
+  }
+
   if (lobby.status === 'IN_PROGRESS') return <TableClient joinId={joinId} isHost={lobby.isHost} />;
 
   return (
@@ -165,7 +177,7 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
           </button>
         ) : null}
 
-        {isHostRoute ? (
+        {isHostRoute && lobby.isHost ? (
           <p className="lobby-already-joined" role="status">אתם המארחים וכבר יושבים בשולחן הזה.</p>
         ) : lobby.isParticipant ? (
           <p className="lobby-already-joined" role="status">אתם כבר יושבים בשולחן הזה.</p>

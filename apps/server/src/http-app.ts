@@ -15,6 +15,7 @@ const MAX_ROOM_PLAYERS = 9;
 const DEFAULT_SMALL_BLIND = 5;
 const DEFAULT_BIG_BLIND = 10;
 const DEFAULT_MAX_PLAYERS = 9;
+const PLAYER_SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1_000;
 
 type OriginPolicy = (origin: string | undefined) => boolean;
 
@@ -131,12 +132,13 @@ function setPlayerSessionCookie(response: express.Response, accessToken: string)
 
   response.cookie('poker_player_token', accessToken, {
     httpOnly: true,
-    // The deployed web and game-server projects have different Vercel origins.
-    // Cross-origin fetches and Socket.IO handshakes therefore need a secure,
-    // cross-site cookie in production.
-    sameSite: isProduction ? 'none' : 'lax',
+    // The game service is mounted at /server on the same Vercel origin. A
+    // durable first-party cookie survives browser restarts without opening a
+    // cross-site credential channel.
+    sameSite: 'lax',
     secure: isProduction,
     path: '/',
+    maxAge: PLAYER_SESSION_MAX_AGE_MS,
   });
 }
 
@@ -144,6 +146,16 @@ function setPlayerSessionCookie(response: express.Response, accessToken: string)
 export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy(), basePath }: CreateAppDependencies) {
   const app = express();
   const routes = express.Router();
+
+  const findAuthenticatedHost = async (joinId: string, cookieHeader: unknown) => {
+    const player = await roomRepository.findPlayerByRoomJoinIdAndAccessToken(
+      joinId,
+      parseCookieHeader(cookieHeader).poker_player_token,
+    );
+    if (!player) return null;
+    const room = await roomRepository.findRoomByJoinId(joinId);
+    return room?.hostPlayerId === player.id ? player : null;
+  };
 
   app.use(createHttpCorsMiddleware(isOriginAllowed));
 
@@ -227,10 +239,9 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
 
   routes.post('/rooms/:joinId/start', async (request, response) => {
     try {
-      const accessToken = parseCookieHeader(request.headers.cookie).poker_player_token;
-      const player = await roomRepository.findPlayerByRoomJoinIdAndAccessToken(request.params.joinId, accessToken);
+      const player = await findAuthenticatedHost(request.params.joinId, request.headers.cookie);
       if (!player) {
-        response.status(401).json({ error: { code: 'UNAUTHORIZED' } });
+        response.status(403).json({ error: { code: 'HOST_FORBIDDEN' } });
         return;
       }
       await roomRepository.startGameForHostAtomically({ joinId: request.params.joinId, hostPlayerId: player.id });
@@ -241,6 +252,23 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
       // diagnosed without exposing database or snapshot details to players.
       console.error('Room start failed', error);
       response.status(409).json({ error: { code: 'ROOM_NOT_STARTABLE' } });
+    }
+  });
+
+  // The host pathname is a convenience URL only. This endpoint is available
+  // to route guards and always derives host authority from the opaque
+  // httpOnly player session plus the persisted room owner.
+  routes.get('/rooms/:joinId/host-access', async (request, response) => {
+    try {
+      const player = await findAuthenticatedHost(request.params.joinId, request.headers.cookie);
+      if (!player) {
+        response.status(403).json({ error: { code: 'HOST_FORBIDDEN' } });
+        return;
+      }
+      response.json({ joinId: request.params.joinId, isHost: true });
+    } catch {
+      console.error('Host access lookup failed');
+      response.status(500).json({ error: { code: 'INTERNAL_ERROR' } });
     }
   });
 
@@ -294,12 +322,9 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
 
   routes.post('/rooms/:joinId/game/next-hand', async (request, response) => {
     try {
-      const player = await roomRepository.findPlayerByRoomJoinIdAndAccessToken(
-        request.params.joinId,
-        parseCookieHeader(request.headers.cookie).poker_player_token,
-      );
+      const player = await findAuthenticatedHost(request.params.joinId, request.headers.cookie);
       if (!player) {
-        response.status(401).json({ error: { code: 'UNAUTHORIZED' } });
+        response.status(403).json({ error: { code: 'HOST_FORBIDDEN' } });
         return;
       }
       await roomRepository.startNextHandForHostAtomically({ joinId: request.params.joinId, hostPlayerId: player.id });
@@ -312,12 +337,9 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
 
   routes.post('/rooms/:joinId/game/runout/next', async (request, response) => {
     try {
-      const player = await roomRepository.findPlayerByRoomJoinIdAndAccessToken(
-        request.params.joinId,
-        parseCookieHeader(request.headers.cookie).poker_player_token,
-      );
+      const player = await findAuthenticatedHost(request.params.joinId, request.headers.cookie);
       if (!player) {
-        response.status(401).json({ error: { code: 'UNAUTHORIZED' } });
+        response.status(403).json({ error: { code: 'HOST_FORBIDDEN' } });
         return;
       }
       await roomRepository.advanceAllInRunoutForHostAtomically({ joinId: request.params.joinId, hostPlayerId: player.id });

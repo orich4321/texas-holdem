@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { io } from 'socket.io-client';
 
 declare const process: { env: { NODE_ENV?: string; NEXT_PUBLIC_GAME_URL?: string; NEXT_PUBLIC_SERVER_URL?: string } };
 
@@ -30,6 +31,7 @@ type PlayerView = {
   communityCards: readonly Card[];
   pot: number;
   toCall: number;
+  raise?: { minRaiseTo: number; maxRaiseTo: number; minimumIncrement: number };
   holeCards: readonly [Card, Card];
   seats: readonly { seatNumber: number; playerId: string; playerName: string; stack: number; currentBet: number; isFolded: boolean }[];
   exposedHands: readonly ExposedHand[];
@@ -75,6 +77,8 @@ function isPlayerView(value: unknown): value is PlayerView {
     && Array.isArray(view.holeCards) && view.holeCards.length === 2 && view.holeCards.every(isCard)
     && Array.isArray(view.seats)
     && Array.isArray(view.exposedHands) && view.exposedHands.every(isExposedHand)
+    && (view.raise === undefined || (view.raise !== null && typeof view.raise === 'object'
+      && ['minRaiseTo', 'maxRaiseTo', 'minimumIncrement'].every((key) => typeof (view.raise as Record<string, unknown>)[key] === 'number')))
     && (view.allInRunout === undefined || isAllInRunout(view.allInRunout));
 }
 
@@ -89,7 +93,7 @@ function PlayingCard({ card, hidden = false, placeholder = false }: { card?: Car
 export default function TableClient({ joinId, isHost }: { joinId: string; isHost: boolean }) {
   const [view, setView] = useState<PlayerView>();
   const [status, setStatus] = useState('מתחברים לשולחן…');
-  const [raiseTo, setRaiseTo] = useState('');
+  const [raiseTo, setRaiseTo] = useState<number>();
   const [pending, setPending] = useState(false);
   const [startingNextHand, setStartingNextHand] = useState(false);
   const [advancingRunout, setAdvancingRunout] = useState(false);
@@ -106,12 +110,55 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
         setView(next);
         setStatus(next.street === 'showdown' ? 'היד הסתיימה' : 'מחוברים לשולחן');
       } catch {
-        if (active) setStatus('החיבור לשולחן נכשל. מרעננים את הדף ומנסים שוב.');
+        if (active) setStatus('החיבור נותק זמנית — מתחברים מחדש…');
       }
     };
+
+    // Socket.IO is the low-latency path. The authenticated HTTP refresh below
+    // remains the recovery path for suspended mobile browsers and serverless
+    // environments where a WebSocket cannot stay open indefinitely.
+    const socketOptions = {
+      path: SERVER_URL.startsWith('http') ? '/socket.io' : '/server/socket.io',
+      withCredentials: true,
+      auth: { roomJoinId: joinId },
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 500,
+      reconnectionDelayMax: 10_000,
+      randomizationFactor: 0.35,
+      timeout: 8_000,
+    };
+    const socket = SERVER_URL.startsWith('http')
+      ? io(SERVER_URL, socketOptions)
+      : io(socketOptions);
+    socket.on('connect', () => { void refresh(); });
+    socket.on('game:state', (next: unknown) => {
+      if (!active || !isPlayerView(next)) return;
+      setView(next);
+      setStatus(next.street === 'showdown' ? 'היד הסתיימה' : 'מחוברים לשולחן');
+    });
+    socket.on('game:error', () => { void refresh(); });
+    socket.on('disconnect', () => {
+      if (active) setStatus('החיבור נותק זמנית — מתחברים מחדש…');
+    });
+
+    const restoreAfterResume = () => { void refresh(); };
+    const onVisibilityChange = () => {
+      if (globalThis.document.visibilityState === 'visible') restoreAfterResume();
+    };
     void refresh();
-    const timer = globalThis.setInterval(() => { void refresh(); }, 1_000);
-    return () => { active = false; globalThis.clearInterval(timer); };
+    const timer = globalThis.setInterval(() => { void refresh(); }, 3_000);
+    globalThis.addEventListener('focus', restoreAfterResume);
+    globalThis.addEventListener('online', restoreAfterResume);
+    globalThis.document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      active = false;
+      socket.close();
+      globalThis.clearInterval(timer);
+      globalThis.removeEventListener('focus', restoreAfterResume);
+      globalThis.removeEventListener('online', restoreAfterResume);
+      globalThis.document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
   }, [joinId]);
 
   const ownSeat = useMemo(() => view?.seats.find((seat) => seat.playerId === view.playerId), [view]);
@@ -123,8 +170,17 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   }, [view]);
   const isTurn = Boolean(view && ownSeat && view.currentActorSeat === ownSeat.seatNumber && view.street !== 'showdown' && !view.allInRunout);
   const activeSeat = view?.seats.find((seat) => seat.seatNumber === view.currentActorSeat);
-  const suggestedRaise = view && ownSeat ? ownSeat.currentBet + view.toCall + 10 : 0;
   const exposedBySeat = useMemo(() => new Map(view?.exposedHands.map((hand) => [hand.seatNumber, hand])), [view]);
+
+  useEffect(() => {
+    if (!view?.raise) {
+      setRaiseTo(undefined);
+      return;
+    }
+    setRaiseTo((current) => current !== undefined && current >= view.raise!.minRaiseTo && current <= view.raise!.maxRaiseTo
+      ? current
+      : view.raise!.minRaiseTo);
+  }, [view?.raise?.minRaiseTo, view?.raise?.maxRaiseTo]);
 
   async function act(action: PlayerAction) {
     if (!isTurn || pending) return;
@@ -148,12 +204,15 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   }
 
   function submitRaise() {
-    const amount = Number(raiseTo || suggestedRaise);
-    if (!Number.isSafeInteger(amount) || amount < 0) {
-      setStatus('צריך להזין סכום העלאה שלם וחיובי.');
-      return;
-    }
-    void act({ type: 'raise', raiseTo: amount });
+    if (!view?.raise || raiseTo === undefined) return;
+    void act({ type: 'raise', raiseTo });
+  }
+
+  function selectQuickRaise(fraction: number) {
+    if (!view?.raise || !ownSeat) return;
+    const afterCalling = ownSeat.currentBet + view.toCall;
+    const target = afterCalling + Math.ceil(view.pot * fraction);
+    setRaiseTo(Math.max(view.raise.minRaiseTo, Math.min(view.raise.maxRaiseTo, target)));
   }
 
   async function startNextHand() {
@@ -254,7 +313,27 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
           <button type="button" className="action-fold" disabled={pending} onClick={() => void act({ type: 'fold' })}><span aria-hidden="true">✕</span> פרישה</button>
           <button type="button" className="action-primary" disabled={pending} onClick={() => void act(view.toCall === 0 ? { type: 'check' } : { type: 'call' })}><span aria-hidden="true">✓</span> {view.toCall === 0 ? 'צ׳ק' : `השוואה · ${view.toCall.toLocaleString('he-IL')}`}</button>
           <button type="button" className="action-all-in" disabled={pending} onClick={() => void act({ type: 'all-in' })}><span aria-hidden="true">⚡</span> אול אין</button>
-          <label className="raise-control"><span>העלאה עד</span><input aria-label="סכום העלאה" inputMode="numeric" value={raiseTo} onChange={(event) => setRaiseTo(event.target.value)} placeholder={String(suggestedRaise)} disabled={pending} /><button type="button" disabled={pending} onClick={submitRaise}><span aria-hidden="true">+</span> העלו</button></label>
+          {view.raise ? <div className="raise-control" aria-label="בחירת סכום העלאה">
+            <div className="raise-amount"><span>העלאה עד</span><strong>{(raiseTo ?? view.raise.minRaiseTo).toLocaleString('he-IL')}</strong><small>צ׳יפים</small></div>
+            <input
+              type="range"
+              aria-label="בחירת סכום העלאה"
+              min={view.raise.minRaiseTo}
+              max={view.raise.maxRaiseTo}
+              step={1}
+              value={raiseTo ?? view.raise.minRaiseTo}
+              onChange={(event) => setRaiseTo(Number(event.target.value))}
+              disabled={pending}
+            />
+            <div className="raise-bounds"><span>{view.raise.minRaiseTo.toLocaleString('he-IL')}</span><span>אול אין {view.raise.maxRaiseTo.toLocaleString('he-IL')}</span></div>
+            <div className="raise-quick-actions" aria-label="סכומי העלאה מהירים">
+              <button type="button" disabled={pending} onClick={() => selectQuickRaise(0.5)}>½ קופה</button>
+              <button type="button" disabled={pending} onClick={() => selectQuickRaise(0.75)}>¾ קופה</button>
+              <button type="button" disabled={pending} onClick={() => selectQuickRaise(1)}>קופה</button>
+              <button type="button" disabled={pending} onClick={() => setRaiseTo(view.raise!.maxRaiseTo)}>אול אין</button>
+            </div>
+            <button type="button" className="raise-submit" disabled={pending} onClick={submitRaise}><span aria-hidden="true">+</span> העלאה לסכום שנבחר</button>
+          </div> : null}
         </div> : null}
         {view.allInRunout ? <div className="all-in-runout-panel" role="status">
           <div><span aria-hidden="true">⚡</span><p><strong>כולם באול אין</strong><small>הקלפים של המשתתפים פתוחים. המארח חושף את {streetNames[view.allInRunout.nextStreet]}.</small></p></div>

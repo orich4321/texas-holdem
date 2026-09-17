@@ -20,8 +20,10 @@ test('server lifecycle starts only through the server CSPRNG boundary and expose
   assert.equal(view.playerId, 'ada');
   assert.equal(view.holeCards.length, 2);
   assert.equal(view.seats.length, 3);
+  assert.deepEqual(view.raise, { minRaiseTo: 20, maxRaiseTo: 100, minimumIncrement: 10 });
   assert.equal(JSON.stringify(view).includes('holeCards'), true);
   assert.equal(JSON.stringify(view).match(/"holeCards"/g).length, 1);
+  assert.equal(game.viewFor('ben').raise, undefined, 'only the active authenticated player receives legal raise bounds');
   assert.throws(() => game.viewFor('outsider'), /not seated/i);
 });
 
