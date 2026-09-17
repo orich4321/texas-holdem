@@ -4,10 +4,11 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "build": "pnpm --dir ../.. --filter @texas-holdem/poker-core build && prisma generate --schema prisma/schema.prisma && prisma migrate deploy --schema prisma/schema.prisma && tsc --noEmit",
+    "build": "pnpm --dir ../.. --filter @texas-holdem/poker-core build && prisma generate --schema prisma/schema.prisma && tsc --noEmit",
     "dev": "tsx --conditions=development watch --env-file=../../.env src/index.ts",
     "start": "tsx --env-file=../../.env src/index.ts",
     "prisma:generate": "prisma generate --schema prisma/schema.prisma",
+    "prisma:migrate:deploy": "prisma migrate deploy --schema prisma/schema.prisma",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
