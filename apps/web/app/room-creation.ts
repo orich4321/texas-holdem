@@ -1,6 +1,7 @@
 declare const process: { env: { NEXT_PUBLIC_GAME_URL?: string; NEXT_PUBLIC_SERVER_URL?: string } };
 
-const INITIAL_STACK = 1000;
+export type RoomSettings = Readonly<{ initialStack: number; smallBlind: number; bigBlind: number; maxPlayers: number }>;
+export const DEFAULT_ROOM_SETTINGS: RoomSettings = Object.freeze({ initialStack: 1000, smallBlind: 5, bigBlind: 10, maxPlayers: 6 });
 // NEXT_PUBLIC_SERVER_URL is set to `/server` for the unified Vercel
 // deployment. Prefer it over Vercel's generated service URL, whose public
 // route need not match this application's rewrite prefix.
@@ -37,6 +38,7 @@ function hasMatchingHostRoom(payload: unknown): payload is { roomId: string; hos
 export async function submitRoomCreation(
   nickname: string,
   boundaries: RoomCreationBoundaries,
+  settings: RoomSettings = DEFAULT_ROOM_SETTINGS,
 ): Promise<RoomCreationResult> {
   const displayName = nickname.trim();
   if (!displayName) return { ok: false, message: EMPTY_NICKNAME_MESSAGE };
@@ -46,7 +48,7 @@ export async function submitRoomCreation(
       method: 'POST',
       credentials: 'include',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ displayName, initialStack: INITIAL_STACK }),
+      body: JSON.stringify({ displayName, ...settings }),
     });
     if (response.status !== 201) return { ok: false, message: CREATION_ERROR_MESSAGE };
 

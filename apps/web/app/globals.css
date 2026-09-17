@@ -30,7 +30,8 @@ body {
 }
 
 button,
-input {
+input,
+select {
   font: inherit;
 }
 
@@ -207,6 +208,8 @@ input {
   border-color: var(--gold);
   box-shadow: 0 0 0 3px rgba(232, 185, 93, 0.18);
 }
+
+.game-settings { display: grid; margin: 8px 0 2px; padding: 13px; border: 1px solid rgba(232,185,93,.18); border-radius: 14px; gap: 9px; }.game-settings legend { padding-inline: 5px; color: var(--gold); font-size: .78rem; font-weight: 800; }.game-settings label { display: grid; gap: 5px; color: #d9d8d0; font-size: .75rem; }.game-settings input, .game-settings select { width: 100%; min-height: 38px; padding: 0 10px; border: 1px solid rgba(255,255,255,.13); border-radius: 9px; color: var(--ink); background: rgba(255,255,255,.055); }.game-settings-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }.game-settings small { color: #aaa99f; font-size: .7rem; line-height: 1.45; }
 
 .host-form button {
   height: 54px;

@@ -187,7 +187,7 @@ test('POST /rooms/:joinId/join creates a non-host player with a private session 
   assert.equal(room?.hostPlayerId, room?.players[0]?.id);
   assert.deepEqual(room?.players.map(({ displayName, initialStack, currentStack }) => ({ displayName, initialStack, currentStack })), [
     { displayName: 'Host', initialStack: 800, currentStack: 800 },
-    { displayName: 'Guest', initialStack: 400, currentStack: 400 },
+    { displayName: 'Guest', initialStack: 800, currentStack: 800 },
   ]);
   assert.notEqual(room?.hostPlayerId, room?.players[1]?.id);
   const guestToken = guestCookie.match(/^poker_player_token=([^;]+)/)?.[1];
@@ -239,7 +239,7 @@ test('POST /rooms/:joinId/join returns stable generic errors for invalid input, 
 
   const created = await postRoom({ displayName: 'Host', initialStack: 800 });
   const { roomId } = await created.json();
-  for (const invalidBody of [{}, { displayName: ' ', initialStack: 400 }, { displayName: 'Guest', initialStack: 1.5 }]) {
+  for (const invalidBody of [{}, { displayName: ' ', initialStack: 400 }, { displayName: 123 }]) {
     const invalid = await postJoin(roomId, invalidBody);
     assert.equal(invalid.status, 400);
     assert.deepEqual(await invalid.json(), { error: { code: 'INVALID_REQUEST' } });
@@ -283,9 +283,9 @@ test('GET /rooms/:joinId exposes a player-safe waiting-room lobby projection', {
   const lobby = await globalThis.fetch(`${baseUrl}/rooms/${roomId}`);
   assert.equal(lobby.status, 200);
   const result = await lobby.json();
-  assert.deepEqual(result, { joinId: roomId, status: 'WAITING', isHost: false, isParticipant: false, canStart: false, host: { displayName: 'Host' }, players: [
+  assert.deepEqual(result, { joinId: roomId, status: 'WAITING', isHost: false, isParticipant: false, canStart: false, settings: { initialStack: 800, smallBlind: 5, bigBlind: 10, maxPlayers: 9 }, host: { displayName: 'Host' }, players: [
     { displayName: 'Host', initialStack: 800, currentStack: 800 },
-    { displayName: 'Guest', initialStack: 400, currentStack: 400 },
+    { displayName: 'Guest', initialStack: 800, currentStack: 800 },
   ] });
   assert.equal(JSON.stringify(result).includes('accessToken'), false);
 

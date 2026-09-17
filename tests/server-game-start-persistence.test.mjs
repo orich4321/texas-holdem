@@ -6,7 +6,7 @@ import { RoomRepository } from '../apps/server/src/persistence/room-repository.t
 import { startHand } from '../packages/poker-core/src/index.ts';
 import { hydrateSignedPrivateHandSnapshot, signPrivateHandSnapshot } from '../apps/server/src/persistence/private-hand-snapshot.ts';
 
-const room = { id: 'room-db-id', joinId: '0123456789abcdef', hostPlayerId: 'host-id', status: 'WAITING' };
+const room = { id: 'room-db-id', joinId: '0123456789abcdef', hostPlayerId: 'host-id', status: 'WAITING', smallBlind: 5, bigBlind: 10 };
 const snapshotKey = Buffer.from('a server-only snapshot signing key with adequate length', 'utf8');
 const snapshotKeyId = 'test-current';
 const snapshotKeyring = new Map([[snapshotKeyId, snapshotKey]]);

@@ -1,7 +1,6 @@
 declare const process: { env: { NEXT_PUBLIC_GAME_URL?: string; NEXT_PUBLIC_SERVER_URL?: string } };
 
 const SERVER_URL = process.env.NEXT_PUBLIC_SERVER_URL ?? process.env.NEXT_PUBLIC_GAME_URL ?? 'http://localhost:3001';
-const INITIAL_STACK = 1000;
 
 export const EMPTY_NICKNAME_MESSAGE = 'צריך להזין כינוי כדי להצטרף.';
 export const LOBBY_LOAD_ERROR_MESSAGE = 'לא הצלחנו לטעון את החדר. נסו שוב.';
@@ -14,6 +13,7 @@ export type Lobby = {
   isHost: boolean;
   isParticipant: boolean;
   canStart: boolean;
+  settings: { initialStack: number; smallBlind: number; bigBlind: number; maxPlayers: number };
   host: { displayName: string };
   players: Array<{ displayName: string; initialStack: number; currentStack: number }>;
 };
@@ -39,6 +39,8 @@ function isLobby(value: unknown, expectedJoinId: string): value is Lobby {
     && typeof lobby.isHost === 'boolean'
     && typeof lobby.isParticipant === 'boolean'
     && typeof lobby.canStart === 'boolean'
+    && lobby.settings !== null && typeof lobby.settings === 'object'
+    && ['initialStack', 'smallBlind', 'bigBlind', 'maxPlayers'].every((key) => typeof (lobby.settings as Record<string, unknown>)[key] === 'number')
     && lobby.host !== null
     && typeof lobby.host === 'object'
     && typeof (lobby.host as Record<string, unknown>).displayName === 'string'
@@ -101,7 +103,7 @@ export async function joinLobby(
       method: 'POST',
       credentials: 'include',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ displayName, initialStack: INITIAL_STACK }),
+      body: JSON.stringify({ displayName }),
     });
     if (response.status === 201) return { ok: true };
     if (response.status === 409) return { ok: false, message: ROOM_FULL_MESSAGE };

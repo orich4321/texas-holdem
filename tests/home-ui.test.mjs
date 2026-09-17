@@ -89,7 +89,7 @@ test('home typography rules are scoped and use logical alignment', async () => {
   assert.doesNotMatch(styles, /text-align:\s*right/);
 });
 
-test('room creation posts the normalized nickname and fixed MVP stack before navigating to the matching host route', async () => {
+test('room creation posts the normalized nickname and host-selected table settings before navigating to the matching host route', async () => {
   const { submitRoomCreation } = await roomCreation();
   const requests = [];
   const destinations = [];
@@ -111,7 +111,7 @@ test('room creation posts the normalized nickname and fixed MVP stack before nav
       method: 'POST',
       credentials: 'include',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ displayName: 'אורי', initialStack: 1000 }),
+      body: JSON.stringify({ displayName: 'אורי', initialStack: 1000, smallBlind: 5, bigBlind: 10, maxPlayers: 6 }),
     },
   ]]);
   assert.deepEqual(destinations, ['/r/abc123/host']);

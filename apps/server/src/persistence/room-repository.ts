@@ -24,16 +24,24 @@ type PlayerInput = {
   initialStack: number;
 };
 
+export type RoomGameSettings = Readonly<{
+  initialStack: number;
+  smallBlind: number;
+  bigBlind: number;
+  maxPlayers: number;
+}>;
+
 type CreateRoomInput = {
   status: RoomStatus;
   host: PlayerInput;
   players?: PlayerInput[];
+  settings?: RoomGameSettings;
 };
 
 type PlayerWriter = Pick<PrismaClient, 'player'>;
 
 const MAX_ACCESS_TOKEN_ATTEMPTS = 5;
-const MAX_ROOM_PLAYERS = 9;
+const DEFAULT_ROOM_SETTINGS: RoomGameSettings = Object.freeze({ initialStack: 1000, smallBlind: 5, bigBlind: 10, maxPlayers: 9 });
 
 function isAccessTokenHashCollision(error: unknown): boolean {
   if (error === null || typeof error !== 'object' || !('code' in error) || error.code !== 'P2002') return false;
@@ -94,9 +102,6 @@ export type StartNextHandForHostInput = Readonly<{
   /** Derived exclusively from the authenticated host session. */
   hostPlayerId: string;
 }>;
-
-const DEFAULT_SMALL_BLIND = 5;
-const DEFAULT_BIG_BLIND = 10;
 
 function isBoundInitialPrivateSnapshot(snapshot: SignedPrivateHandSnapshot, roomId: string): boolean {
   return snapshot.version === 1
@@ -159,10 +164,10 @@ export class RoomRepository {
     throw new Error('Unable to create player access token');
   }
 
-  async createRoom({ status, host, players = [] }: CreateRoomInput) {
+  async createRoom({ status, host, players = [], settings = DEFAULT_ROOM_SETTINGS }: CreateRoomInput) {
     return this.db.$transaction(async (tx) => {
       const room = await tx.room.create({
-        data: { id: randomUUID(), joinId: this.createJoinId(), status },
+        data: { id: randomUUID(), joinId: this.createJoinId(), status, ...settings },
       });
       const persistedHost = await this.createPlayerWithUniqueAccessToken(tx, host, room.id);
       await Promise.all(players.map((player) => this.createPlayerWithUniqueAccessToken(tx, player, room.id)));
@@ -175,7 +180,7 @@ export class RoomRepository {
     });
   }
 
-  async joinWaitingRoom(joinId: string, player: PlayerInput) {
+  async joinWaitingRoom(joinId: string, player: Omit<PlayerInput, 'initialStack'>) {
     return this.db.$transaction(async (tx) => {
       const room = await tx.room.findUnique({ where: { joinId } });
       if (!room) return { kind: 'not-found' as const };
@@ -186,9 +191,9 @@ export class RoomRepository {
       if (lockedRoom.count !== 1) return { kind: 'not-joinable' as const };
 
       const playerCount = await tx.player.count({ where: { roomId: room.id } });
-      if (playerCount >= MAX_ROOM_PLAYERS) return { kind: 'full' as const };
+      if (playerCount >= room.maxPlayers) return { kind: 'full' as const };
 
-      const createdPlayer = await this.createPlayerWithUniqueAccessToken(tx, player, room.id);
+      const createdPlayer = await this.createPlayerWithUniqueAccessToken(tx, { ...player, initialStack: room.initialStack }, room.id);
       const persistedRoom = await tx.room.findUniqueOrThrow({
         where: { id: room.id },
         include: roomWithPlayers,
@@ -296,6 +301,8 @@ export class RoomRepository {
           hostPlayerId: true,
           status: true,
           players: { orderBy: { createdAt: 'asc' }, select: { id: true, currentStack: true } },
+          smallBlind: true,
+          bigBlind: true,
         },
       });
       if (!room || room.hostPlayerId !== hostPlayerId || room.status !== 'WAITING' || room.players.length < 2) {
@@ -317,8 +324,8 @@ export class RoomRepository {
           stack: player.currentStack,
         })),
         dealerSeat: 1,
-        smallBlind: DEFAULT_SMALL_BLIND,
-        bigBlind: DEFAULT_BIG_BLIND,
+        smallBlind: room.smallBlind,
+        bigBlind: room.bigBlind,
       });
       const sequence = 0;
       const event = Object.freeze({

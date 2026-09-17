@@ -7,7 +7,14 @@ import { parseCookieHeader } from './socket-session.js';
 
 const MAX_REQUEST_BODY_SIZE = '16kb';
 const MAX_DISPLAY_NAME_CODE_POINTS = 24;
+const MIN_INITIAL_STACK = 100;
 const MAX_INITIAL_STACK = 1_000_000;
+const MAX_BLIND = 100_000;
+const MIN_ROOM_PLAYERS = 2;
+const MAX_ROOM_PLAYERS = 9;
+const DEFAULT_SMALL_BLIND = 5;
+const DEFAULT_BIG_BLIND = 10;
+const DEFAULT_MAX_PLAYERS = 9;
 
 type OriginPolicy = (origin: string | undefined) => boolean;
 
@@ -25,30 +32,48 @@ type CreateAppDependencies = {
 type CreateRoomRequest = {
   displayName?: unknown;
   initialStack?: unknown;
+  smallBlind?: unknown;
+  bigBlind?: unknown;
+  maxPlayers?: unknown;
 };
 
 type ValidatedRoomInput = {
   displayName: string;
   initialStack: number;
+  smallBlind: number;
+  bigBlind: number;
+  maxPlayers: number;
 };
 
-function validateCreateRoomInput(body: unknown): ValidatedRoomInput | undefined {
+function validateDisplayName(body: unknown): string | undefined {
   if (body === null || typeof body !== 'object' || Array.isArray(body)) return undefined;
-
-  const { displayName, initialStack } = body as CreateRoomRequest;
-  if (typeof displayName !== 'string' || typeof initialStack !== 'number' || !Number.isSafeInteger(initialStack)) return undefined;
-
+  const { displayName } = body as CreateRoomRequest;
+  if (typeof displayName !== 'string') return undefined;
   const normalizedDisplayName = displayName.trim();
-  if (
-    normalizedDisplayName.length === 0
-    || Array.from(normalizedDisplayName).length > MAX_DISPLAY_NAME_CODE_POINTS
-    || initialStack <= 0
-    || initialStack > MAX_INITIAL_STACK
-  ) {
-    return undefined;
-  }
+  return normalizedDisplayName.length > 0 && Array.from(normalizedDisplayName).length <= MAX_DISPLAY_NAME_CODE_POINTS
+    ? normalizedDisplayName
+    : undefined;
+}
 
-  return { displayName: normalizedDisplayName, initialStack };
+function validateCreateRoomInput(body: unknown): ValidatedRoomInput | undefined {
+  const displayName = validateDisplayName(body);
+  if (!displayName) return undefined;
+  const { initialStack, smallBlind = DEFAULT_SMALL_BLIND, bigBlind = DEFAULT_BIG_BLIND, maxPlayers = DEFAULT_MAX_PLAYERS } = body as CreateRoomRequest;
+  if (![initialStack, smallBlind, bigBlind, maxPlayers].every(Number.isSafeInteger)) return undefined;
+  if (
+    (initialStack as number) < MIN_INITIAL_STACK || (initialStack as number) > MAX_INITIAL_STACK
+    || (smallBlind as number) < 1 || (smallBlind as number) > MAX_BLIND
+    || (bigBlind as number) <= (smallBlind as number) || (bigBlind as number) > MAX_BLIND
+    || (initialStack as number) < (bigBlind as number)
+    || (maxPlayers as number) < MIN_ROOM_PLAYERS || (maxPlayers as number) > MAX_ROOM_PLAYERS
+  ) return undefined;
+
+  return { displayName, initialStack: initialStack as number, smallBlind: smallBlind as number, bigBlind: bigBlind as number, maxPlayers: maxPlayers as number };
+}
+
+function validateJoinRoomInput(body: unknown): { displayName: string } | undefined {
+  const displayName = validateDisplayName(body);
+  return displayName ? { displayName } : undefined;
 }
 
 function validatePlayerAction(body: unknown): PlayerAction | undefined {
@@ -140,7 +165,8 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
     try {
       const room = await roomRepository.createRoom({
         status: 'WAITING',
-        host: { id: randomUUID(), ...input },
+        host: { id: randomUUID(), displayName: input.displayName, initialStack: input.initialStack },
+        settings: { initialStack: input.initialStack, smallBlind: input.smallBlind, bigBlind: input.bigBlind, maxPlayers: input.maxPlayers },
       });
       setPlayerSessionCookie(response, room.hostAccessToken);
       response.status(201).json({
@@ -157,7 +183,7 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
   });
 
   routes.post('/rooms/:joinId/join', async (request, response) => {
-    const input = validateCreateRoomInput(request.body);
+    const input = validateJoinRoomInput(request.body);
     if (!input) {
       response.status(400).json({ error: { code: 'INVALID_REQUEST' } });
       return;
@@ -309,6 +335,12 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
         canStart: room.status === 'WAITING'
           && room.players.length >= 2
           && isHost,
+        settings: {
+          initialStack: room.initialStack,
+          smallBlind: room.smallBlind,
+          bigBlind: room.bigBlind,
+          maxPlayers: room.maxPlayers,
+        },
         host: { displayName: host.displayName },
         players: room.players.map(({ displayName, initialStack, currentStack }) => ({ displayName, initialStack, currentStack })),
       });

@@ -17,6 +17,10 @@ model Room {
   id           String     @id @default(uuid()) @db.Uuid
   joinId       String     @unique
   status       RoomStatus @default(WAITING)
+  initialStack Int        @default(1000)
+  smallBlind   Int        @default(5)
+  bigBlind     Int        @default(10)
+  maxPlayers   Int        @default(9)
   hostPlayerId String?    @db.Uuid
   hostPlayer   Player?    @relation("RoomHost", fields: [id, hostPlayerId], references: [roomId, id], onDelete: Restrict)
   players      Player[]   @relation("RoomPlayers")

@@ -1,10 +1,11 @@
 'use client';
 
 import { type FormEvent, useState } from 'react';
-import { EMPTY_NICKNAME_MESSAGE, submitRoomCreation } from './room-creation';
+import { DEFAULT_ROOM_SETTINGS, EMPTY_NICKNAME_MESSAGE, submitRoomCreation, type RoomSettings } from './room-creation';
 
 export default function HomePage() {
   const [nickname, setNickname] = useState('');
+  const [settings, setSettings] = useState<RoomSettings>(DEFAULT_ROOM_SETTINGS);
   const [pending, setPending] = useState(false);
   const [status, setStatus] = useState<string>();
 
@@ -17,6 +18,10 @@ export default function HomePage() {
       setStatus(EMPTY_NICKNAME_MESSAGE);
       return;
     }
+    if (!Number.isSafeInteger(settings.initialStack) || settings.initialStack < 100 || !Number.isSafeInteger(settings.smallBlind) || !Number.isSafeInteger(settings.bigBlind) || settings.smallBlind < 1 || settings.bigBlind <= settings.smallBlind || settings.initialStack < settings.bigBlind) {
+      setStatus('בדקו את ערימת הפתיחה ואת גובה הבליינדים.');
+      return;
+    }
 
     setPending(true);
     const result = await submitRoomCreation(nickname, {
@@ -25,7 +30,7 @@ export default function HomePage() {
       // Chromium rejects before any network request is made.
       fetch: (...args) => globalThis.fetch(...args),
       navigate: (destination) => globalThis.location.assign(destination),
-    });
+    }, settings);
 
     if (!result.ok) setStatus(result.message);
     setPending(false);
@@ -62,6 +67,16 @@ export default function HomePage() {
             disabled={pending}
             aria-describedby={status ? 'host-status' : undefined}
           />
+          <fieldset className="game-settings" disabled={pending}>
+            <legend>הגדרות השולחן</legend>
+            <label>צ׳יפים לכל שחקן<input inputMode="numeric" type="number" min="100" max="1000000" value={settings.initialStack} onChange={(event) => setSettings((current) => ({ ...current, initialStack: Number(event.target.value) }))} /></label>
+            <div className="game-settings-row">
+              <label>סמול בליינד<input inputMode="numeric" type="number" min="1" max="100000" value={settings.smallBlind} onChange={(event) => setSettings((current) => ({ ...current, smallBlind: Number(event.target.value) }))} /></label>
+              <label>ביג בליינד<input inputMode="numeric" type="number" min="2" max="100000" value={settings.bigBlind} onChange={(event) => setSettings((current) => ({ ...current, bigBlind: Number(event.target.value) }))} /></label>
+            </div>
+              <label>מספר שחקנים מרבי<select value={settings.maxPlayers} onChange={(event) => setSettings((current) => ({ ...current, maxPlayers: Number(event.target.value) }))}>{[2, 3, 4, 5, 6, 7, 8, 9].map((count) => <option key={count} value={count}>{count} שחקנים</option>)}</select></label>
+            <small>כל מי שמצטרף מקבל את אותה ערימת פתיחה.</small>
+          </fieldset>
           <button type="submit" disabled={pending}>
             {pending ? 'פותחים חדר…' : 'פתח חדר'}
           </button>

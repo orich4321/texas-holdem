@@ -25,6 +25,7 @@ test('lobby request loads a validated public waiting-room projection with browse
     isHost: false,
     isParticipant: false,
     canStart: false,
+    settings: { initialStack: 1000, smallBlind: 5, bigBlind: 10, maxPlayers: 6 },
     host: { displayName: 'אורי' },
     players: [{ displayName: 'אורי', initialStack: 1000, currentStack: 1000 }],
   };
@@ -50,10 +51,10 @@ test('lobby request hides backend details for malformed, rejected, and network r
     async () => ({ status: 500, json: async () => ({ error: privateDetail }) }),
     async () => ({ status: 200, json: async () => ({ joinId: 'abc', players: [] }) }),
     async () => ({ status: 200, json: async () => ({
-      joinId: 'another-room', status: 'WAITING', isHost: false, isParticipant: false, canStart: false, host: { displayName: 'אורי' }, players: [],
+      joinId: 'another-room', status: 'WAITING', isHost: false, isParticipant: false, canStart: false, settings: { initialStack: 1000, smallBlind: 5, bigBlind: 10, maxPlayers: 6 }, host: { displayName: 'אורי' }, players: [],
     }) }),
     async () => ({ status: 200, json: async () => ({
-      joinId: 'abc123', status: 'WAITING', isHost: false, isParticipant: false, canStart: false, host: { displayName: 'אורי' },
+      joinId: 'abc123', status: 'WAITING', isHost: false, isParticipant: false, canStart: false, settings: { initialStack: 1000, smallBlind: 5, bigBlind: 10, maxPlayers: 6 }, host: { displayName: 'אורי' },
       players: Array.from({ length: 10 }, () => ({ displayName: 'שחקן', initialStack: 1000, currentStack: 1000 })),
     }) }),
     async () => { throw new Error(privateDetail); },
@@ -66,7 +67,7 @@ test('lobby request hides backend details for malformed, rejected, and network r
   }
 });
 
-test('joining posts a normalized nickname and fixed stack with browser cookies', async () => {
+test('joining posts only a normalized nickname because the room assigns its configured stack', async () => {
   const { joinLobby } = await lobbyApi();
   const requests = [];
 
@@ -83,7 +84,7 @@ test('joining posts a normalized nickname and fixed stack with browser cookies',
       method: 'POST',
       credentials: 'include',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ displayName: 'נועה', initialStack: 1000 }),
+      body: JSON.stringify({ displayName: 'נועה' }),
     },
   ]]);
   assert.deepEqual(result, { ok: true });

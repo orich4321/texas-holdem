@@ -134,7 +134,7 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
         <section className="lobby-roster" aria-labelledby="roster-title">
           <div className="lobby-roster-heading">
             <h2 id="roster-title">השחקנים בשולחן</h2>
-            <span aria-label={`${lobby.players.length} מתוך 9 שחקנים`}>{lobby.players.length}<b>/9</b></span>
+            <span aria-label={`${lobby.players.length} מתוך ${lobby.settings.maxPlayers} שחקנים`}>{lobby.players.length}<b>/{lobby.settings.maxPlayers}</b></span>
           </div>
           <ul>
             {lobby.players.map((player, index) => (
@@ -145,6 +145,12 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
               </li>
             ))}
           </ul>
+        </section>
+
+        <section className="lobby-settings" aria-label="הגדרות המשחק">
+          <span>הגדרות המארח</span>
+          <strong>{lobby.settings.initialStack.toLocaleString('he-IL')} צ׳יפים</strong>
+          <small>בליינדים {lobby.settings.smallBlind}/{lobby.settings.bigBlind}</small>
         </section>
 
         <div className="lobby-share">
