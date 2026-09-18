@@ -290,7 +290,10 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
     const clientActionId = globalThis.crypto.randomUUID();
     try {
       const socket = socketRef.current;
-      if (socket?.connected) {
+      // A standalone game server can acknowledge actions over Socket.IO.
+      // On the same-origin Vercel deployment, send the authoritative HTTP
+      // request immediately instead of paying a WebSocket timeout first.
+      if (SERVER_URL.startsWith('http') && socket?.connected) {
         const acknowledged = await new Promise<PlayerView | undefined>((resolve) => {
           const timeout = globalThis.setTimeout(() => resolve(undefined), 1_200);
           socket.emit('game:action', { clientActionId, action }, (result: unknown) => {
