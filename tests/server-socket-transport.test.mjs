@@ -56,8 +56,9 @@ test('socket transport restores and fans out each player’s own view without br
       return { id: 'player-1', roomId: 'db-room-1', displayName: 'אורי' };
     },
     async recoverLatestPlayerViewForPlayer(_roomId, playerId) { return views.find((view) => view.playerId === playerId) ?? null; },
-    async persistPlayerActionAtomically({ roomId, playerId, action }) {
+    async persistPlayerActionAtomically({ roomId, playerId, action, clientActionId }) {
       assert.deepEqual({ roomId, playerId, action }, { roomId: 'db-room-1', playerId: 'player-1', action: { type: 'call' } });
+      if (clientActionId !== undefined) assert.equal(clientActionId, '018f7b16-690c-4d1f-9d0b-a8c4a14ae999');
       return { sequence: 1, views };
     },
   };
@@ -84,6 +85,11 @@ test('socket transport restores and fans out each player’s own view without br
   await new Promise((resolve) => setImmediate(resolve));
   assert.deepEqual(socket.emitted.at(-1), ['game:state', views[0]]);
   assert.equal(JSON.stringify(socket.emitted).includes('hearts'), false);
+
+  let acknowledgement;
+  handlers['game:action']({ clientActionId: '018f7b16-690c-4d1f-9d0b-a8c4a14ae999', action: { type: 'call' } }, (result) => { acknowledgement = result; });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(acknowledgement, { ok: true, view: views[0] });
 });
 
 test('a reconnect authenticates the same durable player session and restores that player’s current view', async () => {

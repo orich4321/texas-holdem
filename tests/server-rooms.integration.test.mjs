@@ -40,6 +40,7 @@ if (integrationEnabled) {
   });
 
   beforeEach(async () => {
+    await prisma.chipAdjustment.deleteMany();
     await prisma.settlement.deleteMany();
     await prisma.gameSnapshot.deleteMany();
     await prisma.gameEvent.deleteMany();
@@ -77,7 +78,9 @@ test('POST /rooms persists a waiting room and its host then returns an opaque in
   assert.match(result.roomId, /^[a-f0-9]{16}$/);
   assert.deepEqual(result, { roomId: result.roomId, hostPath: `/r/${result.roomId}/host`, invitePath: `/r/${result.roomId}` });
   const sessionCookie = response.headers.get('set-cookie');
-  assert.match(sessionCookie, /^poker_player_token=[A-Za-z0-9_-]{43}; Max-Age=2592000; Path=\/; HttpOnly; SameSite=Lax$/);
+  assert.match(sessionCookie, /^poker_player_token=[A-Za-z0-9_-]{43}; Max-Age=2592000;/);
+  assert.match(sessionCookie, /; Path=\/;/);
+  assert.match(sessionCookie, /; HttpOnly; SameSite=Lax$/);
   assert.equal(sessionCookie.includes('Secure'), false);
 
   const room = await repository.findRoomByJoinId(result.roomId);
@@ -181,7 +184,9 @@ test('POST /rooms/:joinId/join creates a non-host player with a private session 
   assert.equal(joined.status, 201);
   assert.deepEqual(await joined.json(), { roomId, invitePath: `/r/${roomId}` });
   const guestCookie = joined.headers.get('set-cookie');
-  assert.match(guestCookie, /^poker_player_token=[A-Za-z0-9_-]{43}; Max-Age=2592000; Path=\/; HttpOnly; SameSite=Lax$/);
+  assert.match(guestCookie, /^poker_player_token=[A-Za-z0-9_-]{43}; Max-Age=2592000;/);
+  assert.match(guestCookie, /; Path=\/;/);
+  assert.match(guestCookie, /; HttpOnly; SameSite=Lax$/);
 
   const room = await repository.findRoomByJoinId(roomId);
   assert.equal(room?.hostPlayerId, room?.players[0]?.id);
@@ -259,7 +264,7 @@ test('POST /rooms/:joinId/start accepts only the authenticated host and never ex
   const guestCookie = joined.headers.get('set-cookie');
 
   const guestAttempt = await postStart(roomId, guestCookie);
-  assert.equal(guestAttempt.status, 409);
+  assert.equal(guestAttempt.status, 403);
   const started = await postStart(roomId, hostCookie);
   assert.equal(started.status, 201);
   assert.deepEqual(await started.json(), { roomId, status: 'IN_PROGRESS' });

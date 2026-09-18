@@ -86,6 +86,24 @@ function validatePlayerAction(body: unknown): PlayerAction | undefined {
   return undefined;
 }
 
+function validatePlayerActionRequest(body: unknown): { action: PlayerAction; clientActionId?: string } | undefined {
+  const direct = validatePlayerAction(body);
+  if (direct) return { action: direct };
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) return undefined;
+  const { action, clientActionId } = body as { action?: unknown; clientActionId?: unknown };
+  const validated = validatePlayerAction(action);
+  if (!validated || typeof clientActionId !== 'string' || !/^[0-9a-f-]{36}$/i.test(clientActionId)) return undefined;
+  return { action: validated, clientActionId };
+}
+
+function validateBlinds(body: unknown): { smallBlind: number; bigBlind: number } | undefined {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return undefined;
+  const { smallBlind, bigBlind } = body as { smallBlind?: unknown; bigBlind?: unknown };
+  if (!Number.isSafeInteger(smallBlind) || !Number.isSafeInteger(bigBlind)) return undefined;
+  if ((smallBlind as number) < 1 || (smallBlind as number) > MAX_BLIND || (bigBlind as number) <= (smallBlind as number) || (bigBlind as number) > MAX_BLIND) return undefined;
+  return { smallBlind: smallBlind as number, bigBlind: bigBlind as number };
+}
+
 const jsonErrorHandler: ErrorRequestHandler = (error, _request, response, next) => {
   if (response.headersSent) {
     next(error);
@@ -306,8 +324,8 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
   });
 
   routes.post('/rooms/:joinId/game/actions', async (request, response) => {
-    const action = validatePlayerAction(request.body);
-    if (!action) {
+    const input = validatePlayerActionRequest(request.body);
+    if (!input) {
       response.status(400).json({ error: { code: 'INVALID_REQUEST' } });
       return;
     }
@@ -320,7 +338,7 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
         response.status(401).json({ error: { code: 'UNAUTHORIZED' } });
         return;
       }
-      const result = await roomRepository.persistPlayerActionAtomically({ roomId: player.roomId, playerId: player.id, action });
+      const result = await roomRepository.persistPlayerActionAtomically({ roomId: player.roomId, playerId: player.id, ...input });
       response.status(201).json(result.view);
     } catch (error) {
       console.error('Game action failed', error);
@@ -350,8 +368,9 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
         response.status(403).json({ error: { code: 'HOST_FORBIDDEN' } });
         return;
       }
-      await roomRepository.startNextHandForHostAtomically({ joinId: request.params.joinId, hostPlayerId: player.id, finalHand: true });
-      response.status(201).json({ roomId: request.params.joinId, status: 'IN_PROGRESS', finalHand: true });
+      const enabled = request.body?.enabled !== false;
+      const result = await roomRepository.scheduleFinalHandForHost(request.params.joinId, player.id, enabled);
+      response.status(201).json({ roomId: request.params.joinId, ...result });
     } catch (error) {
       console.error('Final hand failed', error);
       response.status(409).json({ error: { code: 'FINAL_HAND_UNAVAILABLE' } });
@@ -374,10 +393,101 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
         hostPlayerId: player.id,
         targetPlayerId: request.params.playerId,
       });
-      response.status(201).json({ roomId: request.params.joinId, removedPlayerId: request.params.playerId });
+      response.status(201).json({ roomId: request.params.joinId, scheduledPlayerId: request.params.playerId });
     } catch (error) {
       console.error('Player removal failed', error);
       response.status(409).json({ error: { code: 'PLAYER_REMOVAL_UNAVAILABLE' } });
+    }
+  });
+
+  routes.get('/rooms/:joinId/management', async (request, response) => {
+    const player = await findAuthenticatedHost(request.params.joinId, request.headers.cookie);
+    if (!player) {
+      response.status(403).json({ error: { code: 'HOST_FORBIDDEN' } });
+      return;
+    }
+    const management = await roomRepository.getHostManagement(request.params.joinId, player.id);
+    if (!management) {
+      response.status(409).json({ error: { code: 'MANAGEMENT_UNAVAILABLE' } });
+      return;
+    }
+    response.json(management);
+  });
+
+  routes.post('/rooms/:joinId/management/blinds', async (request, response) => {
+    const player = await findAuthenticatedHost(request.params.joinId, request.headers.cookie);
+    if (!player) {
+      response.status(403).json({ error: { code: 'HOST_FORBIDDEN' } });
+      return;
+    }
+    const input = validateBlinds(request.body);
+    if (!input) {
+      response.status(400).json({ error: { code: 'INVALID_REQUEST' } });
+      return;
+    }
+    try {
+      response.status(201).json(await roomRepository.updateBlindsForHost(request.params.joinId, player.id, input.smallBlind, input.bigBlind));
+    } catch {
+      response.status(409).json({ error: { code: 'BLIND_UPDATE_UNAVAILABLE' } });
+    }
+  });
+
+  routes.post('/rooms/:joinId/management/players/:playerId/removal', async (request, response) => {
+    const player = await findAuthenticatedHost(request.params.joinId, request.headers.cookie);
+    if (!player) {
+      response.status(403).json({ error: { code: 'HOST_FORBIDDEN' } });
+      return;
+    }
+    if (!PLAYER_ID_PATTERN.test(request.params.playerId) || typeof request.body?.enabled !== 'boolean') {
+      response.status(400).json({ error: { code: 'INVALID_REQUEST' } });
+      return;
+    }
+    try {
+      const result = request.body.enabled
+        ? await roomRepository.removePlayerBetweenHandsForHostAtomically({ joinId: request.params.joinId, hostPlayerId: player.id, targetPlayerId: request.params.playerId })
+        : await roomRepository.cancelPlayerRemovalForHost(request.params.joinId, player.id, request.params.playerId);
+      response.status(201).json(result);
+    } catch {
+      response.status(409).json({ error: { code: 'PLAYER_REMOVAL_UNAVAILABLE' } });
+    }
+  });
+
+  routes.post('/rooms/:joinId/management/players/:playerId/chips', async (request, response) => {
+    const player = await findAuthenticatedHost(request.params.joinId, request.headers.cookie);
+    if (!player) {
+      response.status(403).json({ error: { code: 'HOST_FORBIDDEN' } });
+      return;
+    }
+    if (!PLAYER_ID_PATTERN.test(request.params.playerId) || !Number.isSafeInteger(request.body?.amount)) {
+      response.status(400).json({ error: { code: 'INVALID_REQUEST' } });
+      return;
+    }
+    try {
+      const result = request.body.amount === 0
+        ? await roomRepository.cancelPendingChipsForHost(request.params.joinId, player.id, request.params.playerId)
+        : await roomRepository.addChipsForHost(request.params.joinId, player.id, request.params.playerId, request.body.amount);
+      response.status(201).json(result ?? { status: 'cancelled' });
+    } catch {
+      response.status(409).json({ error: { code: 'CHIP_ADJUSTMENT_UNAVAILABLE' } });
+    }
+  });
+
+  routes.post('/rooms/:joinId/management/transfer-host', async (request, response) => {
+    const player = await findAuthenticatedHost(request.params.joinId, request.headers.cookie);
+    if (!player) {
+      response.status(403).json({ error: { code: 'HOST_FORBIDDEN' } });
+      return;
+    }
+    const targetPlayerId = request.body?.targetPlayerId;
+    const leaveAfterHand = request.body?.leaveAfterHand;
+    if ((targetPlayerId !== undefined && (typeof targetPlayerId !== 'string' || !PLAYER_ID_PATTERN.test(targetPlayerId))) || typeof leaveAfterHand !== 'boolean') {
+      response.status(400).json({ error: { code: 'INVALID_REQUEST' } });
+      return;
+    }
+    try {
+      response.status(201).json(await roomRepository.transferHostForHost(request.params.joinId, player.id, targetPlayerId, leaveAfterHand));
+    } catch {
+      response.status(409).json({ error: { code: 'HOST_TRANSFER_UNAVAILABLE' } });
     }
   });
 

@@ -21,12 +21,14 @@ model Room {
   smallBlind   Int        @default(5)
   bigBlind     Int        @default(10)
   maxPlayers   Int        @default(9)
+  nextHandIsFinal Boolean @default(false)
   hostPlayerId String?    @db.Uuid
   hostPlayer   Player?    @relation("RoomHost", fields: [id, hostPlayerId], references: [roomId, id], onDelete: Restrict)
   players      Player[]   @relation("RoomPlayers")
   events       GameEvent[]
   snapshots    GameSnapshot[]
   settlements  Settlement[]
+  chipAdjustments ChipAdjustment[]
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 
@@ -41,8 +43,11 @@ model Player {
   currentStack    Int
   accessTokenHash String @unique
   leftAt       DateTime?
+  leaveAfterHand Boolean @default(false)
   room            Room     @relation("RoomPlayers", fields: [roomId], references: [id], onDelete: Cascade)
   hostedRooms  Room[]   @relation("RoomHost")
+  receivedChipAdjustments ChipAdjustment[] @relation("ChipRecipient")
+  authorizedChipAdjustments ChipAdjustment[] @relation("ChipAuthorizer")
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -57,10 +62,31 @@ model GameEvent {
   sequence  Int
   type      String
   payload   Json
+  clientActionId String? @unique
   room      Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
   createdAt DateTime @default(now())
 
   @@unique([roomId, sequence])
+}
+
+model ChipAdjustment {
+  id                   String   @id @default(uuid()) @db.Uuid
+  roomId               String   @db.Uuid
+  playerId             String   @db.Uuid
+  authorizedByPlayerId String   @db.Uuid
+  amount               Int
+  status               String   @default("PENDING")
+  stackBefore          Int?
+  stackAfter           Int?
+  createdAt            DateTime @default(now())
+  appliedAt            DateTime?
+  cancelledAt          DateTime?
+  room                 Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  player               Player   @relation("ChipRecipient", fields: [playerId], references: [id], onDelete: Cascade)
+  authorizedBy         Player   @relation("ChipAuthorizer", fields: [authorizedByPlayerId], references: [id], onDelete: Cascade)
+
+  @@index([roomId, status])
+  @@index([playerId, status])
 }
 
 model GameSnapshot {

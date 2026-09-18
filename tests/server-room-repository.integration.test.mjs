@@ -25,6 +25,7 @@ if (integrationEnabled) {
   });
 
   beforeEach(async () => {
+    await prisma.chipAdjustment.deleteMany();
     await prisma.settlement.deleteMany();
     await prisma.gameSnapshot.deleteMany();
     await prisma.gameEvent.deleteMany();
@@ -131,6 +132,36 @@ test('database rejects assigning a room host from another room', { skip: !integr
       data: { hostPlayerId: secondRoom.hostPlayerId },
     }),
   );
+});
+
+test('host management settings, queued rebuys, removals, and ownership transfer persist atomically', { skip: !integrationEnabled }, async () => {
+  const repository = new RoomRepository(prisma);
+  const firstGuestId = randomUUID();
+  const secondGuestId = randomUUID();
+  const created = await repository.createRoom({
+    status: 'IN_PROGRESS',
+    host: { id: randomUUID(), displayName: 'Host', initialStack: 1_000 },
+    players: [
+      { id: firstGuestId, displayName: 'First guest', initialStack: 1_000 },
+      { id: secondGuestId, displayName: 'Second guest', initialStack: 1_000 },
+    ],
+  });
+
+  await repository.updateBlindsForHost(created.joinId, created.hostPlayerId, 25, 50);
+  await repository.scheduleFinalHandForHost(created.joinId, created.hostPlayerId, true);
+  await repository.addChipsForHost(created.joinId, created.hostPlayerId, firstGuestId, 500);
+  await repository.removePlayerBetweenHandsForHostAtomically({ joinId: created.joinId, hostPlayerId: created.hostPlayerId, targetPlayerId: firstGuestId });
+
+  const management = await repository.getHostManagement(created.joinId, created.hostPlayerId);
+  assert.equal(management.smallBlind, 25);
+  assert.equal(management.bigBlind, 50);
+  assert.equal(management.nextHandIsFinal, true);
+  assert.equal(management.players.find((player) => player.id === firstGuestId).leaveAfterHand, true);
+  assert.equal(management.players.find((player) => player.id === firstGuestId).pendingChips, 0, 'removal cancels an unapplied rebuy');
+
+  await repository.transferHostForHost(created.joinId, created.hostPlayerId, secondGuestId, false);
+  assert.equal(await repository.getHostManagement(created.joinId, created.hostPlayerId), null);
+  assert.equal((await repository.getHostManagement(created.joinId, secondGuestId)).players.find((player) => player.id === secondGuestId).isHost, true);
 });
 
 test('database transaction serializes an authenticated action into one private successor snapshot', { skip: !integrationEnabled }, async () => {

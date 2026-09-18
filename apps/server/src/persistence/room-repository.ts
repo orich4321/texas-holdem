@@ -41,6 +41,7 @@ type CreateRoomInput = {
 type PlayerWriter = Pick<PrismaClient, 'player'>;
 
 const MAX_ACCESS_TOKEN_ATTEMPTS = 5;
+const MAX_CHIP_ADJUSTMENT = 1_000_000;
 const DEFAULT_ROOM_SETTINGS: RoomGameSettings = Object.freeze({ initialStack: 1000, smallBlind: 5, bigBlind: 10, maxPlayers: 9 });
 
 function isAccessTokenHashCollision(error: unknown): boolean {
@@ -60,6 +61,7 @@ const publicPlayerSelect = {
   initialStack: true,
   currentStack: true,
   leftAt: true,
+  leaveAfterHand: true,
   createdAt: true,
   updatedAt: true,
 } satisfies Prisma.PlayerSelect;
@@ -90,6 +92,7 @@ export type PersistPlayerActionInput = Readonly<{
   /** Derived exclusively from an authenticated server session. */
   playerId: string;
   action: PlayerAction;
+  clientActionId?: string;
 }>;
 
 export type StartGameForHostInput = Readonly<{
@@ -102,8 +105,6 @@ export type StartNextHandForHostInput = Readonly<{
   joinId: string;
   /** Derived exclusively from the authenticated host session. */
   hostPlayerId: string;
-  /** The next signed hand is the final hand and completes the room at settlement. */
-  finalHand?: boolean;
 }>;
 
 export type AdvanceAllInRunoutForHostInput = Readonly<{
@@ -115,6 +116,20 @@ export type RemovePlayerForHostInput = Readonly<{
   joinId: string;
   hostPlayerId: string;
   targetPlayerId: string;
+}>;
+
+export type HostManagementView = Readonly<{
+  smallBlind: number;
+  bigBlind: number;
+  nextHandIsFinal: boolean;
+  players: readonly Readonly<{
+    id: string;
+    displayName: string;
+    currentStack: number;
+    isHost: boolean;
+    leaveAfterHand: boolean;
+    pendingChips: number;
+  }>[];
 }>;
 
 export type RevealShowdownHandInput = Readonly<{
@@ -160,6 +175,10 @@ export class RoomRepository {
     private readonly hashAccessToken: PlayerAccessTokenHasher = hashPlayerAccessToken,
     private readonly privateSnapshotKeyring: ReadonlyMap<string, PrivateSnapshotSigningKey> = new Map(),
   ) {}
+
+  private decorateView(view: ServerPlayerView, sequence: number, hostPlayerId: string): ServerPlayerView {
+    return Object.freeze({ ...view, sequence, hostPlayerId });
+  }
 
   private async createPlayerWithUniqueAccessToken(db: PlayerWriter, player: PlayerInput, roomId: string) {
     for (let attempt = 0; attempt < MAX_ACCESS_TOKEN_ATTEMPTS; attempt += 1) {
@@ -252,6 +271,7 @@ export class RoomRepository {
     const room = await this.db.room.findUnique({
       where: { joinId },
       select: {
+        hostPlayerId: true,
         players: {
           select: { ...publicPlayerSelect, accessTokenHash: true },
         },
@@ -421,6 +441,7 @@ export class RoomRepository {
     const room = await this.db.room.findFirst({
       where: { id: roomId, status: { in: ['IN_PROGRESS', 'COMPLETED'] }, players: { some: { id: playerId, leftAt: null } } },
       select: {
+        hostPlayerId: true,
         players: {
           orderBy: { createdAt: 'asc' },
           select: { id: true, displayName: true, currentStack: true },
@@ -451,18 +472,20 @@ export class RoomRepository {
       smallBlind: hand.smallBlindAmount,
       bigBlind: hand.bigBlindAmount,
     }, latest.recovery);
-    return lifecycle.viewFor(playerId);
+    if (!room.hostPlayerId) return null;
+    return this.decorateView(lifecycle.viewFor(playerId), latest.sequence, room.hostPlayerId);
   }
 
   /** Applies an authenticated action to the latest verified state and commits its successor atomically. */
-  async persistPlayerActionAtomically({ roomId, playerId, action }: PersistPlayerActionInput) {
+  async persistPlayerActionAtomically({ roomId, playerId, action, clientActionId }: PersistPlayerActionInput) {
     validatePersistedPlayerAction(action);
+    if (clientActionId !== undefined && !/^[0-9a-f-]{36}$/i.test(clientActionId)) throw new Error('Invalid action identifier');
     return this.db.$transaction(async (tx) => {
       const room = await tx.room.findUnique({
         where: { id: roomId },
-        select: { status: true, players: { orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, currentStack: true } } },
+        select: { status: true, hostPlayerId: true, players: { orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, currentStack: true } } },
       });
-      if (!room || room.status !== 'IN_PROGRESS' || !room.players.some((player) => player.id === playerId)) throw new Error('Game action is unavailable');
+      if (!room || !room.hostPlayerId || room.status !== 'IN_PROGRESS' || !room.players.some((player) => player.id === playerId)) throw new Error('Game action is unavailable');
 
       // PostgreSQL obtains a row lock for this otherwise no-op update. Reading
       // the latest snapshot only after that lock means two accepted actions
@@ -482,8 +505,16 @@ export class RoomRepository {
         seats: room.players.map((player, index) => ({ seatNumber: index + 1, playerId: player.id, playerName: player.displayName, stack: player.currentStack })),
         dealerSeat: hand.dealerSeat, smallBlind: hand.smallBlindAmount, bigBlind: hand.bigBlindAmount,
       }, recovery);
+      if (clientActionId) {
+        const duplicate = await tx.gameEvent.findUnique({ where: { clientActionId }, select: { id: true } });
+        if (duplicate) {
+          const views = Object.freeze(room.players.map((player) => this.decorateView(lifecycle.viewFor(player.id), latest.sequence, room.hostPlayerId!)));
+          return { sequence: latest.sequence, view: views.find((candidate) => candidate.playerId === playerId)!, views };
+        }
+      }
       const view = lifecycle.applyAction(playerId, action);
-      const settlement = lifecycle.handForDurableSnapshot().street === 'showdown'
+      const settledHand = lifecycle.handForDurableSnapshot();
+      const settlement = settledHand.street === 'showdown'
         ? lifecycle.showdownSettlement()
         : undefined;
       if (settlement) {
@@ -503,6 +534,14 @@ export class RoomRepository {
                 playerName: winner.playerName,
                 chipsWon: winner.chipsWon,
               })) ?? [],
+              board: settledHand.communityCards.map((card) => ({ ...card })),
+              players: settledHand.seats.flatMap((seat) => seat.holeCards ? [{
+                seatNumber: seat.seatNumber,
+                playerId: seat.playerId,
+                playerName: room.players.find((player) => player.id === seat.playerId)?.displayName ?? seat.playerId,
+                folded: seat.isFolded,
+                holeCards: seat.holeCards.map((card) => ({ ...card })),
+              }] : []),
               stacks: settlement.seats.map((seat) => ({ seatNumber: seat.seatNumber, playerId: seat.playerId, stack: seat.stack })),
             } as Prisma.InputJsonValue,
           },
@@ -514,16 +553,16 @@ export class RoomRepository {
           await tx.room.updateMany({ where: { id: roomId, status: 'IN_PROGRESS' }, data: { status: 'COMPLETED' } });
         }
       }
-      const views = Object.freeze(room.players.map((player) => lifecycle.viewFor(player.id)));
       const sequence = latest.sequence + 1;
+      const views = Object.freeze(room.players.map((player) => this.decorateView(lifecycle.viewFor(player.id), sequence, room.hostPlayerId!)));
       const activeKey = this.privateSnapshotKeyring.entries().next().value as [string, PrivateSnapshotSigningKey] | undefined;
       if (!activeKey) throw new Error('Game action is unavailable');
       const [keyId, key] = activeKey;
       const snapshot = signPrivateHandSnapshot(lifecycle.handForDurableSnapshot(), { roomId, sequence, keyId }, key);
       const publicAction = action.type === 'raise' ? { type: 'raise' as const, raiseTo: action.raiseTo } : { type: action.type };
-      await tx.gameEvent.create({ data: { roomId, sequence, type: 'PLAYER_ACTION', payload: { actorPlayerId: playerId, action: publicAction } } });
+      await tx.gameEvent.create({ data: { roomId, sequence, type: 'PLAYER_ACTION', payload: { actorPlayerId: playerId, action: publicAction }, ...(clientActionId ? { clientActionId } : {}) } });
       await tx.gameSnapshot.create({ data: { roomId, sequence, state: snapshot as unknown as Prisma.InputJsonValue } });
-      return { sequence, view, views };
+      return { sequence, view: this.decorateView(view, sequence, room.hostPlayerId), views };
     });
   }
 
@@ -566,6 +605,14 @@ export class RoomRepository {
                 playerName: winner.playerName,
                 chipsWon: winner.chipsWon,
               })) ?? [],
+              board: hand.communityCards.map((card) => ({ ...card })),
+              players: hand.seats.flatMap((seat) => seat.holeCards ? [{
+                seatNumber: seat.seatNumber,
+                playerId: seat.playerId,
+                playerName: room.players.find((player) => player.id === seat.playerId)?.displayName ?? seat.playerId,
+                folded: seat.isFolded,
+                holeCards: seat.holeCards.map((card) => ({ ...card })),
+              }] : []),
               stacks: settlement.seats.map((seat) => ({ seatNumber: seat.seatNumber, playerId: seat.playerId, stack: seat.stack })),
             } as Prisma.InputJsonValue,
           },
@@ -581,7 +628,7 @@ export class RoomRepository {
       const snapshot = signPrivateHandSnapshot(hand, { roomId: room.id, sequence, keyId }, key);
       await tx.gameEvent.create({ data: { roomId: room.id, sequence, type: 'ALL_IN_RUNOUT_ADVANCED', payload: { street: hand.street } } });
       await tx.gameSnapshot.create({ data: { roomId: room.id, sequence, state: snapshot as unknown as Prisma.InputJsonValue } });
-      return { sequence, views: Object.freeze(room.players.map((player) => lifecycle.viewFor(player.id))) };
+      return { sequence, views: Object.freeze(room.players.map((player) => this.decorateView(lifecycle.viewFor(player.id), sequence, room.hostPlayerId!))) };
     });
   }
 
@@ -593,9 +640,9 @@ export class RoomRepository {
     return this.db.$transaction(async (tx) => {
       const room = await tx.room.findUnique({
         where: { id: roomId },
-        select: { status: true, players: { orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, currentStack: true } } },
+        select: { status: true, hostPlayerId: true, players: { orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, currentStack: true } } },
       });
-      if (!room || room.status !== 'IN_PROGRESS' || !room.players.some((player) => player.id === playerId)) throw new Error('Showdown reveal is unavailable');
+      if (!room || !room.hostPlayerId || room.status !== 'IN_PROGRESS' || !room.players.some((player) => player.id === playerId)) throw new Error('Showdown reveal is unavailable');
       const locked = await tx.room.updateMany({ where: { id: roomId, status: 'IN_PROGRESS' }, data: { updatedAt: new Date() } });
       if (locked.count !== 1) throw new Error('Showdown reveal is unavailable');
       const latest = await tx.gameSnapshot.findFirst({ where: { roomId }, orderBy: { sequence: 'desc' }, select: { sequence: true, state: true } });
@@ -610,7 +657,11 @@ export class RoomRepository {
       const snapshot = signPrivateHandSnapshot(lifecycle.handForDurableSnapshot(), { roomId, sequence, keyId }, key);
       await tx.gameEvent.create({ data: { roomId, sequence, type: 'SHOWDOWN_HAND_REVEALED', payload: { playerId } } });
       await tx.gameSnapshot.create({ data: { roomId, sequence, state: snapshot as unknown as Prisma.InputJsonValue } });
-      return { sequence, view, views: Object.freeze(room.players.map((player) => lifecycle.viewFor(player.id))) };
+      return {
+        sequence,
+        view: this.decorateView(view, sequence, room.hostPlayerId),
+        views: Object.freeze(room.players.map((player) => this.decorateView(lifecycle.viewFor(player.id), sequence, room.hostPlayerId!))),
+      };
     });
   }
 
@@ -619,7 +670,7 @@ export class RoomRepository {
    * same transaction stores the durable chip totals, rotates the dealer, and
    * signs the successor hand before any client can see it.
    */
-  async startNextHandForHostAtomically({ joinId, hostPlayerId, finalHand = false }: StartNextHandForHostInput) {
+  async startNextHandForHostAtomically({ joinId, hostPlayerId }: StartNextHandForHostInput) {
     const activeKey = this.privateSnapshotKeyring.entries().next().value as [string, PrivateSnapshotSigningKey] | undefined;
     if (!activeKey) throw new Error('Next hand is unavailable');
     const [keyId, key] = activeKey;
@@ -631,7 +682,13 @@ export class RoomRepository {
       if (locked.count !== 1) throw new Error('Next hand is unavailable');
       const lockedRoom = await tx.room.findUnique({
         where: { id: room.id },
-        select: { players: { where: { leftAt: null }, orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, currentStack: true } } },
+        select: {
+          smallBlind: true,
+          bigBlind: true,
+          nextHandIsFinal: true,
+          players: { where: { leftAt: null }, orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, currentStack: true, leaveAfterHand: true } },
+          chipAdjustments: { where: { status: 'PENDING' }, orderBy: { createdAt: 'asc' } },
+        },
       });
       const latest = await tx.gameSnapshot.findFirst({ where: { roomId: room.id }, orderBy: { sequence: 'desc' }, select: { sequence: true, state: true } });
       if (!lockedRoom || !latest) throw new Error('Next hand is unavailable');
@@ -641,15 +698,33 @@ export class RoomRepository {
       // A showdown is settled in the transaction that reached it, so these
       // are already authoritative chip totals.  Keeping that completed hand
       // intact lets the host safely remove a seat before this fresh deal.
-      const activePlayers = lockedRoom.players;
+      const leavingPlayerIds = new Set(lockedRoom.players.filter((player) => player.leaveAfterHand).map((player) => player.id));
+      const activePlayers = lockedRoom.players.filter((player) => !leavingPlayerIds.has(player.id));
       if (activePlayers.length < 2) throw new Error('Next hand is unavailable');
       const stacks = new Map(activePlayers.map((player) => [player.id, player.currentStack]));
+      const appliedAt = new Date();
+      for (const adjustment of lockedRoom.chipAdjustments) {
+        if (leavingPlayerIds.has(adjustment.playerId)) {
+          await tx.chipAdjustment.update({ where: { id: adjustment.id }, data: { status: 'CANCELLED', cancelledAt: appliedAt } });
+          continue;
+        }
+        const before = stacks.get(adjustment.playerId);
+        if (before === undefined || !Number.isSafeInteger(before + adjustment.amount)) throw new Error('Next hand is unavailable');
+        const after = before + adjustment.amount;
+        stacks.set(adjustment.playerId, after);
+        await tx.player.update({ where: { id: adjustment.playerId }, data: { currentStack: after } });
+        await tx.chipAdjustment.update({ where: { id: adjustment.id }, data: { status: 'APPLIED', stackBefore: before, stackAfter: after, appliedAt } });
+      }
+      if (leavingPlayerIds.size > 0) {
+        await tx.player.updateMany({ where: { id: { in: [...leavingPlayerIds] } }, data: { leftAt: appliedAt, leaveAfterHand: false } });
+      }
 
       const seatNumbers = recovery.hand.seats.map((seat) => seat.seatNumber);
       const dealerIndex = seatNumbers.indexOf(recovery.hand.dealerSeat);
       const nextDealerPlayerId = Array.from({ length: seatNumbers.length }, (_, offset) => seatNumbers[(dealerIndex + offset + 1) % seatNumbers.length])
         .map((seatNumber) => recovery.hand.seats.find((seat) => seat.seatNumber === seatNumber)!.playerId)
-        .find((playerId) => activePlayers.some((player) => player.id === playerId) && (stacks.get(playerId) ?? 0) > 0);
+        .find((playerId) => activePlayers.some((player) => player.id === playerId) && (stacks.get(playerId) ?? 0) > 0)
+        ?? activePlayers.find((player) => (stacks.get(player.id) ?? 0) > 0)?.id;
       const nextDealerSeat = activePlayers.findIndex((player) => player.id === nextDealerPlayerId) + 1;
       if (!nextDealerPlayerId || nextDealerSeat < 1) throw new Error('Next hand is unavailable');
       const hand = startServerHand({
@@ -659,8 +734,8 @@ export class RoomRepository {
           stack: stacks.get(player.id) ?? player.currentStack,
         })),
         dealerSeat: nextDealerSeat,
-        smallBlind: recovery.hand.smallBlindAmount,
-        bigBlind: recovery.hand.bigBlindAmount,
+        smallBlind: lockedRoom.smallBlind,
+        bigBlind: lockedRoom.bigBlind,
       });
       const sequence = latest.sequence + 1;
       const snapshot = signPrivateHandSnapshot(hand, { roomId: room.id, sequence, keyId }, key);
@@ -668,36 +743,124 @@ export class RoomRepository {
         data: {
           roomId: room.id,
           sequence,
-          type: finalHand ? 'FINAL_HAND_STARTED' : 'HAND_STARTED',
+          type: lockedRoom.nextHandIsFinal ? 'FINAL_HAND_STARTED' : 'HAND_STARTED',
           payload: { dealerSeat: hand.dealerSeat, smallBlind: hand.smallBlindAmount, bigBlind: hand.bigBlindAmount },
         },
       });
       await tx.gameSnapshot.create({ data: { roomId: room.id, sequence, state: snapshot as unknown as Prisma.InputJsonValue } });
-      return { roomId: room.id, sequence };
+      if (lockedRoom.nextHandIsFinal) await tx.room.update({ where: { id: room.id }, data: { nextHandIsFinal: false } });
+      return { roomId: room.id, sequence, finalHand: lockedRoom.nextHandIsFinal };
     });
   }
 
-  /** Removes a non-host seat only after its hand has reached a signed showdown. */
+  async getHostManagement(joinId: string, hostPlayerId: string): Promise<HostManagementView | null> {
+    const room = await this.db.room.findFirst({
+      where: { joinId, hostPlayerId, status: 'IN_PROGRESS' },
+      select: {
+        smallBlind: true,
+        bigBlind: true,
+        nextHandIsFinal: true,
+        hostPlayerId: true,
+        players: { where: { leftAt: null }, orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, currentStack: true, leaveAfterHand: true } },
+        chipAdjustments: { where: { status: 'PENDING' }, select: { playerId: true, amount: true } },
+      },
+    });
+    if (!room) return null;
+    const pendingByPlayer = new Map<string, number>();
+    for (const adjustment of room.chipAdjustments) pendingByPlayer.set(adjustment.playerId, (pendingByPlayer.get(adjustment.playerId) ?? 0) + adjustment.amount);
+    return Object.freeze({
+      smallBlind: room.smallBlind,
+      bigBlind: room.bigBlind,
+      nextHandIsFinal: room.nextHandIsFinal,
+      players: Object.freeze(room.players.map((player) => Object.freeze({
+        id: player.id,
+        displayName: player.displayName,
+        currentStack: player.currentStack,
+        isHost: player.id === room.hostPlayerId,
+        leaveAfterHand: player.leaveAfterHand,
+        pendingChips: pendingByPlayer.get(player.id) ?? 0,
+      }))),
+    });
+  }
+
+  async updateBlindsForHost(joinId: string, hostPlayerId: string, smallBlind: number, bigBlind: number) {
+    const updated = await this.db.room.updateMany({ where: { joinId, hostPlayerId, status: 'IN_PROGRESS' }, data: { smallBlind, bigBlind } });
+    if (updated.count !== 1) throw new Error('Blind update is unavailable');
+    return { smallBlind, bigBlind };
+  }
+
+  async scheduleFinalHandForHost(joinId: string, hostPlayerId: string, enabled: boolean) {
+    const updated = await this.db.room.updateMany({ where: { joinId, hostPlayerId, status: 'IN_PROGRESS' }, data: { nextHandIsFinal: enabled } });
+    if (updated.count !== 1) throw new Error('Final-hand scheduling is unavailable');
+    return { nextHandIsFinal: enabled };
+  }
+
+  /** Schedules a non-host seat to leave immediately before the next deal. */
   async removePlayerBetweenHandsForHostAtomically({ joinId, hostPlayerId, targetPlayerId }: RemovePlayerForHostInput) {
     return this.db.$transaction(async (tx) => {
       const room = await tx.room.findUnique({
         where: { joinId },
-        select: { id: true, hostPlayerId: true, status: true, players: { where: { leftAt: null }, select: { id: true } } },
+        select: { id: true, hostPlayerId: true, status: true, players: { where: { leftAt: null }, select: { id: true, leaveAfterHand: true } } },
       });
       if (!room || room.hostPlayerId !== hostPlayerId || room.status !== 'IN_PROGRESS' || targetPlayerId === hostPlayerId) {
         throw new Error('Player removal is unavailable');
       }
-      if (!room.players.some((player) => player.id === targetPlayerId) || room.players.length <= 2) {
+      if (!room.players.some((player) => player.id === targetPlayerId) || room.players.filter((player) => !player.leaveAfterHand && player.id !== targetPlayerId).length < 2) {
         throw new Error('Player removal is unavailable');
       }
       const locked = await tx.room.updateMany({ where: { id: room.id, hostPlayerId, status: 'IN_PROGRESS' }, data: { updatedAt: new Date() } });
       if (locked.count !== 1) throw new Error('Player removal is unavailable');
-      const latest = await tx.gameSnapshot.findFirst({ where: { roomId: room.id }, orderBy: { sequence: 'desc' }, select: { sequence: true, state: true } });
-      if (!latest) throw new Error('Player removal is unavailable');
-      const recovery = hydrateSignedPrivateHandSnapshot(latest.state as unknown as SignedPrivateHandSnapshot, { roomId: room.id, sequence: latest.sequence }, this.privateSnapshotKeyring);
-      if (recovery.hand.street !== 'showdown') throw new Error('Player removal is unavailable');
-      await tx.player.update({ where: { id: targetPlayerId }, data: { leftAt: new Date() } });
-      return { roomId: room.id, removedPlayerId: targetPlayerId };
+      await tx.player.update({ where: { id: targetPlayerId }, data: { leaveAfterHand: true } });
+      await tx.chipAdjustment.updateMany({ where: { roomId: room.id, playerId: targetPlayerId, status: 'PENDING' }, data: { status: 'CANCELLED', cancelledAt: new Date() } });
+      return { roomId: room.id, scheduledPlayerId: targetPlayerId };
+    });
+  }
+
+  async cancelPlayerRemovalForHost(joinId: string, hostPlayerId: string, targetPlayerId: string) {
+    const room = await this.db.room.findFirst({ where: { joinId, hostPlayerId, status: 'IN_PROGRESS' }, select: { id: true } });
+    if (!room) throw new Error('Player removal is unavailable');
+    const updated = await this.db.player.updateMany({ where: { id: targetPlayerId, roomId: room.id, leftAt: null }, data: { leaveAfterHand: false } });
+    if (updated.count !== 1) throw new Error('Player removal is unavailable');
+    return { scheduledPlayerId: null };
+  }
+
+  async addChipsForHost(joinId: string, hostPlayerId: string, targetPlayerId: string, amount: number) {
+    if (!Number.isSafeInteger(amount) || amount < 1 || amount > MAX_CHIP_ADJUSTMENT) throw new Error('Chip adjustment is unavailable');
+    return this.db.$transaction(async (tx) => {
+      const room = await tx.room.findFirst({
+        where: { joinId, hostPlayerId, status: 'IN_PROGRESS' },
+        select: { id: true, players: { where: { id: targetPlayerId, leftAt: null }, select: { id: true, leaveAfterHand: true } } },
+      });
+      if (!room || room.players.length !== 1 || room.players[0].leaveAfterHand) throw new Error('Chip adjustment is unavailable');
+      return tx.chipAdjustment.create({ data: { roomId: room.id, playerId: targetPlayerId, authorizedByPlayerId: hostPlayerId, amount } });
+    });
+  }
+
+  async cancelPendingChipsForHost(joinId: string, hostPlayerId: string, targetPlayerId: string) {
+    const room = await this.db.room.findFirst({ where: { joinId, hostPlayerId, status: 'IN_PROGRESS' }, select: { id: true } });
+    if (!room) throw new Error('Chip adjustment is unavailable');
+    await this.db.chipAdjustment.updateMany({ where: { roomId: room.id, playerId: targetPlayerId, status: 'PENDING' }, data: { status: 'CANCELLED', cancelledAt: new Date() } });
+  }
+
+  async transferHostForHost(joinId: string, hostPlayerId: string, targetPlayerId: string | undefined, leaveAfterHand: boolean) {
+    return this.db.$transaction(async (tx) => {
+      const room = await tx.room.findUnique({
+        where: { joinId },
+        select: { id: true, hostPlayerId: true, status: true, players: { where: { leftAt: null }, orderBy: [{ currentStack: 'desc' }, { createdAt: 'asc' }], select: { id: true, currentStack: true, leaveAfterHand: true } } },
+      });
+      if (!room || room.hostPlayerId !== hostPlayerId || room.status !== 'IN_PROGRESS') throw new Error('Host transfer is unavailable');
+      const oldHost = room.players.find((player) => player.id === hostPlayerId);
+      const target = targetPlayerId
+        ? room.players.find((player) => player.id === targetPlayerId)
+        : oldHost?.currentStack === 0 ? room.players.find((player) => player.id !== hostPlayerId && !player.leaveAfterHand) : undefined;
+      if (!oldHost || !target || target.id === hostPlayerId || target.leaveAfterHand) throw new Error('Host transfer is unavailable');
+      if (leaveAfterHand && room.players.filter((player) => player.id !== hostPlayerId && !player.leaveAfterHand).length < 2) throw new Error('Host transfer is unavailable');
+      await tx.room.update({ where: { id: room.id }, data: { hostPlayerId: target.id } });
+      if (leaveAfterHand) {
+        await tx.player.update({ where: { id: hostPlayerId }, data: { leaveAfterHand: true } });
+        await tx.chipAdjustment.updateMany({ where: { roomId: room.id, playerId: hostPlayerId, status: 'PENDING' }, data: { status: 'CANCELLED', cancelledAt: new Date() } });
+      }
+      return { hostPlayerId: target.id, previousHostLeaves: leaveAfterHand };
     });
   }
 
@@ -707,21 +870,37 @@ export class RoomRepository {
       where: { id: roomId, status: 'COMPLETED', players: { some: { id: playerId } } },
       select: {
         joinId: true, initialStack: true, smallBlind: true, bigBlind: true,
-        players: { orderBy: { createdAt: 'asc' }, select: { displayName: true, initialStack: true, currentStack: true, leftAt: true } },
+        players: { orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, initialStack: true, currentStack: true, leftAt: true } },
+        chipAdjustments: { where: { status: 'APPLIED' }, orderBy: { createdAt: 'asc' }, select: { playerId: true, authorizedByPlayerId: true, amount: true, stackBefore: true, stackAfter: true, createdAt: true, appliedAt: true } },
         events: { orderBy: { sequence: 'asc' }, select: { sequence: true, type: true, payload: true, createdAt: true } },
         settlements: { orderBy: { createdAt: 'asc' }, select: { idempotencyKey: true, result: true, createdAt: true } },
       },
     });
     if (!room) return null;
     return Object.freeze({
-      version: 1,
+      version: 3,
       room: Object.freeze({ joinId: room.joinId, initialStack: room.initialStack, smallBlind: room.smallBlind, bigBlind: room.bigBlind }),
-      standings: Object.freeze(room.players.map((player) => Object.freeze({
-        displayName: player.displayName,
-        initialStack: player.initialStack,
-        finalStack: player.currentStack,
-        net: player.currentStack - player.initialStack,
-        leftAt: player.leftAt?.toISOString() ?? null,
+      standings: Object.freeze(room.players.map((player) => {
+        const addedChips = room.chipAdjustments.filter((adjustment) => adjustment.playerId === player.id).reduce((total, adjustment) => total + adjustment.amount, 0);
+        const totalBuyIn = player.initialStack + addedChips;
+        return Object.freeze({
+          displayName: player.displayName,
+          initialStack: player.initialStack,
+          addedChips,
+          totalBuyIn,
+          finalStack: player.currentStack,
+          net: player.currentStack - totalBuyIn,
+          leftAt: player.leftAt?.toISOString() ?? null,
+        });
+      })),
+      chipAdjustments: Object.freeze(room.chipAdjustments.map((adjustment) => Object.freeze({
+        playerId: adjustment.playerId,
+        authorizedByPlayerId: adjustment.authorizedByPlayerId,
+        amount: adjustment.amount,
+        stackBefore: adjustment.stackBefore,
+        stackAfter: adjustment.stackAfter,
+        requestedAt: adjustment.createdAt.toISOString(),
+        appliedAt: adjustment.appliedAt?.toISOString() ?? null,
       }))),
       hands: Object.freeze(room.settlements.map((settlement) => Object.freeze({
         hand: settlement.idempotencyKey,

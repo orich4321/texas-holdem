@@ -6,7 +6,7 @@ export interface SessionSocket {
   data: { session?: SocketSessionIdentity };
   join(room: string): unknown;
   emit(event: string, payload: unknown): unknown;
-  on(event: string, listener: (payload?: unknown) => void): unknown;
+  on(event: string, listener: (payload?: unknown, acknowledge?: (payload: unknown) => void) => void): unknown;
 }
 
 export interface SessionIo {
@@ -61,16 +61,29 @@ export function attachSocketSessionTransport(io: SessionIo, repository: GameSock
       .then((view) => { if (view) socket.emit('game:state', view); })
       .catch(() => emitGameError(socket));
 
-    socket.on('game:action', (action) => {
-      void repository.persistPlayerActionAtomically({ roomId: session.roomId, playerId: session.playerId, action: action as PlayerAction })
+    socket.on('game:action', (payload, acknowledge) => {
+      const envelope = payload && typeof payload === 'object' && !Array.isArray(payload)
+        ? payload as { action?: unknown; clientActionId?: unknown }
+        : {};
+      const action = envelope.action ?? payload;
+      void repository.persistPlayerActionAtomically({
+        roomId: session.roomId,
+        playerId: session.playerId,
+        action: action as PlayerAction,
+        ...(typeof envelope.clientActionId === 'string' ? { clientActionId: envelope.clientActionId } : {}),
+      })
         .then(({ views }) => {
           for (const view of views) {
             for (const recipient of socketsByRoom.get(session.roomId) ?? []) {
               if (recipient.data.session?.playerId === view.playerId) recipient.emit('game:state', view);
             }
           }
+          acknowledge?.(Object.freeze({ ok: true, view: views.find((view) => view.playerId === session.playerId) }));
         })
-        .catch(() => emitGameError(socket));
+        .catch(() => {
+          emitGameError(socket);
+          acknowledge?.(Object.freeze({ ok: false }));
+        });
     });
     socket.on('disconnect', () => {
       const connected = socketsByRoom.get(session.roomId);

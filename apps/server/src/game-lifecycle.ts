@@ -62,6 +62,10 @@ export type PlayerAction =
   | { type: 'raise'; raiseTo: number };
 
 export interface ServerPlayerView {
+  /** Durable snapshot sequence used by clients to reject stale delivery. */
+  sequence?: number;
+  /** Public seat identity of the current host; authority is still checked server-side. */
+  hostPlayerId?: string;
   playerId: string;
   street: StartedHand['street'];
   dealerSeat: number;

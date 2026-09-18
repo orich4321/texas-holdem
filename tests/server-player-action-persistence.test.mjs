@@ -23,7 +23,7 @@ const initial = signPrivateHandSnapshot(startHand({
 const raised = applyPreflopRaise(hydrateSignedPrivateHandSnapshot(initial, { roomId: room.id, sequence: 0 }, keyring).hand, 1, 20);
 const raisedSnapshot = signPrivateHandSnapshot(raised, { roomId: room.id, sequence: 1, keyId }, key);
 
-function createDb({ latest = { sequence: 0, state: initial }, finalHandSequence = null } = {}) {
+function createDb({ latest = { sequence: 0, state: initial }, finalHandSequence = null, duplicateAction = false } = {}) {
   const calls = [];
   const tx = {
     room: {
@@ -37,6 +37,7 @@ function createDb({ latest = { sequence: 0, state: initial }, finalHandSequence 
     gameEvent: {
       create: async (args) => { calls.push(['gameEvent.create', args]); return args.data; },
       findFirst: async (args) => { calls.push(['gameEvent.findFirst', args]); return finalHandSequence === null ? null : { sequence: finalHandSequence }; },
+      findUnique: async (args) => { calls.push(['gameEvent.findUnique', args]); return duplicateAction ? { id: 'existing-event' } : null; },
     },
     player: { update: async (args) => { calls.push(['player.update', args]); return args.data; } },
     settlement: { create: async (args) => { calls.push(['settlement.create', args]); return args.data; } },
@@ -61,6 +62,20 @@ test('accepted authoritative action persists a minimal event and next signed sna
   assert.equal(JSON.stringify(db.calls[3][1].data).includes('deck'), false);
 });
 
+test('retrying a socket action through HTTP with the same client ID never applies it twice', async () => {
+  const db = createDb({ duplicateAction: true });
+  const repository = new RoomRepository(db, undefined, undefined, undefined, keyring);
+  const result = await repository.persistPlayerActionAtomically({
+    roomId: room.id,
+    playerId: 'host-id',
+    clientActionId: '018f7b16-690c-4d1f-9d0b-a8c4a14ae999',
+    action: { type: 'call' },
+  });
+  assert.equal(result.sequence, 0);
+  assert.equal(db.calls.filter(([name]) => name === 'gameEvent.create').length, 0);
+  assert.equal(db.calls.filter(([name]) => name === 'gameSnapshot.create').length, 0);
+});
+
 test('the last fold atomically persists the uncontested winner and updated chip stacks', async () => {
   const db = createDb({ latest: { sequence: 1, state: raisedSnapshot } });
   const repository = new RoomRepository(db, undefined, undefined, undefined, keyring);
@@ -72,6 +87,10 @@ test('the last fold atomically persists the uncontested winner and updated chip 
   assert.deepEqual(result.view.seats.map((seat) => [seat.playerId, seat.stack]), [['host-id', 110], ['player-1', 90]]);
   assert.deepEqual(db.calls.filter(([name]) => name === 'player.update').map(([, args]) => args.data.currentStack).sort((a, b) => a - b), [90, 110]);
   assert.equal(db.calls.filter(([name]) => name === 'settlement.create').length, 1);
+  const persistedResult = db.calls.find(([name]) => name === 'settlement.create')[1].data.result;
+  assert.equal(persistedResult.players.length, 2);
+  assert.deepEqual(persistedResult.players.map((player) => [player.playerName, player.holeCards.length]), [['אורי', 2], ['נועה', 2]]);
+  assert.deepEqual(persistedResult.board, []);
 });
 
 test('settling the signed final hand completes the room atomically', async () => {
