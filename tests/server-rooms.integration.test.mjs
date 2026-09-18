@@ -237,7 +237,7 @@ test('POST /rooms/:joinId/join caps a waiting room at nine players', { skip: !in
   assert.equal(await prisma.player.count(), 9);
 });
 
-test('POST /rooms/:joinId/join returns stable generic errors for invalid input, missing, and closed rooms', { skip: !integrationEnabled }, async () => {
+test('POST /rooms/:joinId/join accepts a waiting seat during play and rejects invalid, missing, and closed rooms', { skip: !integrationEnabled }, async () => {
   const missing = await postJoin('0123456789abcdef', { displayName: 'Guest', initialStack: 400 });
   assert.equal(missing.status, 404);
   assert.deepEqual(await missing.json(), { error: { code: 'ROOM_NOT_FOUND' } });
@@ -250,10 +250,15 @@ test('POST /rooms/:joinId/join returns stable generic errors for invalid input, 
     assert.deepEqual(await invalid.json(), { error: { code: 'INVALID_REQUEST' } });
   }
   await prisma.room.update({ where: { joinId: roomId }, data: { status: 'IN_PROGRESS' } });
+  const waitingForNextHand = await postJoin(roomId, { displayName: 'Late guest' });
+  assert.equal(waitingForNextHand.status, 201);
+  assert.equal(await prisma.player.count(), 2);
+
+  await prisma.room.update({ where: { joinId: roomId }, data: { status: 'CANCELLED' } });
   const closed = await postJoin(roomId, { displayName: 'Guest', initialStack: 400 });
   assert.equal(closed.status, 409);
   assert.deepEqual(await closed.json(), { error: { code: 'ROOM_NOT_JOINABLE' } });
-  assert.equal(await prisma.player.count(), 1);
+  assert.equal(await prisma.player.count(), 2);
 });
 
 test('POST /rooms/:joinId/start accepts only the authenticated host and never exposes a dealt hand', { skip: !integrationEnabled }, async () => {

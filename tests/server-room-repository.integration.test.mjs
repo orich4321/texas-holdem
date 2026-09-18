@@ -173,6 +173,11 @@ test('database transaction serializes an authenticated action into one private s
   });
   await repository.startGameForHostAtomically({ joinId: created.joinId, hostPlayerId: created.hostPlayerId });
 
+  const latePlayerId = randomUUID();
+  const lateJoin = await repository.joinWaitingRoom(created.joinId, { id: latePlayerId, displayName: 'Late guest' });
+  assert.equal(lateJoin.kind, 'joined');
+  assert.equal(await repository.recoverLatestPlayerViewForPlayer(created.id, latePlayerId), null, 'late join waits without entering the signed hand');
+
   const initial = await repository.recoverLatestHandForPlayer(created.id, created.hostPlayerId);
   const activePlayerId = initial.recovery.hand.seats.find((seat) => seat.seatNumber === initial.recovery.hand.currentActorSeat)?.playerId;
   assert.equal(typeof activePlayerId, 'string');

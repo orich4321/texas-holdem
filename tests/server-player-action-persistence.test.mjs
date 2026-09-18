@@ -100,6 +100,7 @@ test('settling the signed final hand completes the room atomically', async () =>
   const result = await repository.persistPlayerActionAtomically({ roomId: room.id, playerId: 'player-1', action: { type: 'fold' } });
 
   assert.equal(result.view.street, 'showdown');
+  assert.equal(result.view.gameCompleted, true);
   assert.ok(db.calls.some(([name, args]) => name === 'room.updateMany' && args.data.status === 'COMPLETED'));
   assert.deepEqual(db.calls.find(([name]) => name === 'gameEvent.create')[1].data.type, 'PLAYER_ACTION');
 });

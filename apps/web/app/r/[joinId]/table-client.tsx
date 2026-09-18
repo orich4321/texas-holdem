@@ -34,6 +34,7 @@ type FinalSummary = {
 type PlayerView = {
   sequence?: number;
   hostPlayerId?: string;
+  gameCompleted?: boolean;
   playerId: string;
   street: 'preflop' | 'flop' | 'turn' | 'river' | 'showdown';
   dealerSeat: number;
@@ -98,6 +99,7 @@ function isPlayerView(value: unknown): value is PlayerView {
   return typeof view.playerId === 'string'
     && (view.sequence === undefined || typeof view.sequence === 'number')
     && (view.hostPlayerId === undefined || typeof view.hostPlayerId === 'string')
+    && (view.gameCompleted === undefined || typeof view.gameCompleted === 'boolean')
     && typeof view.street === 'string'
     && typeof view.dealerSeat === 'number'
     && typeof view.currentActorSeat === 'number'
@@ -145,6 +147,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   const [topUpAmounts, setTopUpAmounts] = useState<Record<string, number>>({});
   const socketRef = useRef<ReturnType<typeof io> | null>(null);
   const latestSequenceRef = useRef(-1);
+  const actionPendingRef = useRef(false);
 
   useEffect(() => {
     let active = true;
@@ -256,16 +259,29 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   }, [view?.raise?.minRaiseTo, view?.raise?.maxRaiseTo]);
 
   useEffect(() => {
-    if (view?.street !== 'showdown') return;
+    if (view?.street !== 'showdown' || !view.gameCompleted) return;
     let active = true;
-    void globalThis.fetch(`${SERVER_URL}/rooms/${encodeURIComponent(joinId)}/final-summary`, { credentials: 'include', cache: 'no-store' })
-      .then(async (response) => ({ response, body: await response.json() }))
-      .then(({ response, body }) => {
-        if (active && response.ok && isFinalSummary(body, joinId)) setFinalSummary(body);
-      })
-      .catch(() => undefined);
-    return () => { active = false; };
-  }, [joinId, view?.street, view?.showdown]);
+    let retryTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
+    const load = async () => {
+      try {
+        const response = await globalThis.fetch(`${SERVER_URL}/rooms/${encodeURIComponent(joinId)}/final-summary`, { credentials: 'include', cache: 'no-store' });
+        const body = await response.json();
+        if (active && response.ok && isFinalSummary(body, joinId)) {
+          setFinalSummary(body);
+          return;
+        }
+      } catch {
+        // The completed room and its summary are committed together, but a
+        // retry also covers a transient serverless cold start or network gap.
+      }
+      if (active) retryTimer = globalThis.setTimeout(() => { void load(); }, 350);
+    };
+    void load();
+    return () => {
+      active = false;
+      if (retryTimer !== undefined) globalThis.clearTimeout(retryTimer);
+    };
+  }, [joinId, view?.gameCompleted, view?.street]);
 
   useEffect(() => {
     if (!isTurn || !view?.raise) setShowRaiseControls(false);
@@ -285,9 +301,11 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   }, [managementOpen]);
 
   async function act(action: PlayerAction) {
-    if (!isTurn || pending) return;
+    if (!isTurn || actionPendingRef.current) return;
+    actionPendingRef.current = true;
     setPending(true);
     const clientActionId = globalThis.crypto.randomUUID();
+    const submittedSequence = view?.sequence ?? -1;
     try {
       const socket = socketRef.current;
       // A standalone game server can acknowledge actions over Socket.IO.
@@ -309,20 +327,43 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
           return;
         }
       }
-      const response = await globalThis.fetch(`${SERVER_URL}/rooms/${encodeURIComponent(joinId)}/game/actions`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ clientActionId, action }),
-      });
-      const next = await response.json();
-      if (!response.ok || !isPlayerView(next)) throw new Error('Action unavailable');
+      let next: unknown;
+      let accepted = false;
+      for (let attempt = 0; attempt < 2 && !accepted; attempt += 1) {
+        try {
+          const response = await globalThis.fetch(`${SERVER_URL}/rooms/${encodeURIComponent(joinId)}/game/actions`, {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ clientActionId, action }),
+          });
+          next = await response.json();
+          accepted = response.ok && isPlayerView(next);
+        } catch {
+          accepted = false;
+        }
+        if (!accepted && attempt === 0) await new Promise((resolve) => globalThis.setTimeout(resolve, 180));
+      }
+      if (!accepted || !isPlayerView(next)) throw new Error('Action unavailable');
       latestSequenceRef.current = Math.max(latestSequenceRef.current, next.sequence ?? 0);
       setView(next);
       setStatus(next.street === 'showdown' ? 'היד הסתיימה' : 'מחוברים לשולחן');
     } catch {
-      setStatus('הפעולה לא זמינה כרגע. נסו שוב.');
+      try {
+        const response = await globalThis.fetch(`${SERVER_URL}/rooms/${encodeURIComponent(joinId)}/game`, { credentials: 'include', cache: 'no-store' });
+        const recovered = await response.json();
+        if (response.ok && isPlayerView(recovered) && (recovered.sequence ?? -1) > submittedSequence) {
+          latestSequenceRef.current = Math.max(latestSequenceRef.current, recovered.sequence ?? 0);
+          setView(recovered);
+          setStatus(recovered.street === 'showdown' ? 'היד הסתיימה' : 'מחוברים לשולחן');
+        } else {
+          setStatus('הפעולה לא זמינה כרגע. נסו שוב.');
+        }
+      } catch {
+        setStatus('הפעולה לא זמינה כרגע. נסו שוב.');
+      }
     } finally {
+      actionPendingRef.current = false;
       setPending(false);
     }
   }
@@ -349,6 +390,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
         method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json' },
       });
       if (!response.ok) throw new Error('Next hand unavailable');
+      setManagement((current) => current ? { ...current, nextHandIsFinal: false } : current);
       setStatus('מחלקים את היד הבאה…');
     } catch {
       setStatus('לא הצלחנו להתחיל את היד הבאה. נסו שוב.');
@@ -590,7 +632,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
           <div><span aria-hidden="true">⚡</span><p><strong>כולם באול אין</strong><small>הקלפים של המשתתפים פתוחים. המארח חושף את {streetNames[view.allInRunout.nextStreet]}.</small></p></div>
           {isCurrentHost ? <button type="button" disabled={advancingRunout} onClick={() => void advanceAllInRunout()}>{advancingRunout ? 'חושפים…' : `חשיפת ${streetNames[view.allInRunout.nextStreet]}`}</button> : <small>ממתינים למארח.</small>}
         </div> : null}
-        {view.showdown && !finalSummary ? <div className="between-hands-controls" aria-label="פעולות בין ידיים">
+        {view.showdown && !view.gameCompleted && !finalSummary ? <div className="between-hands-controls" aria-label="פעולות בין ידיים">
           {canRevealAtShowdown ? <button type="button" className="reveal-hand-button" disabled={revealingHand} onClick={() => void revealHand()}>{revealingHand ? 'חושפים…' : 'לחשוף את היד שלי'}</button> : null}
           {isCurrentHost ? <button type="button" className="next-hand-button" disabled={startingNextHand} onClick={() => void startNextHand()}>{startingNextHand ? 'מחלקים…' : management?.nextHandIsFinal ? 'התחלת היד האחרונה' : 'היד הבאה'}</button> : <small>המארח יכול להתחיל את היד הבאה.</small>}
         </div> : null}

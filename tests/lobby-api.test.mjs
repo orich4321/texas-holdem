@@ -150,7 +150,7 @@ test('joining posts only a normalized nickname because the room assigns its conf
 });
 
 test('joining validates nickname locally and returns generic Hebrew errors without reading backend bodies', async () => {
-  const { joinLobby, EMPTY_NICKNAME_MESSAGE, ROOM_FULL_MESSAGE, LOBBY_JOIN_ERROR_MESSAGE } = await lobbyApi();
+  const { joinLobby, EMPTY_NICKNAME_MESSAGE, ROOM_FULL_MESSAGE, ROOM_NOT_JOINABLE_MESSAGE, LOBBY_JOIN_ERROR_MESSAGE } = await lobbyApi();
   let requested = false;
 
   const empty = await joinLobby('abc123', '   ', {
@@ -166,6 +166,11 @@ test('joining validates nickname locally and returns generic Hebrew errors witho
     fetch: async () => ({ status: 409, json: async () => ({ error: 'private detail' }) }),
   });
   assert.deepEqual(full, { ok: false, message: ROOM_FULL_MESSAGE });
+
+  const completed = await joinLobby('abc123', 'נועה', {
+    fetch: async () => ({ status: 409, json: async () => ({ error: { code: 'ROOM_NOT_JOINABLE' } }) }),
+  });
+  assert.deepEqual(completed, { ok: false, message: ROOM_NOT_JOINABLE_MESSAGE });
 
   const missing = await joinLobby('abc123', 'נועה', {
     fetch: async () => ({ status: 404, json: async () => ({ error: 'private detail' }) }),

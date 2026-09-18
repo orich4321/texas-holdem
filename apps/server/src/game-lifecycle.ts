@@ -66,6 +66,8 @@ export interface ServerPlayerView {
   sequence?: number;
   /** Public seat identity of the current host; authority is still checked server-side. */
   hostPlayerId?: string;
+  /** True only after the server has durably completed the room's final hand. */
+  gameCompleted?: boolean;
   playerId: string;
   street: StartedHand['street'];
   dealerSeat: number;
