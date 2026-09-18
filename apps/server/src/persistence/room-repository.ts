@@ -425,21 +425,24 @@ export class RoomRepository {
    * hand remains within the server boundary and is never returned to a socket.
    */
   async recoverLatestPlayerViewForPlayer(roomId: string, playerId: string): Promise<ServerPlayerView | null> {
-    const room = await this.db.room.findFirst({
-      where: { id: roomId, status: { in: ['IN_PROGRESS', 'COMPLETED'] }, players: { some: { id: playerId, leftAt: null } } },
-      select: {
-        status: true,
-        hostPlayerId: true,
-        players: {
-          orderBy: { createdAt: 'asc' },
-          select: { id: true, displayName: true, currentStack: true },
+    // The room projection and signed snapshot are independent reads. Running
+    // them together removes a full database round trip from every live-state
+    // refresh while each query still scopes itself to the participant.
+    const [room, latest] = await Promise.all([
+      this.db.room.findFirst({
+        where: { id: roomId, status: { in: ['IN_PROGRESS', 'COMPLETED'] }, players: { some: { id: playerId, leftAt: null } } },
+        select: {
+          status: true,
+          hostPlayerId: true,
+          players: {
+            orderBy: { createdAt: 'asc' },
+            select: { id: true, displayName: true, currentStack: true },
+          },
         },
-      },
-    });
-    if (!room) return null;
-
-    const latest = await this.recoverLatestHandForPlayer(roomId, playerId);
-    if (!latest) return null;
+      }),
+      this.recoverLatestHandForPlayer(roomId, playerId),
+    ]);
+    if (!room || !latest) return null;
     const hand = latest.recovery.hand;
     // A participant who joined during an active hand waits for the next hand;
     // their session is valid, but no private cards exist in the current hand.

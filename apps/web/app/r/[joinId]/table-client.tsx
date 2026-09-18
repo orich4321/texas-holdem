@@ -210,10 +210,15 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
     const onVisibilityChange = () => {
       if (globalThis.document.visibilityState === 'visible') restoreAfterResume();
     };
-    void refresh();
-    const timer = globalThis.setInterval(() => {
-      if (globalThis.document.visibilityState === 'visible') void refresh();
-    }, 650);
+    // Vercel's portable realtime path is authenticated HTTP polling. Schedule
+    // the next read only after the prior one finishes so slow mobile networks
+    // cannot build a stale request queue, while keeping turn hand-offs fast.
+    let pollTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
+    const poll = async () => {
+      if (globalThis.document.visibilityState === 'visible') await refresh();
+      if (active) pollTimer = globalThis.setTimeout(() => { void poll(); }, 250);
+    };
+    void poll();
     globalThis.addEventListener('focus', restoreAfterResume);
     globalThis.addEventListener('online', restoreAfterResume);
     globalThis.document.addEventListener('visibilitychange', onVisibilityChange);
@@ -221,7 +226,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
       active = false;
       socket.close();
       socketRef.current = null;
-      globalThis.clearInterval(timer);
+      if (pollTimer !== undefined) globalThis.clearTimeout(pollTimer);
       globalThis.removeEventListener('focus', restoreAfterResume);
       globalThis.removeEventListener('online', restoreAfterResume);
       globalThis.document.removeEventListener('visibilitychange', onVisibilityChange);
