@@ -60,6 +60,39 @@ test('showdown constructs main and side pots and awards each only to its eligibl
   assert.equal(Object.isFrozen(result), true);
 });
 
+test('a short-stack heads-up winner cannot win the deep stack chips they did not match', () => {
+  let state = 1;
+  const deterministicRandomInt = (maxExclusive) => {
+    state = (state * 1664525 + 1013904223) >>> 0;
+    return state % maxExclusive;
+  };
+  const preflop = startHand({
+    seats: [
+      { seatNumber: 1, playerId: 'deep', stack: 1_500 },
+      { seatNumber: 2, playerId: 'short', stack: 500 },
+    ],
+    dealerSeat: 1,
+    smallBlind: 5,
+    bigBlind: 10,
+    randomInt: deterministicRandomInt,
+  });
+  const calledAllIn = applyPreflopCall(applyPreflopAllIn(preflop, 1), 2);
+  const showdown = runOutAllInToShowdown(advancePreflopToFlop(calledAllIn));
+  const result = settleShowdown(showdown);
+
+  assert.deepEqual(result.pots, [{
+    amount: 1_000,
+    eligibleSeatNumbers: [1, 2],
+    winnerSeatNumbers: [2],
+  }]);
+  assert.deepEqual(result.uncalledReturns, [{ seatNumber: 1, amount: 1_000 }]);
+  assert.deepEqual(result.seats.map(({ seatNumber, stack }) => ({ seatNumber, stack })), [
+    { seatNumber: 1, stack: 1_000 },
+    { seatNumber: 2, stack: 1_000 },
+  ]);
+  assert.equal(result.seats.reduce((total, seat) => total + seat.stack, 0), 2_000);
+});
+
 test('a settled river advances to authoritative showdown before settlement without dealing more cards', () => {
   const preflop = startHand({
     seats: [

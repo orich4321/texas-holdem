@@ -15,6 +15,7 @@ type PlayerAction = { type: 'check' | 'call' | 'fold' | 'all-in' } | { type: 'ra
 type Showdown = {
   winners: readonly { seatNumber: number; playerId: string; playerName: string; chipsWon: number; winningCards?: readonly Card[] }[];
   pots: readonly { amount: number; winnerSeatNumbers: readonly number[] }[];
+  uncalledReturns: readonly { seatNumber: number; amount: number }[];
 };
 type ExposedHand = {
   seatNumber: number;
@@ -239,6 +240,8 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   const exposedBySeat = useMemo(() => new Map(view?.exposedHands.map((hand) => [hand.seatNumber, hand])), [view]);
   const winnerSeatNumbers = useMemo(() => new Set(view?.showdown?.winners.map((winner) => winner.seatNumber) ?? []), [view?.showdown]);
   const winningCardKeys = useMemo(() => new Set(view?.showdown?.winners.flatMap((winner) => winner.winningCards?.map(cardKey) ?? []) ?? []), [view?.showdown]);
+  const uncalledReturnBySeat = useMemo(() => new Map(view?.showdown?.uncalledReturns?.map((returned) => [returned.seatNumber, returned.amount]) ?? []), [view?.showdown]);
+  const displayedPot = view?.showdown?.pots.reduce((total, pot) => total + pot.amount, 0) ?? view?.pot ?? 0;
   const canRevealAtShowdown = Boolean(
     view?.street === 'showdown'
     && ownSeat
@@ -572,12 +575,12 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
           void loadManagement();
         }}><span aria-hidden="true">⚙</span> ניהול שולחן</button> : null}
         <div className="table-round"><span>שלב במשחק</span><strong>{streetNames[view.street]}</strong></div>
-        <div className="table-header-pot"><span>קופה נוכחית</span><strong><i aria-hidden="true" />{view.pot.toLocaleString('he-IL')}</strong></div>
+        <div className="table-header-pot"><span>{view.showdown ? 'קופה שחולקה' : 'קופה נוכחית'}</span><strong><i aria-hidden="true" />{displayedPot.toLocaleString('he-IL')}</strong></div>
       </header>
       <p className={`turn-banner${isTurn ? ' turn-banner-active' : ''}`} role="status" aria-live="polite"><span aria-hidden="true" />{turnMessage}</p>
       <section className="poker-table" aria-label="שולחן טקסס הולדם">
         <div className="table-felt">
-          <div className="table-pot"><span><i aria-hidden="true" /> קופה</span><strong>{view.pot.toLocaleString('he-IL')}</strong></div>
+          <div className="table-pot"><span><i aria-hidden="true" /> {view.showdown ? 'קופה שחולקה' : 'קופה'}</span><strong>{displayedPot.toLocaleString('he-IL')}</strong></div>
           <div className="community-cards" aria-label="קלפי קהילה">
             {Array.from({ length: 5 }, (_, index) => <PlayingCard key={index} card={view.communityCards[index]} placeholder={!view.communityCards[index]} highlighted={Boolean(view.communityCards[index] && winningCardKeys.has(cardKey(view.communityCards[index])))} />)}
           </div>
@@ -592,6 +595,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
                 <strong>{seat.playerName}{isYou ? ' · אתם' : ''}</strong>
                 <small>{seat.isFolded ? 'פרש/ה מהיד' : <><i aria-hidden="true" />{seat.stack.toLocaleString('he-IL')} צ׳יפים</>}</small>
                 {seat.currentBet > 0 ? <em>הימור {seat.currentBet.toLocaleString('he-IL')}</em> : null}
+                {uncalledReturnBySeat.has(seat.seatNumber) ? <em>הוחזרו {uncalledReturnBySeat.get(seat.seatNumber)!.toLocaleString('he-IL')} צ׳יפים שלא הושוו</em> : null}
                 {exposed ? <div className="seat-revealed-cards" aria-label={`הקלפים של ${seat.playerName}`}><PlayingCard card={exposed.holeCards[0]} highlighted={winningCardKeys.has(cardKey(exposed.holeCards[0]))} /><PlayingCard card={exposed.holeCards[1]} highlighted={winningCardKeys.has(cardKey(exposed.holeCards[1]))} /></div> : null}
               </article>;
             })}

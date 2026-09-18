@@ -2,7 +2,13 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import { ServerGameLifecycle } from '../apps/server/src/game-lifecycle.ts';
-import { startHand } from '../packages/poker-core/src/index.ts';
+import {
+  advancePreflopToFlop,
+  applyPreflopAllIn,
+  applyPreflopCall,
+  runOutAllInToShowdown,
+  startHand,
+} from '../packages/poker-core/src/index.ts';
 import { signPrivateHandSnapshot, hydrateSignedPrivateHandSnapshot } from '../apps/server/src/persistence/private-hand-snapshot.ts';
 import { Buffer } from 'node:buffer';
 
@@ -162,6 +168,50 @@ test('a settled preflop all-in exposes contenders and advances one board street 
   assert.equal(showdown.communityCards.length, 5);
   assert.equal(showdown.toCall, 0);
   assert.equal(showdown.exposedHands.filter((hand) => hand.reason === 'all-in').length, 3, 'all-in cards remain visible through showdown');
+});
+
+test('showdown view pays only matched chips to a short-stack winner and exposes the unmatched return', () => {
+  const unequalSeats = [
+    { seatNumber: 1, playerId: 'deep', playerName: 'עמוק', stack: 1_500 },
+    { seatNumber: 2, playerId: 'short', playerName: 'קצר', stack: 500 },
+  ];
+  let state = 1;
+  const deterministicRandomInt = (maxExclusive) => {
+    state = (state * 1664525 + 1013904223) >>> 0;
+    return state % maxExclusive;
+  };
+  const preflop = startHand({
+    seats: unequalSeats.map(({ seatNumber, playerId, stack }) => ({ seatNumber, playerId, stack })),
+    dealerSeat: 1,
+    smallBlind: 5,
+    bigBlind: 10,
+    randomInt: deterministicRandomInt,
+  });
+  const showdownHand = runOutAllInToShowdown(advancePreflopToFlop(
+    applyPreflopCall(applyPreflopAllIn(preflop, 1), 2),
+  ));
+  const key = Buffer.from('a server-only snapshot signing key with adequate length', 'utf8');
+  const context = { roomId: 'unequal-all-in-room', sequence: 4, keyId: 'test-key' };
+  const recovery = hydrateSignedPrivateHandSnapshot(
+    signPrivateHandSnapshot(showdownHand, context, key),
+    context,
+    new Map([[context.keyId, key]]),
+  );
+  const game = ServerGameLifecycle.fromVerifiedRecoveredHand({
+    seats: unequalSeats,
+    dealerSeat: 1,
+    smallBlind: 5,
+    bigBlind: 10,
+  }, recovery);
+  const view = game.viewFor('short');
+
+  assert.equal(view.pot, 0, 'the live pot is empty after authoritative settlement');
+  assert.deepEqual(view.showdown?.pots, [{ amount: 1_000, winnerSeatNumbers: [2] }]);
+  assert.deepEqual(view.showdown?.uncalledReturns, [{ seatNumber: 1, amount: 1_000 }]);
+  assert.deepEqual(view.seats.map(({ seatNumber, stack }) => ({ seatNumber, stack })), [
+    { seatNumber: 1, stack: 1_000 },
+    { seatNumber: 2, stack: 1_000 },
+  ]);
 });
 
 test('the final fold immediately ends the hand and awards the full pot without dealing extra board cards', () => {

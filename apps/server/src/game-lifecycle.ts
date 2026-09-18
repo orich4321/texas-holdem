@@ -104,6 +104,8 @@ export interface ServerPlayerView {
   showdown?: Readonly<{
     winners: readonly { seatNumber: number; playerId: string; playerName: string; chipsWon: number; winningCards?: readonly Card[] }[];
     pots: readonly Pick<ShowdownPot, 'amount' | 'winnerSeatNumbers'>[];
+    /** Chips above every opponent's matched commitment, returned to their owner. */
+    uncalledReturns: readonly { seatNumber: number; amount: number }[];
   }>;
 }
 
@@ -244,7 +246,9 @@ export class ServerGameLifecycle {
       dealerSeat: hand.dealerSeat,
       currentActorSeat: hand.currentActorSeat,
       communityCards: Object.freeze(hand.communityCards.map((card) => Object.freeze({ ...card }))),
-      pot: hand.pot,
+      // Once settlement has happened there are no chips left in the live pot.
+      // The individual awarded pots remain available in `showdown.pots`.
+      pot: showdown ? 0 : hand.pot,
       toCall,
       ...(legalActions?.canRaise && legalActions.minRaiseTo !== null && legalActions.maxRaiseTo !== null ? {
         raise: Object.freeze({
@@ -283,6 +287,7 @@ export class ServerGameLifecycle {
             amount: pot.amount,
             winnerSeatNumbers: Object.freeze([...pot.winnerSeatNumbers]),
           }))),
+          uncalledReturns: Object.freeze(showdown.uncalledReturns.map((returned) => Object.freeze({ ...returned }))),
         }),
       } : {}),
     });
