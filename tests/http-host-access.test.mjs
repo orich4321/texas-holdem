@@ -70,6 +70,7 @@ test('a second authenticated player cannot invoke host-only HTTP controls by cal
     for (const path of [
       `/rooms/${joinId}/start`,
       `/rooms/${joinId}/game/next-hand`,
+      `/rooms/${joinId}/game/continue`,
       `/rooms/${joinId}/game/final-hand`,
       `/rooms/${joinId}/game/final-summary/reveal`,
       `/rooms/${joinId}/game/runout/next`,
@@ -144,4 +145,29 @@ test('the authenticated owner alone can schedule a final hand, reveal its summar
     ['summary', { joinId, hostPlayerId: 'host-id' }],
     ['remove', { joinId, hostPlayerId: 'host-id', targetPlayerId }],
   ]);
+});
+
+test('only the host can continue a completed game and must explicitly choose whether the next hand is final', async () => {
+  const calls = [];
+  const repository = {
+    async findPlayerByRoomJoinIdAndAccessToken(requestedJoinId, token) {
+      if (requestedJoinId !== joinId) return null;
+      if (token === hostToken) return { id: 'host-id', roomId: room.id };
+      if (token === guestToken) return { id: 'guest-id', roomId: room.id };
+      return null;
+    },
+    async findRoomByJoinId() { return room; },
+    async startNextHandForHostAtomically(input) { calls.push(input); return { finalHand: input.finalHand }; },
+  };
+  await withServer(repository, async (baseUrl) => {
+    const path = `${baseUrl}/rooms/${joinId}/game/continue`;
+    const guest = await globalThis.fetch(path, { method: 'POST', headers: { cookie: `poker_player_token=${guestToken}`, 'content-type': 'application/json' }, body: JSON.stringify({ finalHand: true }) });
+    assert.equal(guest.status, 403);
+    const missingChoice = await globalThis.fetch(path, { method: 'POST', headers: { cookie: `poker_player_token=${hostToken}`, 'content-type': 'application/json' }, body: '{}' });
+    assert.equal(missingChoice.status, 400);
+    const host = await globalThis.fetch(path, { method: 'POST', headers: { cookie: `poker_player_token=${hostToken}`, 'content-type': 'application/json' }, body: JSON.stringify({ finalHand: false }) });
+    assert.equal(host.status, 201);
+    assert.deepEqual(await host.json(), { roomId: joinId, status: 'IN_PROGRESS', finalHand: false });
+  });
+  assert.deepEqual(calls, [{ joinId, hostPlayerId: 'host-id', finalHand: false }]);
 });

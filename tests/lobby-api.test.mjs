@@ -47,7 +47,11 @@ test('mobile table UI keeps the player anchored, reconnects safely, and exposes 
   assert.match(table, /final-summary/);
   assert.match(table, /!view\.finalSummaryVisible/);
   assert.match(table, /game\/final-summary\/reveal/);
-  assert.match(table, /הצגת הסיכום הסופי/);
+  assert.match(table, /הצגת הסיכום/);
+  assert.match(table, /game\/continue/);
+  assert.match(table, /האם היד הבאה תהיה האחרונה/);
+  assert.match(table, /כן, עוד יד אחרונה/);
+  assert.match(table, /לא, ממשיכים כרגיל/);
   assert.match(table, /management\/players\/\$\{encodeURIComponent\(targetPlayerId\)\}\/removal/);
   assert.doesNotMatch(table, /className="showdown-panel"/);
   assert.match(table, /table-seat-winner/);

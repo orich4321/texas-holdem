@@ -105,6 +105,8 @@ export type StartNextHandForHostInput = Readonly<{
   joinId: string;
   /** Derived exclusively from the authenticated host session. */
   hostPlayerId: string;
+  /** Required only when reopening a completed final hand. */
+  finalHand?: boolean;
 }>;
 
 export type AdvanceAllInRunoutForHostInput = Readonly<{
@@ -465,7 +467,7 @@ export class RoomRepository {
       bigBlind: hand.bigBlindAmount,
     }, latest.recovery);
     if (!room.hostPlayerId) return null;
-    return this.decorateView(lifecycle.viewFor(playerId), latest.sequence, room.hostPlayerId, room.status === 'COMPLETED', room.finalSummaryVisible);
+    return this.decorateView(lifecycle.viewFor(playerId), latest.sequence, room.hostPlayerId, room.status === 'COMPLETED', room.status === 'COMPLETED' && room.finalSummaryVisible);
   }
 
   /** Applies an authenticated action to the latest verified state and commits its successor atomically. */
@@ -544,10 +546,11 @@ export class RoomRepository {
             } as Prisma.InputJsonValue,
           },
         });
-        const finalHand = await tx.gameEvent.findFirst({
-          where: { roomId, type: 'FINAL_HAND_STARTED' }, orderBy: { sequence: 'desc' }, select: { sequence: true },
+        const handStart = await tx.gameEvent.findFirst({
+          where: { roomId, type: { in: ['GAME_STARTED', 'HAND_STARTED', 'FINAL_HAND_STARTED'] }, sequence: { lte: latest.sequence } },
+          orderBy: { sequence: 'desc' }, select: { type: true },
         });
-        if (finalHand && finalHand.sequence <= latest.sequence) {
+        if (handStart?.type === 'FINAL_HAND_STARTED') {
           await tx.room.updateMany({ where: { id: roomId, status: 'IN_PROGRESS' }, data: { status: 'COMPLETED', finalSummaryVisible: false } });
           gameCompleted = true;
         }
@@ -622,10 +625,11 @@ export class RoomRepository {
             } as Prisma.InputJsonValue,
           },
         });
-        const finalHand = await tx.gameEvent.findFirst({
-          where: { roomId: room.id, type: 'FINAL_HAND_STARTED' }, orderBy: { sequence: 'desc' }, select: { sequence: true },
+        const handStart = await tx.gameEvent.findFirst({
+          where: { roomId: room.id, type: { in: ['GAME_STARTED', 'HAND_STARTED', 'FINAL_HAND_STARTED'] }, sequence: { lte: latest.sequence } },
+          orderBy: { sequence: 'desc' }, select: { type: true },
         });
-        if (finalHand && finalHand.sequence <= latest.sequence) {
+        if (handStart?.type === 'FINAL_HAND_STARTED') {
           await tx.room.updateMany({ where: { id: room.id, status: 'IN_PROGRESS' }, data: { status: 'COMPLETED', finalSummaryVisible: false } });
           gameCompleted = true;
         }
@@ -691,15 +695,19 @@ export class RoomRepository {
    * same transaction stores the durable chip totals, rotates the dealer, and
    * signs the successor hand before any client can see it.
    */
-  async startNextHandForHostAtomically({ joinId, hostPlayerId }: StartNextHandForHostInput) {
+  async startNextHandForHostAtomically({ joinId, hostPlayerId, finalHand }: StartNextHandForHostInput) {
     const activeKey = this.privateSnapshotKeyring.entries().next().value as [string, PrivateSnapshotSigningKey] | undefined;
     if (!activeKey) throw new Error('Next hand is unavailable');
     const [keyId, key] = activeKey;
 
     return this.db.$transaction(async (tx) => {
-      const room = await tx.room.findUnique({ where: { joinId }, select: { id: true, hostPlayerId: true, status: true } });
-      if (!room || room.hostPlayerId !== hostPlayerId || room.status !== 'IN_PROGRESS') throw new Error('Next hand is unavailable');
-      const locked = await tx.room.updateMany({ where: { id: room.id, hostPlayerId, status: 'IN_PROGRESS' }, data: { updatedAt: new Date() } });
+      const room = await tx.room.findUnique({ where: { joinId }, select: { id: true, hostPlayerId: true, status: true, finalSummaryVisible: true } });
+      const continuingCompleted = room?.status === 'COMPLETED' && room.finalSummaryVisible === false && typeof finalHand === 'boolean';
+      if (!room || room.hostPlayerId !== hostPlayerId || !(continuingCompleted || (room.status === 'IN_PROGRESS' && finalHand === undefined))) throw new Error('Next hand is unavailable');
+      const locked = await tx.room.updateMany({
+        where: { id: room.id, hostPlayerId, status: room.status, ...(continuingCompleted ? { finalSummaryVisible: false } : {}) },
+        data: { updatedAt: new Date() },
+      });
       if (locked.count !== 1) throw new Error('Next hand is unavailable');
       const lockedRoom = await tx.room.findUnique({
         where: { id: room.id },
@@ -713,6 +721,7 @@ export class RoomRepository {
       });
       const latest = await tx.gameSnapshot.findFirst({ where: { roomId: room.id }, orderBy: { sequence: 'desc' }, select: { sequence: true, state: true } });
       if (!lockedRoom || !latest) throw new Error('Next hand is unavailable');
+      const nextHandIsFinal = continuingCompleted ? finalHand! : lockedRoom.nextHandIsFinal;
       const recovery = hydrateSignedPrivateHandSnapshot(latest.state as unknown as SignedPrivateHandSnapshot, { roomId: room.id, sequence: latest.sequence }, this.privateSnapshotKeyring);
       if (recovery.hand.street !== 'showdown') throw new Error('Next hand is unavailable');
 
@@ -764,13 +773,17 @@ export class RoomRepository {
         data: {
           roomId: room.id,
           sequence,
-          type: lockedRoom.nextHandIsFinal ? 'FINAL_HAND_STARTED' : 'HAND_STARTED',
+          type: nextHandIsFinal ? 'FINAL_HAND_STARTED' : 'HAND_STARTED',
           payload: { dealerSeat: hand.dealerSeat, smallBlind: hand.smallBlindAmount, bigBlind: hand.bigBlindAmount },
         },
       });
       await tx.gameSnapshot.create({ data: { roomId: room.id, sequence, state: snapshot as unknown as Prisma.InputJsonValue } });
-      if (lockedRoom.nextHandIsFinal) await tx.room.update({ where: { id: room.id }, data: { nextHandIsFinal: false } });
-      return { roomId: room.id, sequence, finalHand: lockedRoom.nextHandIsFinal };
+      if (continuingCompleted) {
+        await tx.room.update({ where: { id: room.id }, data: { status: 'IN_PROGRESS', finalSummaryVisible: false, nextHandIsFinal: false } });
+      } else if (lockedRoom.nextHandIsFinal) {
+        await tx.room.update({ where: { id: room.id }, data: { nextHandIsFinal: false } });
+      }
+      return { roomId: room.id, sequence, finalHand: nextHandIsFinal };
     });
   }
 

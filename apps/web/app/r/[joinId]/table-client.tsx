@@ -135,6 +135,8 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   const [pending, setPending] = useState(false);
   const [startingNextHand, setStartingNextHand] = useState(false);
   const [revealingSummary, setRevealingSummary] = useState(false);
+  const [continueDialogOpen, setContinueDialogOpen] = useState(false);
+  const [continuingHand, setContinuingHand] = useState(false);
   const [advancingRunout, setAdvancingRunout] = useState(false);
   const [revealingHand, setRevealingHand] = useState(false);
   const [showRaiseControls, setShowRaiseControls] = useState(false);
@@ -300,8 +302,12 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   }, [isTurn, view?.raise]);
 
   useEffect(() => {
-    if (!isCurrentHost) setManagementOpen(false);
-  }, [isCurrentHost]);
+    if (!isCurrentHost || view?.gameCompleted) setManagementOpen(false);
+  }, [isCurrentHost, view?.gameCompleted]);
+
+  useEffect(() => {
+    if (view?.street !== 'showdown' || !view.gameCompleted || view.finalSummaryVisible) setContinueDialogOpen(false);
+  }, [view?.street, view?.gameCompleted, view?.finalSummaryVisible]);
 
   useEffect(() => {
     if (!managementOpen) return;
@@ -424,6 +430,23 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
       setStatus('לא הצלחנו להציג את הסיכום הסופי. נסו שוב.');
     } finally {
       setRevealingSummary(false);
+    }
+  }
+
+  async function continueAfterFinalHand(finalHand: boolean) {
+    if (!isCurrentHost || !view?.gameCompleted || view.finalSummaryVisible || continuingHand) return;
+    setContinuingHand(true);
+    try {
+      const response = await globalThis.fetch(`${SERVER_URL}/rooms/${encodeURIComponent(joinId)}/game/continue`, {
+        method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ finalHand }),
+      });
+      if (!response.ok) throw new Error('Continuation unavailable');
+      setContinueDialogOpen(false);
+      setStatus(finalHand ? 'מחלקים עוד יד אחרונה…' : 'ממשיכים לשחק…');
+    } catch {
+      setStatus('לא הצלחנו להתחיל עוד יד. נסו שוב.');
+    } finally {
+      setContinuingHand(false);
     }
   }
 
@@ -673,10 +696,18 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
         {view.showdown && (!view.gameCompleted || !view.finalSummaryVisible) ? <div className="between-hands-controls" aria-label="פעולות בין ידיים">
           {canRevealAtShowdown ? <button type="button" className="reveal-hand-button" disabled={revealingHand} onClick={() => void revealHand()}>{revealingHand ? 'חושפים…' : 'לחשוף את היד שלי'}</button> : null}
           {view.gameCompleted
-            ? isCurrentHost ? <button type="button" className="next-hand-button" disabled={revealingSummary} onClick={() => void revealFinalSummary()}>{revealingSummary ? 'מציגים…' : 'הצגת הסיכום הסופי'}</button> : <small>היד האחרונה הסתיימה. ממתינים למארח שיציג את הסיכום.</small>
+            ? isCurrentHost ? <div className="final-hand-decisions"><button type="button" disabled={revealingSummary || continuingHand} onClick={() => void revealFinalSummary()}>{revealingSummary ? 'מציגים…' : 'הצגת הסיכום'}</button><button type="button" disabled={revealingSummary || continuingHand} onClick={() => setContinueDialogOpen(true)}>עוד יד</button></div> : <small>היד האחרונה הסתיימה. ממתינים להחלטת המארח.</small>
             : isCurrentHost ? <button type="button" className="next-hand-button" disabled={startingNextHand} onClick={() => void startNextHand()}>{startingNextHand ? 'מחלקים…' : management?.nextHandIsFinal ? 'התחלת היד האחרונה' : 'היד הבאה'}</button> : <small>המארח יכול להתחיל את היד הבאה.</small>}
         </div> : null}
       </section>
+      {continueDialogOpen && isCurrentHost && view?.gameCompleted && !view.finalSummaryVisible ? <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !continuingHand) setContinueDialogOpen(false);
+      }}><section className="continue-hand-dialog" role="dialog" aria-modal="true" aria-labelledby="continue-hand-title">
+        <p>ממשיכים לשחק</p>
+        <h2 id="continue-hand-title">האם היד הבאה תהיה האחרונה?</h2>
+        <div><button type="button" disabled={continuingHand} onClick={() => void continueAfterFinalHand(true)}>{continuingHand ? 'מחלקים…' : 'כן, עוד יד אחרונה'}</button><button type="button" disabled={continuingHand} onClick={() => void continueAfterFinalHand(false)}>{continuingHand ? 'מחלקים…' : 'לא, ממשיכים כרגיל'}</button></div>
+        <button type="button" className="continue-cancel" disabled={continuingHand} onClick={() => setContinueDialogOpen(false)}>ביטול</button>
+      </section></div> : null}
       {managementOpen && isCurrentHost ? <div className="management-backdrop" role="presentation" onMouseDown={(event) => {
         if (event.target === event.currentTarget) setManagementOpen(false);
       }}><section className="management-sheet" role="dialog" aria-modal="true" aria-labelledby="management-title">

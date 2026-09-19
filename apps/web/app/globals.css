@@ -254,6 +254,16 @@ button:disabled { cursor: wait; opacity: 0.55; }
 .between-hands-controls { display: grid; min-width: 0; gap: 6px; }
 .reveal-hand-button { color: #e7fff5; background: linear-gradient(135deg,#187e5b,#0a4d37); }
 .between-hands-controls > .next-hand-button { min-height: 43px; border: 0; border-radius: 11px; color: #072118; background: linear-gradient(135deg,#8ceac8,#40ca98); cursor: pointer; font-weight: 950; }
+.final-hand-decisions { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 6px; }
+.final-hand-decisions button { min-height: 43px; padding: 5px; border: 1px solid var(--gold-line); border-radius: 11px; color: #f8e8c3; background: rgba(126,89,31,.24); cursor: pointer; font-size: .68rem; font-weight: 900; }
+.final-hand-decisions button:last-child { border: 0; color: #072118; background: linear-gradient(135deg,#8ceac8,#40ca98); }
+.continue-hand-dialog { display: grid; width: min(100%,420px); padding: clamp(16px,3vw,24px); border: 1px solid var(--gold-line); border-radius: 20px; background: linear-gradient(145deg,#123527,#081a13); box-shadow: 0 28px 90px rgba(0,0,0,.64); gap: 12px; text-align: center; }
+.continue-hand-dialog p { margin: 0; color: var(--gold); font-size: .62rem; font-weight: 900; }
+.continue-hand-dialog h2 { margin: 0; font-family: Georgia,serif; font-size: clamp(1.1rem,4vw,1.5rem); }
+.continue-hand-dialog > div { display: grid; gap: 8px; }
+.continue-hand-dialog button { min-height: 44px; border: 0; border-radius: 11px; color: #072118; background: linear-gradient(135deg,#8ceac8,#40ca98); cursor: pointer; font-weight: 900; }
+.continue-hand-dialog button:first-child { color: #352400; background: linear-gradient(135deg,var(--gold-light),#d8a747); }
+.continue-hand-dialog .continue-cancel { border: 1px solid var(--line); color: #d6e4db; background: rgba(255,255,255,.06); }
 .host-between-hands { display: grid; padding-top: 10px; border-top: 1px solid var(--line); gap: 8px; }
 .host-between-hands p { display: grid; margin: 0; gap: 2px; }
 .host-between-hands p strong { font-size: .72rem; }

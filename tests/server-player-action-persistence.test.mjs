@@ -23,7 +23,7 @@ const initial = signPrivateHandSnapshot(startHand({
 const raised = applyPreflopRaise(hydrateSignedPrivateHandSnapshot(initial, { roomId: room.id, sequence: 0 }, keyring).hand, 1, 20);
 const raisedSnapshot = signPrivateHandSnapshot(raised, { roomId: room.id, sequence: 1, keyId }, key);
 
-function createDb({ latest = { sequence: 0, state: initial }, finalHandSequence = null, duplicateAction = false } = {}) {
+function createDb({ latest = { sequence: 0, state: initial }, currentHandStart = 'GAME_STARTED', duplicateAction = false } = {}) {
   const calls = [];
   const tx = {
     room: {
@@ -36,7 +36,7 @@ function createDb({ latest = { sequence: 0, state: initial }, finalHandSequence 
     },
     gameEvent: {
       create: async (args) => { calls.push(['gameEvent.create', args]); return args.data; },
-      findFirst: async (args) => { calls.push(['gameEvent.findFirst', args]); return finalHandSequence === null ? null : { sequence: finalHandSequence }; },
+      findFirst: async (args) => { calls.push(['gameEvent.findFirst', args]); return { type: currentHandStart }; },
       findUnique: async (args) => { calls.push(['gameEvent.findUnique', args]); return duplicateAction ? { id: 'existing-event' } : null; },
     },
     player: { update: async (args) => { calls.push(['player.update', args]); return args.data; } },
@@ -94,7 +94,7 @@ test('the last fold atomically persists the uncontested winner and updated chip 
 });
 
 test('settling the signed final hand completes the room atomically', async () => {
-  const db = createDb({ latest: { sequence: 1, state: raisedSnapshot }, finalHandSequence: 1 });
+  const db = createDb({ latest: { sequence: 1, state: raisedSnapshot }, currentHandStart: 'FINAL_HAND_STARTED' });
   const repository = new RoomRepository(db, undefined, undefined, undefined, keyring);
 
   const result = await repository.persistPlayerActionAtomically({ roomId: room.id, playerId: 'player-1', action: { type: 'fold' } });
@@ -104,6 +104,15 @@ test('settling the signed final hand completes the room atomically', async () =>
   assert.equal(result.view.finalSummaryVisible, false);
   assert.ok(db.calls.some(([name, args]) => name === 'room.updateMany' && args.data.status === 'COMPLETED' && args.data.finalSummaryVisible === false));
   assert.deepEqual(db.calls.find(([name]) => name === 'gameEvent.create')[1].data.type, 'PLAYER_ACTION');
+});
+
+test('a normal hand after a previous final hand does not complete the room again', async () => {
+  const db = createDb({ latest: { sequence: 1, state: raisedSnapshot }, currentHandStart: 'HAND_STARTED' });
+  const repository = new RoomRepository(db, undefined, undefined, undefined, keyring);
+  const result = await repository.persistPlayerActionAtomically({ roomId: room.id, playerId: 'player-1', action: { type: 'fold' } });
+  assert.equal(result.view.gameCompleted, false);
+  assert.equal(db.calls.some(([name, args]) => name === 'room.updateMany' && args.data.status === 'COMPLETED'), false);
+  assert.deepEqual(db.calls.find(([name]) => name === 'gameEvent.findFirst')[1].where.type.in, ['GAME_STARTED', 'HAND_STARTED', 'FINAL_HAND_STARTED']);
 });
 
 test('invalid or out-of-turn action writes nothing', async () => {

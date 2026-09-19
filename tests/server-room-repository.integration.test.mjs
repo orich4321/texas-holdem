@@ -202,3 +202,37 @@ test('database transaction serializes an authenticated action into one private s
   const guestView = await repository.recoverLatestPlayerViewForPlayer(created.id, created.players[1].id);
   assert.equal(JSON.stringify(guestView).match(/"holeCards"/g).length, 1);
 });
+
+test('a host can add another hand after a final hand and decide afresh whether it is final', { skip: !integrationEnabled }, async () => {
+  const repository = new RoomRepository(prisma, undefined, undefined, undefined, snapshotKeyring);
+  const created = await repository.createRoom({
+    status: 'WAITING',
+    host: { id: randomUUID(), displayName: 'Host', initialStack: 1_000 },
+    players: [{ id: randomUUID(), displayName: 'Guest', initialStack: 1_000 }],
+  });
+  await repository.startGameForHostAtomically({ joinId: created.joinId, hostPlayerId: created.hostPlayerId });
+
+  async function finishCurrentHand() {
+    const current = await repository.recoverLatestHandForPlayer(created.id, created.hostPlayerId);
+    const actorId = current.recovery.hand.seats.find((seat) => seat.seatNumber === current.recovery.hand.currentActorSeat).playerId;
+    return repository.persistPlayerActionAtomically({ roomId: created.id, playerId: actorId, action: { type: 'fold' } });
+  }
+
+  await finishCurrentHand();
+  await repository.scheduleFinalHandForHost(created.joinId, created.hostPlayerId, true);
+  assert.equal((await repository.startNextHandForHostAtomically({ joinId: created.joinId, hostPlayerId: created.hostPlayerId })).finalHand, true);
+  assert.equal((await finishCurrentHand()).view.gameCompleted, true);
+  assert.equal((await prisma.room.findUnique({ where: { id: created.id } })).finalSummaryVisible, false);
+
+  await assert.rejects(repository.startNextHandForHostAtomically({ joinId: created.joinId, hostPlayerId: created.players[1].id, finalHand: false }));
+  await assert.rejects(repository.startNextHandForHostAtomically({ joinId: created.joinId, hostPlayerId: created.hostPlayerId }));
+  assert.equal((await repository.startNextHandForHostAtomically({ joinId: created.joinId, hostPlayerId: created.hostPlayerId, finalHand: false })).finalHand, false);
+  assert.equal((await finishCurrentHand()).view.gameCompleted, false, 'an earlier final marker must not end this ordinary hand');
+  assert.equal((await prisma.room.findUnique({ where: { id: created.id } })).status, 'IN_PROGRESS');
+
+  await repository.scheduleFinalHandForHost(created.joinId, created.hostPlayerId, true);
+  await repository.startNextHandForHostAtomically({ joinId: created.joinId, hostPlayerId: created.hostPlayerId });
+  assert.equal((await finishCurrentHand()).view.gameCompleted, true);
+  assert.equal((await repository.startNextHandForHostAtomically({ joinId: created.joinId, hostPlayerId: created.hostPlayerId, finalHand: true })).finalHand, true);
+  assert.equal((await finishCurrentHand()).view.gameCompleted, true, 'the same choice returns after every final hand');
+});

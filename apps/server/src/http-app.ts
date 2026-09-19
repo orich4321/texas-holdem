@@ -361,6 +361,27 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
     }
   });
 
+  routes.post('/rooms/:joinId/game/continue', async (request, response) => {
+    try {
+      const host = await findAuthenticatedHost(request.params.joinId, request.headers.cookie);
+      if (!host) {
+        response.status(403).json({ error: { code: 'HOST_FORBIDDEN' } });
+        return;
+      }
+      if (typeof request.body?.finalHand !== 'boolean') {
+        response.status(400).json({ error: { code: 'INVALID_REQUEST' } });
+        return;
+      }
+      const result = await roomRepository.startNextHandForHostAtomically({
+        joinId: request.params.joinId, hostPlayerId: host.id, finalHand: request.body.finalHand,
+      });
+      response.status(201).json({ roomId: request.params.joinId, status: 'IN_PROGRESS', finalHand: result.finalHand });
+    } catch (error) {
+      console.error('Completed-game continuation failed', error);
+      response.status(409).json({ error: { code: 'CONTINUATION_UNAVAILABLE' } });
+    }
+  });
+
   routes.post('/rooms/:joinId/game/final-hand', async (request, response) => {
     try {
       const player = await findAuthenticatedHost(request.params.joinId, request.headers.cookie);
