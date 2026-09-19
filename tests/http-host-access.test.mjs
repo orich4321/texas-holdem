@@ -85,23 +85,36 @@ test('a second authenticated player cannot invoke host-only HTTP controls by cal
   });
 });
 
-test('a completed-game JSON summary is scoped to an authenticated participant', async () => {
-  const summary = { version: 1, room: { joinId }, standings: [], hands: [], events: [] };
+test('participants see final standings, but only the authenticated host can download the detailed JSON', async () => {
+  const summary = { version: 3, room: { joinId }, standings: [{ displayName: 'אורח', initialStack: 500, finalStack: 700, net: 200 }], hands: [{ hand: 'private-hand' }], events: [{ payload: { holeCards: ['private-card'] } }] };
   const repository = {
     async findPlayerByRoomJoinIdAndAccessToken(requestedJoinId, token) {
-      return requestedJoinId === joinId && token === guestToken ? { id: 'guest-id', roomId: room.id } : null;
+      if (requestedJoinId !== joinId) return null;
+      if (token === guestToken) return { id: 'guest-id', roomId: room.id };
+      if (token === hostToken) return { id: 'host-id', roomId: room.id };
+      return null;
     },
+    async findRoomByJoinId() { return room; },
     async getFinalSummaryForPlayer(roomId, playerId) {
-      assert.deepEqual({ roomId, playerId }, { roomId: room.id, playerId: 'guest-id' });
+      assert.equal(roomId, room.id);
+      assert.ok(['guest-id', 'host-id'].includes(playerId));
       return summary;
     },
   };
   await withServer(repository, async (baseUrl) => {
     const unauthenticated = await globalThis.fetch(`${baseUrl}/rooms/${joinId}/final-summary`);
     assert.equal(unauthenticated.status, 401);
+    const unauthenticatedDownload = await globalThis.fetch(`${baseUrl}/rooms/${joinId}/final-summary/download`);
+    assert.equal(unauthenticatedDownload.status, 403);
     const participant = await globalThis.fetch(`${baseUrl}/rooms/${joinId}/final-summary`, { headers: { cookie: `poker_player_token=${guestToken}` } });
     assert.equal(participant.status, 200);
-    assert.deepEqual(await participant.json(), summary);
+    assert.deepEqual(await participant.json(), { version: 3, room: summary.room, standings: summary.standings, handCount: 1 });
+    const guestDownload = await globalThis.fetch(`${baseUrl}/rooms/${joinId}/final-summary/download`, { headers: { cookie: `poker_player_token=${guestToken}` } });
+    assert.equal(guestDownload.status, 403);
+    const hostDownload = await globalThis.fetch(`${baseUrl}/rooms/${joinId}/final-summary/download`, { headers: { cookie: `poker_player_token=${hostToken}` } });
+    assert.equal(hostDownload.status, 200);
+    assert.match(hostDownload.headers.get('content-disposition'), /attachment/);
+    assert.deepEqual(await hostDownload.json(), summary);
   });
 });
 

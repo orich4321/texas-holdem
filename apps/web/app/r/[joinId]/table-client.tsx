@@ -29,8 +29,7 @@ type FinalSummary = {
   version: number;
   room: { joinId: string; initialStack: number; smallBlind: number; bigBlind: number };
   standings: readonly { displayName: string; initialStack: number; addedChips?: number; totalBuyIn?: number; finalStack: number; net: number }[];
-  hands: readonly unknown[];
-  events: readonly unknown[];
+  handCount: number;
 };
 type PlayerView = {
   sequence?: number;
@@ -91,7 +90,7 @@ function isFinalSummary(value: unknown, joinId: string): value is FinalSummary {
     && Array.isArray(summary.standings)
     && summary.standings.every((standing) => standing !== null && typeof standing === 'object'
       && ['displayName', 'initialStack', 'finalStack', 'net'].every((key) => typeof (standing as Record<string, unknown>)[key] === (key === 'displayName' ? 'string' : 'number')))
-    && Array.isArray(summary.hands) && Array.isArray(summary.events);
+    && typeof summary.handCount === 'number';
 }
 
 function isPlayerView(value: unknown): value is PlayerView {
@@ -138,6 +137,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   const [showRaiseControls, setShowRaiseControls] = useState(false);
   const [waitingForNextHand, setWaitingForNextHand] = useState(false);
   const [finalSummary, setFinalSummary] = useState<FinalSummary>();
+  const [downloadingSummary, setDownloadingSummary] = useState(false);
   const [managingPlayerId, setManagingPlayerId] = useState<string>();
   const [managementOpen, setManagementOpen] = useState(false);
   const [playersOpen, setPlayersOpen] = useState(false);
@@ -516,15 +516,24 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
     }
   }
 
-  function downloadFinalSummary() {
-    if (!finalSummary) return;
-    const blob = new Blob([JSON.stringify(finalSummary, null, 2)], { type: 'application/json' });
-    const url = globalThis.URL.createObjectURL(blob);
-    const link = globalThis.document.createElement('a');
-    link.href = url;
-    link.download = `texas-holdem-${joinId}-summary.json`;
-    link.click();
-    globalThis.URL.revokeObjectURL(url);
+  async function downloadFinalSummary() {
+    if (!finalSummary || !isCurrentHost || downloadingSummary) return;
+    setDownloadingSummary(true);
+    try {
+      const response = await globalThis.fetch(`${SERVER_URL}/rooms/${encodeURIComponent(joinId)}/final-summary/download`, { credentials: 'include', cache: 'no-store' });
+      if (!response.ok) throw new Error('Summary download unavailable');
+      const blob = await response.blob();
+      const url = globalThis.URL.createObjectURL(blob);
+      const link = globalThis.document.createElement('a');
+      link.href = url;
+      link.download = `texas-holdem-${joinId}-summary.json`;
+      link.click();
+      globalThis.setTimeout(() => globalThis.URL.revokeObjectURL(url), 1_000);
+    } catch {
+      setStatus('לא הצלחנו להוריד את סיכום המשחק. נסו שוב.');
+    } finally {
+      setDownloadingSummary(false);
+    }
   }
 
   async function advanceAllInRunout() {
@@ -671,8 +680,8 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
         <p>המשחק הסתיים</p>
         <h2>סיכום סופי</h2>
         <ul>{finalSummary.standings.map((standing) => <li key={standing.displayName}><strong>{standing.displayName}</strong><span>{standing.finalStack.toLocaleString('he-IL')} צ׳יפים · כניסות {(standing.totalBuyIn ?? standing.initialStack).toLocaleString('he-IL')} · {standing.net >= 0 ? '+' : ''}{standing.net.toLocaleString('he-IL')}</span></li>)}</ul>
-        <small>{finalSummary.hands.length} ידיים הסתיימו · פירוט הפעולות והתשלומים נשמר בקובץ.</small>
-        <button type="button" onClick={downloadFinalSummary}>הורדת סיכום JSON</button>
+        <small>{finalSummary.handCount} ידיים הסתיימו{isCurrentHost ? ' · פירוט הפעולות והתשלומים נשמר בקובץ.' : '.'}</small>
+        {isCurrentHost ? <button type="button" disabled={downloadingSummary} onClick={() => void downloadFinalSummary()}>{downloadingSummary ? 'מורידים…' : 'הורדת סיכום JSON'}</button> : null}
       </section></div> : null}
     </main>
   );

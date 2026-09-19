@@ -539,9 +539,34 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
         response.status(409).json({ error: { code: 'FINAL_SUMMARY_UNAVAILABLE' } });
         return;
       }
-      response.json(summary);
+      response.json({
+        version: summary.version,
+        room: summary.room,
+        standings: summary.standings,
+        handCount: summary.hands.length,
+      });
     } catch (error) {
       console.error('Final summary lookup failed', error);
+      response.status(500).json({ error: { code: 'INTERNAL_ERROR' } });
+    }
+  });
+
+  routes.get('/rooms/:joinId/final-summary/download', async (request, response) => {
+    try {
+      const host = await findAuthenticatedHost(request.params.joinId, request.headers.cookie);
+      if (!host) {
+        response.status(403).json({ error: { code: 'HOST_FORBIDDEN' } });
+        return;
+      }
+      const summary = await roomRepository.getFinalSummaryForPlayer(host.roomId, host.id);
+      if (!summary) {
+        response.status(409).json({ error: { code: 'FINAL_SUMMARY_UNAVAILABLE' } });
+        return;
+      }
+      response.setHeader('Content-Disposition', `attachment; filename="texas-holdem-${request.params.joinId}-summary.json"`);
+      response.json(summary);
+    } catch (error) {
+      console.error('Final summary download failed', error);
       response.status(500).json({ error: { code: 'INTERNAL_ERROR' } });
     }
   });
