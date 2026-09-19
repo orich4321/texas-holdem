@@ -76,3 +76,18 @@ test('final accounting subtracts every applied rebuy from the player result', as
   });
   assert.equal(summary.chipAdjustments[0].amount, 500);
 });
+
+test('the completed summary stays hidden until the host releases it', async () => {
+  const calls = [];
+  const repository = new RoomRepository({
+    room: { updateMany: async (args) => { calls.push(args); return { count: 1 }; } },
+  });
+  assert.deepEqual(await repository.revealFinalSummaryForHost(joinId, hostId), { finalSummaryVisible: true });
+  assert.deepEqual(calls[0], {
+    where: { joinId, hostPlayerId: hostId, status: 'COMPLETED', finalSummaryVisible: false },
+    data: { finalSummaryVisible: true },
+  });
+
+  const unavailable = new RoomRepository({ room: { updateMany: async () => ({ count: 0 }) } });
+  await assert.rejects(unavailable.revealFinalSummaryForHost(joinId, guestId), /unavailable/);
+});

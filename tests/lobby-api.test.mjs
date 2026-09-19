@@ -45,6 +45,9 @@ test('mobile table UI keeps the player anchored, reconnects safely, and exposes 
   assert.match(table, /setTimeout\([^]*250\)/);
   assert.doesNotMatch(table, /setInterval\([^]*650\)/);
   assert.match(table, /final-summary/);
+  assert.match(table, /!view\.finalSummaryVisible/);
+  assert.match(table, /game\/final-summary\/reveal/);
+  assert.match(table, /הצגת הסיכום הסופי/);
   assert.match(table, /management\/players\/\$\{encodeURIComponent\(targetPlayerId\)\}\/removal/);
   assert.doesNotMatch(table, /className="showdown-panel"/);
   assert.match(table, /table-seat-winner/);

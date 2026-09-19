@@ -377,6 +377,21 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
     }
   });
 
+  routes.post('/rooms/:joinId/game/final-summary/reveal', async (request, response) => {
+    try {
+      const host = await findAuthenticatedHost(request.params.joinId, request.headers.cookie);
+      if (!host) {
+        response.status(403).json({ error: { code: 'HOST_FORBIDDEN' } });
+        return;
+      }
+      const result = await roomRepository.revealFinalSummaryForHost(request.params.joinId, host.id);
+      response.status(201).json(result);
+    } catch (error) {
+      console.error('Final summary reveal failed', error);
+      response.status(409).json({ error: { code: 'FINAL_SUMMARY_REVEAL_UNAVAILABLE' } });
+    }
+  });
+
   routes.post('/rooms/:joinId/players/:playerId/remove', async (request, response) => {
     if (!PLAYER_ID_PATTERN.test(request.params.playerId)) {
       response.status(400).json({ error: { code: 'INVALID_REQUEST' } });

@@ -101,7 +101,8 @@ test('settling the signed final hand completes the room atomically', async () =>
 
   assert.equal(result.view.street, 'showdown');
   assert.equal(result.view.gameCompleted, true);
-  assert.ok(db.calls.some(([name, args]) => name === 'room.updateMany' && args.data.status === 'COMPLETED'));
+  assert.equal(result.view.finalSummaryVisible, false);
+  assert.ok(db.calls.some(([name, args]) => name === 'room.updateMany' && args.data.status === 'COMPLETED' && args.data.finalSummaryVisible === false));
   assert.deepEqual(db.calls.find(([name]) => name === 'gameEvent.create')[1].data.type, 'PLAYER_ACTION');
 });
 

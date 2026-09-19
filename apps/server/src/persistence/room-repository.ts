@@ -176,8 +176,8 @@ export class RoomRepository {
     private readonly privateSnapshotKeyring: ReadonlyMap<string, PrivateSnapshotSigningKey> = new Map(),
   ) {}
 
-  private decorateView(view: ServerPlayerView, sequence: number, hostPlayerId: string, gameCompleted = false): ServerPlayerView {
-    return Object.freeze({ ...view, sequence, hostPlayerId, gameCompleted });
+  private decorateView(view: ServerPlayerView, sequence: number, hostPlayerId: string, gameCompleted = false, finalSummaryVisible = false): ServerPlayerView {
+    return Object.freeze({ ...view, sequence, hostPlayerId, gameCompleted, finalSummaryVisible });
   }
 
   private async createPlayerWithUniqueAccessToken(db: PlayerWriter, player: PlayerInput, roomId: string) {
@@ -434,6 +434,7 @@ export class RoomRepository {
         select: {
           status: true,
           hostPlayerId: true,
+          finalSummaryVisible: true,
           players: {
             orderBy: { createdAt: 'asc' },
             select: { id: true, displayName: true, currentStack: true },
@@ -464,7 +465,7 @@ export class RoomRepository {
       bigBlind: hand.bigBlindAmount,
     }, latest.recovery);
     if (!room.hostPlayerId) return null;
-    return this.decorateView(lifecycle.viewFor(playerId), latest.sequence, room.hostPlayerId, room.status === 'COMPLETED');
+    return this.decorateView(lifecycle.viewFor(playerId), latest.sequence, room.hostPlayerId, room.status === 'COMPLETED', room.finalSummaryVisible);
   }
 
   /** Applies an authenticated action to the latest verified state and commits its successor atomically. */
@@ -547,7 +548,7 @@ export class RoomRepository {
           where: { roomId, type: 'FINAL_HAND_STARTED' }, orderBy: { sequence: 'desc' }, select: { sequence: true },
         });
         if (finalHand && finalHand.sequence <= latest.sequence) {
-          await tx.room.updateMany({ where: { id: roomId, status: 'IN_PROGRESS' }, data: { status: 'COMPLETED' } });
+          await tx.room.updateMany({ where: { id: roomId, status: 'IN_PROGRESS' }, data: { status: 'COMPLETED', finalSummaryVisible: false } });
           gameCompleted = true;
         }
       }
@@ -625,7 +626,7 @@ export class RoomRepository {
           where: { roomId: room.id, type: 'FINAL_HAND_STARTED' }, orderBy: { sequence: 'desc' }, select: { sequence: true },
         });
         if (finalHand && finalHand.sequence <= latest.sequence) {
-          await tx.room.updateMany({ where: { id: room.id, status: 'IN_PROGRESS' }, data: { status: 'COMPLETED' } });
+          await tx.room.updateMany({ where: { id: room.id, status: 'IN_PROGRESS' }, data: { status: 'COMPLETED', finalSummaryVisible: false } });
           gameCompleted = true;
         }
       }
@@ -645,10 +646,10 @@ export class RoomRepository {
     return this.db.$transaction(async (tx) => {
       const room = await tx.room.findUnique({
         where: { id: roomId },
-        select: { status: true, hostPlayerId: true, players: { orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, currentStack: true } } },
+        select: { status: true, hostPlayerId: true, finalSummaryVisible: true, players: { orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, currentStack: true } } },
       });
-      if (!room || !room.hostPlayerId || room.status !== 'IN_PROGRESS' || !room.players.some((player) => player.id === playerId)) throw new Error('Showdown reveal is unavailable');
-      const locked = await tx.room.updateMany({ where: { id: roomId, status: 'IN_PROGRESS' }, data: { updatedAt: new Date() } });
+      if (!room || !room.hostPlayerId || (room.status !== 'IN_PROGRESS' && (room.status !== 'COMPLETED' || room.finalSummaryVisible)) || !room.players.some((player) => player.id === playerId)) throw new Error('Showdown reveal is unavailable');
+      const locked = await tx.room.updateMany({ where: { id: roomId, status: room.status }, data: { updatedAt: new Date() } });
       if (locked.count !== 1) throw new Error('Showdown reveal is unavailable');
       const latest = await tx.gameSnapshot.findFirst({ where: { roomId }, orderBy: { sequence: 'desc' }, select: { sequence: true, state: true } });
       if (!latest) throw new Error('Showdown reveal is unavailable');
@@ -669,10 +670,20 @@ export class RoomRepository {
       await tx.gameSnapshot.create({ data: { roomId, sequence, state: snapshot as unknown as Prisma.InputJsonValue } });
       return {
         sequence,
-        view: this.decorateView(view, sequence, room.hostPlayerId),
-        views: Object.freeze(recovery.hand.seats.map((seat) => this.decorateView(lifecycle.viewFor(seat.playerId), sequence, room.hostPlayerId!))),
+        view: this.decorateView(view, sequence, room.hostPlayerId, room.status === 'COMPLETED', room.finalSummaryVisible),
+        views: Object.freeze(recovery.hand.seats.map((seat) => this.decorateView(lifecycle.viewFor(seat.playerId), sequence, room.hostPlayerId!, room.status === 'COMPLETED', room.finalSummaryVisible))),
       };
     });
+  }
+
+  /** Releases the completed game's summary only when its authenticated host asks. */
+  async revealFinalSummaryForHost(joinId: string, hostPlayerId: string) {
+    const updated = await this.db.room.updateMany({
+      where: { joinId, hostPlayerId, status: 'COMPLETED', finalSummaryVisible: false },
+      data: { finalSummaryVisible: true },
+    });
+    if (updated.count !== 1) throw new Error('Final summary release is unavailable');
+    return { finalSummaryVisible: true };
   }
 
   /**
@@ -877,7 +888,7 @@ export class RoomRepository {
   /** Returns only the public audit trail and final stacks to a room participant. */
   async getFinalSummaryForPlayer(roomId: string, playerId: string) {
     const room = await this.db.room.findFirst({
-      where: { id: roomId, status: 'COMPLETED', players: { some: { id: playerId } } },
+      where: { id: roomId, status: 'COMPLETED', finalSummaryVisible: true, players: { some: { id: playerId } } },
       select: {
         joinId: true, initialStack: true, smallBlind: true, bigBlind: true,
         players: { orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, initialStack: true, currentStack: true, leftAt: true } },

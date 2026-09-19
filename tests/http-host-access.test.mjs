@@ -71,6 +71,7 @@ test('a second authenticated player cannot invoke host-only HTTP controls by cal
       `/rooms/${joinId}/start`,
       `/rooms/${joinId}/game/next-hand`,
       `/rooms/${joinId}/game/final-hand`,
+      `/rooms/${joinId}/game/final-summary/reveal`,
       `/rooms/${joinId}/game/runout/next`,
       `/rooms/${joinId}/players/${targetPlayerId}/remove`,
       `/rooms/${joinId}/management/blinds`,
@@ -118,7 +119,7 @@ test('participants see final standings, but only the authenticated host can down
   });
 });
 
-test('the authenticated owner alone can schedule a final hand or a player removal', async () => {
+test('the authenticated owner alone can schedule a final hand, reveal its summary, or remove a player', async () => {
   const calls = [];
   const repository = {
     async findPlayerByRoomJoinIdAndAccessToken(requestedJoinId, token) {
@@ -126,16 +127,21 @@ test('the authenticated owner alone can schedule a final hand or a player remova
     },
     async findRoomByJoinId() { return room; },
     async scheduleFinalHandForHost(joinId, hostPlayerId, enabled) { calls.push(['final', { joinId, hostPlayerId, enabled }]); return { nextHandIsFinal: enabled }; },
+    async revealFinalSummaryForHost(joinId, hostPlayerId) { calls.push(['summary', { joinId, hostPlayerId }]); return { finalSummaryVisible: true }; },
     async removePlayerBetweenHandsForHostAtomically(input) { calls.push(['remove', input]); },
   };
   await withServer(repository, async (baseUrl) => {
     const finalHand = await globalThis.fetch(`${baseUrl}/rooms/${joinId}/game/final-hand`, { method: 'POST', headers: { cookie: `poker_player_token=${hostToken}`, 'content-type': 'application/json' }, body: JSON.stringify({ enabled: true }) });
     assert.equal(finalHand.status, 201);
+    const summary = await globalThis.fetch(`${baseUrl}/rooms/${joinId}/game/final-summary/reveal`, { method: 'POST', headers: { cookie: `poker_player_token=${hostToken}` } });
+    assert.equal(summary.status, 201);
+    assert.deepEqual(await summary.json(), { finalSummaryVisible: true });
     const removal = await globalThis.fetch(`${baseUrl}/rooms/${joinId}/players/${targetPlayerId}/remove`, { method: 'POST', headers: { cookie: `poker_player_token=${hostToken}` } });
     assert.equal(removal.status, 201);
   });
   assert.deepEqual(calls, [
     ['final', { joinId, hostPlayerId: 'host-id', enabled: true }],
+    ['summary', { joinId, hostPlayerId: 'host-id' }],
     ['remove', { joinId, hostPlayerId: 'host-id', targetPlayerId }],
   ]);
 });

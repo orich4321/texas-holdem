@@ -68,6 +68,8 @@ export interface ServerPlayerView {
   hostPlayerId?: string;
   /** True only after the server has durably completed the room's final hand. */
   gameCompleted?: boolean;
+  /** The host has released the final summary after everyone saw the last hand. */
+  finalSummaryVisible?: boolean;
   playerId: string;
   street: StartedHand['street'];
   dealerSeat: number;

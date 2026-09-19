@@ -35,6 +35,7 @@ type PlayerView = {
   sequence?: number;
   hostPlayerId?: string;
   gameCompleted?: boolean;
+  finalSummaryVisible?: boolean;
   playerId: string;
   street: 'preflop' | 'flop' | 'turn' | 'river' | 'showdown';
   dealerSeat: number;
@@ -100,6 +101,7 @@ function isPlayerView(value: unknown): value is PlayerView {
     && (view.sequence === undefined || typeof view.sequence === 'number')
     && (view.hostPlayerId === undefined || typeof view.hostPlayerId === 'string')
     && (view.gameCompleted === undefined || typeof view.gameCompleted === 'boolean')
+    && (view.finalSummaryVisible === undefined || typeof view.finalSummaryVisible === 'boolean')
     && typeof view.street === 'string'
     && typeof view.dealerSeat === 'number'
     && typeof view.currentActorSeat === 'number'
@@ -132,6 +134,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   const [raiseTo, setRaiseTo] = useState<number>();
   const [pending, setPending] = useState(false);
   const [startingNextHand, setStartingNextHand] = useState(false);
+  const [revealingSummary, setRevealingSummary] = useState(false);
   const [advancingRunout, setAdvancingRunout] = useState(false);
   const [revealingHand, setRevealingHand] = useState(false);
   const [showRaiseControls, setShowRaiseControls] = useState(false);
@@ -249,6 +252,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   const displayedPot = view?.showdown?.pots.reduce((total, pot) => total + pot.amount, 0) ?? view?.pot ?? 0;
   const canRevealAtShowdown = Boolean(
     view?.street === 'showdown'
+    && !view.finalSummaryVisible
     && ownSeat
     && !ownSeat.isFolded
     && view.seats.filter((seat) => !seat.isFolded).length >= 2
@@ -267,7 +271,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   }, [view?.raise?.minRaiseTo, view?.raise?.maxRaiseTo]);
 
   useEffect(() => {
-    if (view?.street !== 'showdown' || !view.gameCompleted) return;
+    if (view?.street !== 'showdown' || !view.gameCompleted || !view.finalSummaryVisible) return;
     let active = true;
     let retryTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
     const load = async () => {
@@ -289,7 +293,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
       active = false;
       if (retryTimer !== undefined) globalThis.clearTimeout(retryTimer);
     };
-  }, [joinId, view?.gameCompleted, view?.street]);
+  }, [joinId, view?.gameCompleted, view?.finalSummaryVisible, view?.street]);
 
   useEffect(() => {
     if (!isTurn || !view?.raise) setShowRaiseControls(false);
@@ -404,6 +408,22 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
       setStatus('לא הצלחנו להתחיל את היד הבאה. נסו שוב.');
     } finally {
       setStartingNextHand(false);
+    }
+  }
+
+  async function revealFinalSummary() {
+    if (!isCurrentHost || !view?.gameCompleted || view.finalSummaryVisible || revealingSummary) return;
+    setRevealingSummary(true);
+    try {
+      const response = await globalThis.fetch(`${SERVER_URL}/rooms/${encodeURIComponent(joinId)}/game/final-summary/reveal`, {
+        method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json' },
+      });
+      if (!response.ok) throw new Error('Final summary reveal unavailable');
+      setStatus('מציגים את הסיכום הסופי לכולם…');
+    } catch {
+      setStatus('לא הצלחנו להציג את הסיכום הסופי. נסו שוב.');
+    } finally {
+      setRevealingSummary(false);
     }
   }
 
@@ -650,9 +670,11 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
           <div><span aria-hidden="true">⚡</span><p><strong>כולם באול אין</strong><small>הקלפים של המשתתפים פתוחים. המארח חושף את {streetNames[view.allInRunout.nextStreet]}.</small></p></div>
           {isCurrentHost ? <button type="button" disabled={advancingRunout} onClick={() => void advanceAllInRunout()}>{advancingRunout ? 'חושפים…' : `חשיפת ${streetNames[view.allInRunout.nextStreet]}`}</button> : <small>ממתינים למארח.</small>}
         </div> : null}
-        {view.showdown && !view.gameCompleted && !finalSummary ? <div className="between-hands-controls" aria-label="פעולות בין ידיים">
+        {view.showdown && (!view.gameCompleted || !view.finalSummaryVisible) ? <div className="between-hands-controls" aria-label="פעולות בין ידיים">
           {canRevealAtShowdown ? <button type="button" className="reveal-hand-button" disabled={revealingHand} onClick={() => void revealHand()}>{revealingHand ? 'חושפים…' : 'לחשוף את היד שלי'}</button> : null}
-          {isCurrentHost ? <button type="button" className="next-hand-button" disabled={startingNextHand} onClick={() => void startNextHand()}>{startingNextHand ? 'מחלקים…' : management?.nextHandIsFinal ? 'התחלת היד האחרונה' : 'היד הבאה'}</button> : <small>המארח יכול להתחיל את היד הבאה.</small>}
+          {view.gameCompleted
+            ? isCurrentHost ? <button type="button" className="next-hand-button" disabled={revealingSummary} onClick={() => void revealFinalSummary()}>{revealingSummary ? 'מציגים…' : 'הצגת הסיכום הסופי'}</button> : <small>היד האחרונה הסתיימה. ממתינים למארח שיציג את הסיכום.</small>
+            : isCurrentHost ? <button type="button" className="next-hand-button" disabled={startingNextHand} onClick={() => void startNextHand()}>{startingNextHand ? 'מחלקים…' : management?.nextHandIsFinal ? 'התחלת היד האחרונה' : 'היד הבאה'}</button> : <small>המארח יכול להתחיל את היד הבאה.</small>}
         </div> : null}
       </section>
       {managementOpen && isCurrentHost ? <div className="management-backdrop" role="presentation" onMouseDown={(event) => {

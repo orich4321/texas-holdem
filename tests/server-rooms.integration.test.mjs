@@ -91,6 +91,29 @@ test('POST /rooms persists a waiting room and its host then returns an opaque in
   ]);
 });
 
+test('the last-hand summary remains hidden until its host releases it for everyone', { skip: !integrationEnabled }, async () => {
+  const created = await postRoom({ displayName: 'Host', initialStack: 1000 });
+  const { roomId } = await created.json();
+  const hostCookie = created.headers.get('set-cookie').split(';')[0];
+  const joined = await postJoin(roomId, { displayName: 'Guest' });
+  const guestCookie = joined.headers.get('set-cookie').split(';')[0];
+  await prisma.room.update({ where: { joinId: roomId }, data: { status: 'COMPLETED', finalSummaryVisible: false } });
+
+  const path = `${baseUrl}/rooms/${roomId}/game/final-summary/reveal`;
+  const guestAttempt = await globalThis.fetch(path, { method: 'POST', headers: { cookie: guestCookie } });
+  assert.equal(guestAttempt.status, 403);
+  assert.equal((await prisma.room.findUnique({ where: { joinId: roomId } })).finalSummaryVisible, false);
+  const earlySummary = await globalThis.fetch(`${baseUrl}/rooms/${roomId}/final-summary`, { headers: { cookie: guestCookie } });
+  assert.equal(earlySummary.status, 409);
+
+  const hostAttempt = await globalThis.fetch(path, { method: 'POST', headers: { cookie: hostCookie } });
+  assert.equal(hostAttempt.status, 201);
+  assert.deepEqual(await hostAttempt.json(), { finalSummaryVisible: true });
+  assert.equal((await prisma.room.findUnique({ where: { joinId: roomId } })).finalSummaryVisible, true);
+  const releasedSummary = await globalThis.fetch(`${baseUrl}/rooms/${roomId}/final-summary`, { headers: { cookie: guestCookie } });
+  assert.equal(releasedSummary.status, 200);
+});
+
 test('POST /rooms rejects invalid creation input with a stable client error', { skip: !integrationEnabled }, async () => {
   for (const body of [
     {},

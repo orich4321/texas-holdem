@@ -22,6 +22,7 @@ model Room {
   bigBlind     Int        @default(10)
   maxPlayers   Int        @default(9)
   nextHandIsFinal Boolean @default(false)
+  finalSummaryVisible Boolean @default(true)
   hostPlayerId String?    @db.Uuid
   hostPlayer   Player?    @relation("RoomHost", fields: [id, hostPlayerId], references: [roomId, id], onDelete: Restrict)
   players      Player[]   @relation("RoomPlayers")
