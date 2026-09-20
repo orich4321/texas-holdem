@@ -17,9 +17,9 @@ model Room {
   id           String     @id @default(uuid()) @db.Uuid
   joinId       String     @unique
   status       RoomStatus @default(WAITING)
-  initialStack Int        @default(1000)
-  smallBlind   Int        @default(5)
-  bigBlind     Int        @default(10)
+  initialStack Int        @default(500)
+  smallBlind   Int        @default(1)
+  bigBlind     Int        @default(2)
   maxPlayers   Int        @default(9)
   nextHandIsFinal Boolean @default(false)
   finalSummaryVisible Boolean @default(true)

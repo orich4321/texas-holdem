@@ -42,7 +42,7 @@ type PlayerWriter = Pick<PrismaClient, 'player'>;
 
 const MAX_ACCESS_TOKEN_ATTEMPTS = 5;
 const MAX_CHIP_ADJUSTMENT = 1_000_000;
-const DEFAULT_ROOM_SETTINGS: RoomGameSettings = Object.freeze({ initialStack: 1000, smallBlind: 5, bigBlind: 10, maxPlayers: 9 });
+const DEFAULT_ROOM_SETTINGS: RoomGameSettings = Object.freeze({ initialStack: 500, smallBlind: 1, bigBlind: 2, maxPlayers: 9 });
 
 function isAccessTokenHashCollision(error: unknown): boolean {
   if (error === null || typeof error !== 'object' || !('code' in error) || error.code !== 'P2002') return false;

@@ -91,6 +91,18 @@ test('POST /rooms persists a waiting room and its host then returns an opaque in
   ]);
 });
 
+test('POST /rooms uses the new chip and blind defaults when settings are omitted', { skip: !integrationEnabled }, async () => {
+  const response = await postRoom({ displayName: 'Default host' });
+  assert.equal(response.status, 201);
+  const { roomId } = await response.json();
+  const room = await repository.findRoomByJoinId(roomId);
+  assert.equal(room?.initialStack, 500);
+  assert.equal(room?.smallBlind, 1);
+  assert.equal(room?.bigBlind, 2);
+  assert.equal(room?.players[0]?.initialStack, 500);
+  assert.equal(room?.players[0]?.currentStack, 500);
+});
+
 test('the last-hand summary remains hidden until its host releases it for everyone', { skip: !integrationEnabled }, async () => {
   const created = await postRoom({ displayName: 'Host', initialStack: 1000 });
   const { roomId } = await created.json();
@@ -316,7 +328,7 @@ test('GET /rooms/:joinId exposes a player-safe waiting-room lobby projection', {
   const lobby = await globalThis.fetch(`${baseUrl}/rooms/${roomId}`);
   assert.equal(lobby.status, 200);
   const result = await lobby.json();
-  assert.deepEqual(result, { joinId: roomId, status: 'WAITING', isHost: false, isParticipant: false, canStart: false, settings: { initialStack: 800, smallBlind: 5, bigBlind: 10, maxPlayers: 9 }, host: { displayName: 'Host' }, players: [
+  assert.deepEqual(result, { joinId: roomId, status: 'WAITING', isHost: false, isParticipant: false, canStart: false, settings: { initialStack: 800, smallBlind: 1, bigBlind: 2, maxPlayers: 9 }, host: { displayName: 'Host' }, players: [
     { displayName: 'Host', initialStack: 800, currentStack: 800 },
     { displayName: 'Guest', initialStack: 800, currentStack: 800 },
   ] });

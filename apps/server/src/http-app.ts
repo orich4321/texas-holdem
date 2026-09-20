@@ -12,8 +12,9 @@ const MAX_INITIAL_STACK = 1_000_000;
 const MAX_BLIND = 100_000;
 const MIN_ROOM_PLAYERS = 2;
 const MAX_ROOM_PLAYERS = 9;
-const DEFAULT_SMALL_BLIND = 5;
-const DEFAULT_BIG_BLIND = 10;
+const DEFAULT_INITIAL_STACK = 500;
+const DEFAULT_SMALL_BLIND = 1;
+const DEFAULT_BIG_BLIND = 2;
 const DEFAULT_MAX_PLAYERS = 9;
 const PLAYER_SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1_000;
 const PLAYER_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -60,7 +61,7 @@ function validateDisplayName(body: unknown): string | undefined {
 function validateCreateRoomInput(body: unknown): ValidatedRoomInput | undefined {
   const displayName = validateDisplayName(body);
   if (!displayName) return undefined;
-  const { initialStack, smallBlind = DEFAULT_SMALL_BLIND, bigBlind = DEFAULT_BIG_BLIND, maxPlayers = DEFAULT_MAX_PLAYERS } = body as CreateRoomRequest;
+  const { initialStack = DEFAULT_INITIAL_STACK, smallBlind = DEFAULT_SMALL_BLIND, bigBlind = DEFAULT_BIG_BLIND, maxPlayers = DEFAULT_MAX_PLAYERS } = body as CreateRoomRequest;
   if (![initialStack, smallBlind, bigBlind, maxPlayers].every(Number.isSafeInteger)) return undefined;
   if (
     (initialStack as number) < MIN_INITIAL_STACK || (initialStack as number) > MAX_INITIAL_STACK

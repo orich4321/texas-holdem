@@ -54,6 +54,7 @@ test('home presents the focused Hebrew room-hosting flow with an accessible dark
   assert.match(styles, /min-height:\s*44px/);
   assert.match(styles, /@media\s*\(prefers-reduced-motion:\s*reduce\)/);
   assert.match(styles, /@media\s*\(min-width:/);
+  assert.match(styles, /input:not\(\[type="range"\]\), select, textarea\s*\{\s*font-size:\s*16px/);
 });
 
 test('home footer text meets WCAG AA contrast against the page background', async () => {
@@ -114,7 +115,7 @@ test('room creation posts the normalized nickname and host-selected table settin
       method: 'POST',
       credentials: 'include',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ displayName: 'אורי', initialStack: 1000, smallBlind: 5, bigBlind: 10, maxPlayers: 9 }),
+      body: JSON.stringify({ displayName: 'אורי', initialStack: 500, smallBlind: 1, bigBlind: 2, maxPlayers: 9 }),
     },
   ]]);
   assert.deepEqual(destinations, ['/r/abc123/host']);

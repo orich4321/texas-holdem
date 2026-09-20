@@ -150,8 +150,8 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   const [playersOpen, setPlayersOpen] = useState(false);
   const [management, setManagement] = useState<ManagementView>();
   const [managementBusy, setManagementBusy] = useState(false);
-  const [smallBlind, setSmallBlind] = useState(5);
-  const [bigBlind, setBigBlind] = useState(10);
+  const [smallBlind, setSmallBlind] = useState(1);
+  const [bigBlind, setBigBlind] = useState(2);
   const [topUpAmounts, setTopUpAmounts] = useState<Record<string, number>>({});
   const socketRef = useRef<ReturnType<typeof io> | null>(null);
   const latestSequenceRef = useRef(-1);
