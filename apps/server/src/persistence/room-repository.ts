@@ -62,6 +62,8 @@ const publicPlayerSelect = {
   currentStack: true,
   leftAt: true,
   leaveAfterHand: true,
+  isSittingOut: true,
+  rebuyDecisionPending: true,
   createdAt: true,
   updatedAt: true,
 } satisfies Prisma.PlayerSelect;
@@ -131,6 +133,8 @@ export type HostManagementView = Readonly<{
     isHost: boolean;
     leaveAfterHand: boolean;
     pendingChips: number;
+    isSittingOut: boolean;
+    rebuyDecisionPending: boolean;
   }>[];
 }>;
 
@@ -234,7 +238,7 @@ export class RoomRepository {
       // late player receives a durable seat now, waits on GAME_NOT_AVAILABLE,
       // and is included only when the host deals the next hand.
 
-      const playerCount = await tx.player.count({ where: { roomId: room.id, leftAt: null } });
+      const playerCount = await tx.player.count({ where: { roomId: room.id, leftAt: null, isSittingOut: false } });
       if (playerCount >= room.maxPlayers) return { kind: 'full' as const };
 
       const createdPlayer = await this.createPlayerWithUniqueAccessToken(tx, { ...player, initialStack: room.initialStack }, room.id);
@@ -439,7 +443,7 @@ export class RoomRepository {
           finalSummaryVisible: true,
           players: {
             orderBy: { createdAt: 'asc' },
-            select: { id: true, displayName: true, currentStack: true },
+            select: { id: true, displayName: true, currentStack: true, isSittingOut: true },
           },
         },
       }),
@@ -449,7 +453,9 @@ export class RoomRepository {
     const hand = latest.recovery.hand;
     // A participant who joined during an active hand waits for the next hand;
     // their session is valid, but no private cards exist in the current hand.
-    if (!hand.seats.some((seat) => seat.playerId === playerId)) return null;
+    const seatedInHand = hand.seats.some((seat) => seat.playerId === playerId);
+    const member = room.players.find((player) => player.id === playerId);
+    if (!seatedInHand && member?.currentStack !== 0 && !member?.isSittingOut) return null;
     const playersById = new Map(room.players.map((player) => [player.id, player]));
     const lifecycle = ServerGameLifecycle.fromVerifiedRecoveredHand({
       seats: hand.seats.map((seat) => {
@@ -467,7 +473,11 @@ export class RoomRepository {
       bigBlind: hand.bigBlindAmount,
     }, latest.recovery);
     if (!room.hostPlayerId) return null;
-    return this.decorateView(lifecycle.viewFor(playerId), latest.sequence, room.hostPlayerId, room.status === 'COMPLETED', room.status === 'COMPLETED' && room.finalSummaryVisible);
+    const baseView = lifecycle.viewFor(seatedInHand ? playerId : hand.seats[0].playerId);
+    const safeView = seatedInHand
+      ? { ...baseView, isSittingOut: member?.isSittingOut ?? false }
+      : { ...baseView, playerId, holeCards: [] as const, toCall: 0, raise: undefined, isSittingOut: true };
+    return this.decorateView(safeView, latest.sequence, room.hostPlayerId, room.status === 'COMPLETED', room.status === 'COMPLETED' && room.finalSummaryVisible);
   }
 
   /** Applies an authenticated action to the latest verified state and commits its successor atomically. */
@@ -519,7 +529,7 @@ export class RoomRepository {
         : undefined;
       if (settlement) {
         await Promise.all(settlement.seats.map((seat) => tx.player.update({
-          where: { id: seat.playerId }, data: { currentStack: seat.stack },
+          where: { id: seat.playerId }, data: { currentStack: seat.stack, isSittingOut: seat.stack === 0, rebuyDecisionPending: seat.stack === 0 },
         })));
         await tx.settlement.create({
           data: {
@@ -599,7 +609,7 @@ export class RoomRepository {
       let gameCompleted = false;
       if (settlement) {
         const showdown = lifecycle.viewFor(hand.seats[0].playerId).showdown;
-        await Promise.all(settlement.seats.map((seat) => tx.player.update({ where: { id: seat.playerId }, data: { currentStack: seat.stack } })));
+        await Promise.all(settlement.seats.map((seat) => tx.player.update({ where: { id: seat.playerId }, data: { currentStack: seat.stack, isSittingOut: seat.stack === 0, rebuyDecisionPending: seat.stack === 0 } })));
         await tx.settlement.create({
           data: {
             roomId: room.id,
@@ -682,12 +692,18 @@ export class RoomRepository {
 
   /** Releases the completed game's summary only when its authenticated host asks. */
   async revealFinalSummaryForHost(joinId: string, hostPlayerId: string) {
-    const updated = await this.db.room.updateMany({
-      where: { joinId, hostPlayerId, status: 'COMPLETED', finalSummaryVisible: false },
-      data: { finalSummaryVisible: true },
+    return this.db.$transaction(async (tx) => {
+      const room = await tx.room.findFirst({ where: { joinId, hostPlayerId, status: 'COMPLETED', finalSummaryVisible: false }, select: { id: true } });
+      if (!room) throw new Error('Final summary release is unavailable');
+      const updated = await tx.room.updateMany({
+        where: { id: room.id, hostPlayerId, status: 'COMPLETED', finalSummaryVisible: false },
+        data: { finalSummaryVisible: true },
+      });
+      if (updated.count !== 1) throw new Error('Final summary release is unavailable');
+      await tx.chipAdjustment.updateMany({ where: { roomId: room.id, status: 'PENDING' }, data: { status: 'CANCELLED', cancelledAt: new Date() } });
+      await tx.player.updateMany({ where: { roomId: room.id, currentStack: 0, leftAt: null }, data: { isSittingOut: true, rebuyDecisionPending: false } });
+      return { finalSummaryVisible: true };
     });
-    if (updated.count !== 1) throw new Error('Final summary release is unavailable');
-    return { finalSummaryVisible: true };
   }
 
   /**
@@ -715,7 +731,7 @@ export class RoomRepository {
           smallBlind: true,
           bigBlind: true,
           nextHandIsFinal: true,
-          players: { where: { leftAt: null }, orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, currentStack: true, leaveAfterHand: true } },
+          players: { where: { leftAt: null }, orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, currentStack: true, leaveAfterHand: true, isSittingOut: true, rebuyDecisionPending: true } },
           chipAdjustments: { where: { status: 'PENDING' }, orderBy: { createdAt: 'asc' } },
         },
       });
@@ -729,7 +745,8 @@ export class RoomRepository {
       // are already authoritative chip totals.  Keeping that completed hand
       // intact lets the host safely remove a seat before this fresh deal.
       const leavingPlayerIds = new Set(lockedRoom.players.filter((player) => player.leaveAfterHand).map((player) => player.id));
-      const activePlayers = lockedRoom.players.filter((player) => !leavingPlayerIds.has(player.id));
+      if (lockedRoom.players.some((player) => player.rebuyDecisionPending && !player.leaveAfterHand)) throw new Error('A rebuy decision is required');
+      const activePlayers = lockedRoom.players.filter((player) => !leavingPlayerIds.has(player.id) && !player.isSittingOut);
       if (activePlayers.length < 2) throw new Error('Next hand is unavailable');
       const stacks = new Map(activePlayers.map((player) => [player.id, player.currentStack]));
       const appliedAt = new Date();
@@ -751,6 +768,7 @@ export class RoomRepository {
 
       const seatNumbers = recovery.hand.seats.map((seat) => seat.seatNumber);
       const dealerIndex = seatNumbers.indexOf(recovery.hand.dealerSeat);
+      if (activePlayers.some((player) => (stacks.get(player.id) ?? 0) < 1)) throw new Error('Next hand is unavailable');
       const nextDealerPlayerId = Array.from({ length: seatNumbers.length }, (_, offset) => seatNumbers[(dealerIndex + offset + 1) % seatNumbers.length])
         .map((seatNumber) => recovery.hand.seats.find((seat) => seat.seatNumber === seatNumber)!.playerId)
         .find((playerId) => activePlayers.some((player) => player.id === playerId) && (stacks.get(playerId) ?? 0) > 0)
@@ -789,13 +807,13 @@ export class RoomRepository {
 
   async getHostManagement(joinId: string, hostPlayerId: string): Promise<HostManagementView | null> {
     const room = await this.db.room.findFirst({
-      where: { joinId, hostPlayerId, status: 'IN_PROGRESS' },
+      where: { joinId, hostPlayerId, OR: [{ status: 'IN_PROGRESS' }, { status: 'COMPLETED', finalSummaryVisible: false }] },
       select: {
         smallBlind: true,
         bigBlind: true,
         nextHandIsFinal: true,
         hostPlayerId: true,
-        players: { where: { leftAt: null }, orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, currentStack: true, leaveAfterHand: true } },
+        players: { where: { leftAt: null }, orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, currentStack: true, leaveAfterHand: true, isSittingOut: true, rebuyDecisionPending: true } },
         chipAdjustments: { where: { status: 'PENDING' }, select: { playerId: true, amount: true } },
       },
     });
@@ -813,6 +831,8 @@ export class RoomRepository {
         isHost: player.id === room.hostPlayerId,
         leaveAfterHand: player.leaveAfterHand,
         pendingChips: pendingByPlayer.get(player.id) ?? 0,
+        isSittingOut: player.isSittingOut,
+        rebuyDecisionPending: player.rebuyDecisionPending,
       }))),
     });
   }
@@ -834,12 +854,12 @@ export class RoomRepository {
     return this.db.$transaction(async (tx) => {
       const room = await tx.room.findUnique({
         where: { joinId },
-        select: { id: true, hostPlayerId: true, status: true, players: { where: { leftAt: null }, select: { id: true, leaveAfterHand: true } } },
+        select: { id: true, hostPlayerId: true, status: true, players: { where: { leftAt: null }, select: { id: true, leaveAfterHand: true, isSittingOut: true } } },
       });
       if (!room || room.hostPlayerId !== hostPlayerId || room.status !== 'IN_PROGRESS' || targetPlayerId === hostPlayerId) {
         throw new Error('Player removal is unavailable');
       }
-      if (!room.players.some((player) => player.id === targetPlayerId) || room.players.filter((player) => !player.leaveAfterHand && player.id !== targetPlayerId).length < 2) {
+      if (!room.players.some((player) => player.id === targetPlayerId) || room.players.filter((player) => !player.isSittingOut && !player.leaveAfterHand && player.id !== targetPlayerId).length < 2) {
         throw new Error('Player removal is unavailable');
       }
       const locked = await tx.room.updateMany({ where: { id: room.id, hostPlayerId, status: 'IN_PROGRESS' }, data: { updatedAt: new Date() } });
@@ -862,33 +882,55 @@ export class RoomRepository {
     if (!Number.isSafeInteger(amount) || amount < 1 || amount > MAX_CHIP_ADJUSTMENT) throw new Error('Chip adjustment is unavailable');
     return this.db.$transaction(async (tx) => {
       const room = await tx.room.findFirst({
-        where: { joinId, hostPlayerId, status: 'IN_PROGRESS' },
-        select: { id: true, players: { where: { id: targetPlayerId, leftAt: null }, select: { id: true, leaveAfterHand: true } } },
+        where: { joinId, hostPlayerId, OR: [{ status: 'IN_PROGRESS' }, { status: 'COMPLETED', finalSummaryVisible: false }] },
+        select: { id: true, status: true, maxPlayers: true, players: { where: { leftAt: null }, select: { id: true, leaveAfterHand: true, isSittingOut: true } } },
       });
-      if (!room || room.players.length !== 1 || room.players[0].leaveAfterHand) throw new Error('Chip adjustment is unavailable');
+      const target = room?.players.find((player) => player.id === targetPlayerId);
+      if (!room || !target || target.leaveAfterHand) throw new Error('Chip adjustment is unavailable');
+      const locked = await tx.room.updateMany({ where: { id: room.id, hostPlayerId, status: room.status }, data: { updatedAt: new Date() } });
+      if (locked.count !== 1) throw new Error('Chip adjustment is unavailable');
+      if (target.isSittingOut && room.players.filter((player) => !player.isSittingOut && !player.leaveAfterHand).length >= room.maxPlayers) throw new Error('Table is full');
+      if (target.isSittingOut) await tx.player.update({ where: { id: targetPlayerId }, data: { isSittingOut: false, rebuyDecisionPending: false } });
       return tx.chipAdjustment.create({ data: { roomId: room.id, playerId: targetPlayerId, authorizedByPlayerId: hostPlayerId, amount } });
     });
   }
 
   async cancelPendingChipsForHost(joinId: string, hostPlayerId: string, targetPlayerId: string) {
-    const room = await this.db.room.findFirst({ where: { joinId, hostPlayerId, status: 'IN_PROGRESS' }, select: { id: true } });
-    if (!room) throw new Error('Chip adjustment is unavailable');
-    await this.db.chipAdjustment.updateMany({ where: { roomId: room.id, playerId: targetPlayerId, status: 'PENDING' }, data: { status: 'CANCELLED', cancelledAt: new Date() } });
+    return this.db.$transaction(async (tx) => {
+      const room = await tx.room.findFirst({ where: { joinId, hostPlayerId, OR: [{ status: 'IN_PROGRESS' }, { status: 'COMPLETED', finalSummaryVisible: false }] }, select: { id: true, status: true } });
+      if (!room) throw new Error('Chip adjustment is unavailable');
+      const locked = await tx.room.updateMany({ where: { id: room.id, hostPlayerId, status: room.status }, data: { updatedAt: new Date() } });
+      if (locked.count !== 1) throw new Error('Chip adjustment is unavailable');
+      await tx.chipAdjustment.updateMany({ where: { roomId: room.id, playerId: targetPlayerId, status: 'PENDING' }, data: { status: 'CANCELLED', cancelledAt: new Date() } });
+      await tx.player.updateMany({ where: { id: targetPlayerId, roomId: room.id, currentStack: 0, leftAt: null }, data: { isSittingOut: true, rebuyDecisionPending: false } });
+    });
+  }
+
+  async declineRebuyForHost(joinId: string, hostPlayerId: string, targetPlayerId: string) {
+    return this.db.$transaction(async (tx) => {
+      const room = await tx.room.findFirst({ where: { joinId, hostPlayerId, OR: [{ status: 'IN_PROGRESS' }, { status: 'COMPLETED', finalSummaryVisible: false }] }, select: { id: true, status: true } });
+      if (!room) throw new Error('Rebuy decision is unavailable');
+      const locked = await tx.room.updateMany({ where: { id: room.id, hostPlayerId, status: room.status }, data: { updatedAt: new Date() } });
+      if (locked.count !== 1) throw new Error('Rebuy decision is unavailable');
+      const updated = await tx.player.updateMany({ where: { id: targetPlayerId, roomId: room.id, currentStack: 0, leftAt: null, isSittingOut: true, rebuyDecisionPending: true }, data: { rebuyDecisionPending: false } });
+      if (updated.count !== 1) throw new Error('Rebuy decision is unavailable');
+      return { isSittingOut: true };
+    });
   }
 
   async transferHostForHost(joinId: string, hostPlayerId: string, targetPlayerId: string | undefined, leaveAfterHand: boolean) {
     return this.db.$transaction(async (tx) => {
       const room = await tx.room.findUnique({
         where: { joinId },
-        select: { id: true, hostPlayerId: true, status: true, players: { where: { leftAt: null }, orderBy: [{ currentStack: 'desc' }, { createdAt: 'asc' }], select: { id: true, currentStack: true, leaveAfterHand: true } } },
+        select: { id: true, hostPlayerId: true, status: true, players: { where: { leftAt: null }, orderBy: [{ currentStack: 'desc' }, { createdAt: 'asc' }], select: { id: true, currentStack: true, leaveAfterHand: true, isSittingOut: true } } },
       });
       if (!room || room.hostPlayerId !== hostPlayerId || room.status !== 'IN_PROGRESS') throw new Error('Host transfer is unavailable');
       const oldHost = room.players.find((player) => player.id === hostPlayerId);
       const target = targetPlayerId
         ? room.players.find((player) => player.id === targetPlayerId)
-        : oldHost?.currentStack === 0 ? room.players.find((player) => player.id !== hostPlayerId && !player.leaveAfterHand) : undefined;
-      if (!oldHost || !target || target.id === hostPlayerId || target.leaveAfterHand) throw new Error('Host transfer is unavailable');
-      if (leaveAfterHand && room.players.filter((player) => player.id !== hostPlayerId && !player.leaveAfterHand).length < 2) throw new Error('Host transfer is unavailable');
+        : oldHost?.currentStack === 0 ? room.players.find((player) => player.id !== hostPlayerId && !player.isSittingOut && !player.leaveAfterHand) : undefined;
+      if (!oldHost || !target || target.id === hostPlayerId || target.isSittingOut || target.leaveAfterHand) throw new Error('Host transfer is unavailable');
+      if (leaveAfterHand && room.players.filter((player) => player.id !== hostPlayerId && !player.isSittingOut && !player.leaveAfterHand).length < 2) throw new Error('Host transfer is unavailable');
       await tx.room.update({ where: { id: room.id }, data: { hostPlayerId: target.id } });
       if (leaveAfterHand) {
         await tx.player.update({ where: { id: hostPlayerId }, data: { leaveAfterHand: true } });

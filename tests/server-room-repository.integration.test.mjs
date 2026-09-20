@@ -164,6 +164,54 @@ test('host management settings, queued rebuys, removals, and ownership transfer 
   assert.equal((await repository.getHostManagement(created.joinId, secondGuestId)).players.find((player) => player.id === secondGuestId).isHost, true);
 });
 
+test('a busted member sits out, keeps their session, and can return to the same seat identity several hands later', { skip: !integrationEnabled }, async () => {
+  const repository = new RoomRepository(prisma, undefined, undefined, undefined, snapshotKeyring);
+  const bustedId = randomUUID();
+  const created = await repository.createRoom({
+    status: 'WAITING',
+    host: { id: randomUUID(), displayName: 'Host', initialStack: 1_000 },
+    players: [
+      { id: bustedId, displayName: 'Busted guest', initialStack: 1_000 },
+      { id: randomUUID(), displayName: 'Other guest', initialStack: 1_000 },
+    ],
+  });
+  await repository.startGameForHostAtomically({ joinId: created.joinId, hostPlayerId: created.hostPlayerId });
+  async function finishHand() {
+    for (let attempts = 0; attempts < 3; attempts += 1) {
+      const current = await repository.recoverLatestHandForPlayer(created.id, created.hostPlayerId);
+      if (current.recovery.hand.street === 'showdown') return;
+      const actor = current.recovery.hand.seats.find((seat) => seat.seatNumber === current.recovery.hand.currentActorSeat);
+      await repository.persistPlayerActionAtomically({ roomId: created.id, playerId: actor.playerId, action: { type: 'fold' } });
+    }
+    assert.fail('hand did not settle');
+  }
+  await finishHand();
+  await prisma.player.update({ where: { id: bustedId }, data: { currentStack: 0, isSittingOut: true, rebuyDecisionPending: true } });
+  assert.equal((await repository.getHostManagement(created.joinId, created.hostPlayerId)).players.find((player) => player.id === bustedId).rebuyDecisionPending, true);
+  await assert.rejects(repository.startNextHandForHostAtomically({ joinId: created.joinId, hostPlayerId: created.hostPlayerId }));
+  await assert.rejects(repository.declineRebuyForHost(created.joinId, created.players[2].id, bustedId));
+  await repository.declineRebuyForHost(created.joinId, created.hostPlayerId, bustedId);
+  assert.equal((await repository.getHostManagement(created.joinId, created.hostPlayerId)).players.find((player) => player.id === bustedId).isSittingOut, true);
+  await repository.startNextHandForHostAtomically({ joinId: created.joinId, hostPlayerId: created.hostPlayerId });
+  const spectator = await repository.recoverLatestPlayerViewForPlayer(created.id, bustedId);
+  assert.equal(spectator.isSittingOut, true);
+  assert.deepEqual(spectator.holeCards, [], 'spectators must not receive another player’s private cards');
+  assert.equal(spectator.seats.some((seat) => seat.playerId === bustedId), false);
+  assert.equal((await repository.findPlayerByRoomJoinIdAndAccessToken(created.joinId, created.hostAccessToken)).id, created.hostPlayerId);
+  await finishHand();
+  await repository.startNextHandForHostAtomically({ joinId: created.joinId, hostPlayerId: created.hostPlayerId });
+  await finishHand();
+  await repository.addChipsForHost(created.joinId, created.hostPlayerId, bustedId, 500);
+  assert.equal((await repository.getHostManagement(created.joinId, created.hostPlayerId)).players.find((player) => player.id === bustedId).pendingChips, 500);
+  await repository.startNextHandForHostAtomically({ joinId: created.joinId, hostPlayerId: created.hostPlayerId });
+  const returned = await repository.recoverLatestPlayerViewForPlayer(created.id, bustedId);
+  assert.equal(returned.holeCards.length, 2);
+  assert.ok(returned.seats.find((seat) => seat.playerId === bustedId).stack <= 500, 'the next hand may have posted a blind');
+  assert.equal((await prisma.player.findUnique({ where: { id: bustedId } })).currentStack, 500);
+  assert.equal((await repository.getHostManagement(created.joinId, created.hostPlayerId)).players.find((player) => player.id === bustedId).isSittingOut, false);
+  assert.equal((await prisma.chipAdjustment.findFirst({ where: { playerId: bustedId, status: 'APPLIED' } })).stackAfter, 500);
+});
+
 test('database transaction serializes an authenticated action into one private successor snapshot', { skip: !integrationEnabled }, async () => {
   const repository = new RoomRepository(prisma, undefined, undefined, undefined, snapshotKeyring);
   const created = await repository.createRoom({

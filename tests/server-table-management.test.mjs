@@ -14,8 +14,8 @@ test('host management projection aggregates only pending chip additions', async 
     room: { findFirst: async () => ({
       smallBlind: 10, bigBlind: 20, nextHandIsFinal: true, hostPlayerId: hostId,
       players: [
-        { id: hostId, displayName: 'מארח', currentStack: 0, leaveAfterHand: false },
-        { id: guestId, displayName: 'אורח', currentStack: 800, leaveAfterHand: true },
+        { id: hostId, displayName: 'מארח', currentStack: 0, leaveAfterHand: false, isSittingOut: true, rebuyDecisionPending: true },
+        { id: guestId, displayName: 'אורח', currentStack: 800, leaveAfterHand: true, isSittingOut: false, rebuyDecisionPending: false },
       ],
       chipAdjustments: [{ playerId: guestId, amount: 200 }, { playerId: guestId, amount: 300 }],
     }) },
@@ -27,8 +27,8 @@ test('host management projection aggregates only pending chip additions', async 
     bigBlind: 20,
     nextHandIsFinal: true,
     players: [
-      { id: hostId, displayName: 'מארח', currentStack: 0, isHost: true, leaveAfterHand: false, pendingChips: 0 },
-      { id: guestId, displayName: 'אורח', currentStack: 800, isHost: false, leaveAfterHand: true, pendingChips: 500 },
+      { id: hostId, displayName: 'מארח', currentStack: 0, isHost: true, leaveAfterHand: false, pendingChips: 0, isSittingOut: true, rebuyDecisionPending: true },
+      { id: guestId, displayName: 'אורח', currentStack: 800, isHost: false, leaveAfterHand: true, pendingChips: 500, isSittingOut: false, rebuyDecisionPending: false },
     ],
   });
 });
@@ -79,15 +79,22 @@ test('final accounting subtracts every applied rebuy from the player result', as
 
 test('the completed summary stays hidden until the host releases it', async () => {
   const calls = [];
-  const repository = new RoomRepository({
-    room: { updateMany: async (args) => { calls.push(args); return { count: 1 }; } },
-  });
+  const repository = new RoomRepository({ $transaction: async (callback) => callback({
+    room: {
+      findFirst: async () => ({ id: roomId }),
+      updateMany: async (args) => { calls.push(args); return { count: 1 }; },
+    },
+    chipAdjustment: { updateMany: async (args) => { calls.push(args); } },
+    player: { updateMany: async (args) => { calls.push(args); } },
+  }) });
   assert.deepEqual(await repository.revealFinalSummaryForHost(joinId, hostId), { finalSummaryVisible: true });
   assert.deepEqual(calls[0], {
-    where: { joinId, hostPlayerId: hostId, status: 'COMPLETED', finalSummaryVisible: false },
+    where: { id: roomId, hostPlayerId: hostId, status: 'COMPLETED', finalSummaryVisible: false },
     data: { finalSummaryVisible: true },
   });
+  assert.equal(calls[1].data.status, 'CANCELLED');
+  assert.deepEqual(calls[2].data, { isSittingOut: true, rebuyDecisionPending: false });
 
-  const unavailable = new RoomRepository({ room: { updateMany: async () => ({ count: 0 }) } });
+  const unavailable = new RoomRepository({ $transaction: async (callback) => callback({ room: { findFirst: async () => null } }) });
   await assert.rejects(unavailable.revealFinalSummaryForHost(joinId, guestId), /unavailable/);
 });

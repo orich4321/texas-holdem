@@ -307,6 +307,17 @@ button:disabled { cursor: wait; opacity: 0.55; }
 .management-players article > div:first-child { display: grid; min-width: 0; }
 .management-players article strong { overflow: hidden; font-size: .7rem; text-overflow: ellipsis; white-space: nowrap; }
 .management-players article small { color: var(--muted); font-size: .53rem; }
+.rebuy-backdrop { position: fixed; z-index: 90; inset: 0; display: grid; place-items: center; padding: max(14px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(14px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left)); background: rgba(2,10,8,.72); backdrop-filter: blur(8px); }
+.rebuy-dialog { display: grid; width: min(100%, 480px); max-height: 88dvh; overflow-y: auto; padding: clamp(16px, 3vw, 26px); border: 1px solid rgba(230,189,105,.32); border-radius: 22px; background: linear-gradient(150deg,#14261e,#0a1410); box-shadow: 0 22px 80px rgba(0,0,0,.58); gap: 10px; }
+.rebuy-dialog > p { margin: 0; color: #dec486; font-size: .7rem; font-weight: 850; }
+.rebuy-dialog > h2 { margin: 0; color: #fff5d8; font-size: clamp(1.2rem,4vw,1.7rem); }
+.rebuy-dialog > small { color: #bbcac2; line-height: 1.5; }
+.rebuy-player { display: grid; padding: 12px; border: 1px solid rgba(255,255,255,.12); border-radius: 14px; gap: 8px; }
+.rebuy-player > div { display: flex; flex-wrap: wrap; gap: 7px; }
+.rebuy-player input { flex: 1 1 125px; min-width: 0; min-height: 42px; padding: 0 10px; border: 1px solid rgba(255,255,255,.2); border-radius: 10px; color: white; background: #091710; }
+.rebuy-player button { min-height: 42px; padding: 0 12px; border: 0; border-radius: 10px; color: #092015; background: #69d7ac; font-weight: 850; cursor: pointer; }
+.rebuy-player button.rebuy-decline { color: #efdfc7; background: #26332c; }
+.rebuy-player button:disabled { opacity: .5; cursor: not-allowed; }
 .player-management-leaving { border-color: rgba(217,102,91,.27) !important; opacity: .78; }
 .player-management-actions { display: grid; grid-template-columns: minmax(62px,.7fr) repeat(4,auto); gap: 5px; }
 .player-management-actions .management-danger, .busted-host-exit { color: #ffdcd5; border-color: rgba(217,102,91,.28); background: rgba(111,35,31,.38); }

@@ -45,6 +45,8 @@ model Player {
   accessTokenHash String @unique
   leftAt       DateTime?
   leaveAfterHand Boolean @default(false)
+  isSittingOut Boolean @default(false)
+  rebuyDecisionPending Boolean @default(false)
   room            Room     @relation("RoomPlayers", fields: [roomId], references: [id], onDelete: Cascade)
   hostedRooms  Room[]   @relation("RoomHost")
   receivedChipAdjustments ChipAdjustment[] @relation("ChipRecipient")

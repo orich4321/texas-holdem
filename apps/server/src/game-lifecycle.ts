@@ -70,6 +70,8 @@ export interface ServerPlayerView {
   gameCompleted?: boolean;
   /** The host has released the final summary after everyone saw the last hand. */
   finalSummaryVisible?: boolean;
+  /** Membership survives busting; spectators receive no private cards. */
+  isSittingOut?: boolean;
   playerId: string;
   street: StartedHand['street'];
   dealerSeat: number;
@@ -83,7 +85,7 @@ export interface ServerPlayerView {
     maxRaiseTo: number;
     minimumIncrement: number;
   }>;
-  holeCards: readonly [Card, Card];
+  holeCards: readonly [Card, Card] | readonly [];
   seats: readonly {
     seatNumber: number;
     playerId: string;

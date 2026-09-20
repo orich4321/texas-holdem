@@ -1,0 +1,2 @@
+ALTER TABLE "Player" ADD COLUMN "isSittingOut" BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE "Player" ADD COLUMN "rebuyDecisionPending" BOOLEAN NOT NULL DEFAULT false;

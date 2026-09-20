@@ -508,6 +508,23 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
     }
   });
 
+  routes.post('/rooms/:joinId/management/players/:playerId/rebuy/decline', async (request, response) => {
+    const player = await findAuthenticatedHost(request.params.joinId, request.headers.cookie);
+    if (!player) {
+      response.status(403).json({ error: { code: 'HOST_FORBIDDEN' } });
+      return;
+    }
+    if (!PLAYER_ID_PATTERN.test(request.params.playerId)) {
+      response.status(400).json({ error: { code: 'INVALID_REQUEST' } });
+      return;
+    }
+    try {
+      response.status(201).json(await roomRepository.declineRebuyForHost(request.params.joinId, player.id, request.params.playerId));
+    } catch {
+      response.status(409).json({ error: { code: 'REBUY_DECISION_UNAVAILABLE' } });
+    }
+  });
+
   routes.post('/rooms/:joinId/management/transfer-host', async (request, response) => {
     const player = await findAuthenticatedHost(request.params.joinId, request.headers.cookie);
     if (!player) {
@@ -639,7 +656,7 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
           maxPlayers: room.maxPlayers,
         },
         host: { displayName: host.displayName },
-        players: room.players.map(({ displayName, initialStack, currentStack }) => ({ displayName, initialStack, currentStack })),
+        players: room.players.filter((player) => !player.isSittingOut).map(({ displayName, initialStack, currentStack }) => ({ displayName, initialStack, currentStack })),
       });
     } catch {
       console.error('Room lookup failed');

@@ -36,6 +36,7 @@ type PlayerView = {
   hostPlayerId?: string;
   gameCompleted?: boolean;
   finalSummaryVisible?: boolean;
+  isSittingOut?: boolean;
   playerId: string;
   street: 'preflop' | 'flop' | 'turn' | 'river' | 'showdown';
   dealerSeat: number;
@@ -44,7 +45,7 @@ type PlayerView = {
   pot: number;
   toCall: number;
   raise?: { minRaiseTo: number; maxRaiseTo: number; minimumIncrement: number };
-  holeCards: readonly [Card, Card];
+  holeCards: readonly [Card, Card] | readonly [];
   seats: readonly { seatNumber: number; playerId: string; playerName: string; stack: number; currentBet: number; isFolded: boolean }[];
   exposedHands: readonly ExposedHand[];
   allInRunout?: AllInRunout;
@@ -54,7 +55,7 @@ type ManagementView = {
   smallBlind: number;
   bigBlind: number;
   nextHandIsFinal: boolean;
-  players: readonly { id: string; displayName: string; currentStack: number; isHost: boolean; leaveAfterHand: boolean; pendingChips: number }[];
+  players: readonly { id: string; displayName: string; currentStack: number; isHost: boolean; leaveAfterHand: boolean; pendingChips: number; isSittingOut: boolean; rebuyDecisionPending: boolean }[];
 };
 const streetNames: Record<PlayerView['street'], string> = {
   preflop: 'לפני הפלופ', flop: 'פלופ', turn: 'טרן', river: 'ריבר', showdown: 'חשיפה',
@@ -102,13 +103,14 @@ function isPlayerView(value: unknown): value is PlayerView {
     && (view.hostPlayerId === undefined || typeof view.hostPlayerId === 'string')
     && (view.gameCompleted === undefined || typeof view.gameCompleted === 'boolean')
     && (view.finalSummaryVisible === undefined || typeof view.finalSummaryVisible === 'boolean')
+    && (view.isSittingOut === undefined || typeof view.isSittingOut === 'boolean')
     && typeof view.street === 'string'
     && typeof view.dealerSeat === 'number'
     && typeof view.currentActorSeat === 'number'
     && typeof view.pot === 'number'
     && typeof view.toCall === 'number'
     && Array.isArray(view.communityCards) && view.communityCards.every(isCard)
-    && Array.isArray(view.holeCards) && view.holeCards.length === 2 && view.holeCards.every(isCard)
+    && Array.isArray(view.holeCards) && (view.holeCards.length === 2 || (view.holeCards.length === 0 && view.isSittingOut === true)) && view.holeCards.every(isCard)
     && Array.isArray(view.seats)
     && Array.isArray(view.exposedHands) && view.exposedHands.every(isExposedHand)
     && (view.raise === undefined || (view.raise !== null && typeof view.raise === 'object'
@@ -239,6 +241,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   }, [joinId]);
 
   const ownSeat = useMemo(() => view?.seats.find((seat) => seat.playerId === view.playerId), [view]);
+  const bustedPlayers = management?.players.filter((player) => player.rebuyDecisionPending) ?? [];
   const orderedSeats = useMemo(() => {
     if (!view) return [];
     const ownIndex = view.seats.findIndex((seat) => seat.playerId === view.playerId);
@@ -317,6 +320,10 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
     globalThis.document.addEventListener('keydown', closeOnEscape);
     return () => globalThis.document.removeEventListener('keydown', closeOnEscape);
   }, [managementOpen]);
+
+  useEffect(() => {
+    if (isCurrentHost && view?.street === 'showdown' && !view.finalSummaryVisible) void loadManagement();
+  }, [isCurrentHost, view?.street, view?.sequence, view?.finalSummaryVisible]);
 
   async function act(action: PlayerAction) {
     if (!isTurn || actionPendingRef.current) return;
@@ -537,6 +544,19 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
     } catch { setStatus('לא הצלחנו לבטל את תוספת הז׳יטונים.'); } finally { setManagementBusy(false); }
   }
 
+  async function declineRebuy(targetPlayerId: string, playerName: string) {
+    if (!isCurrentHost || managementBusy) return;
+    setManagementBusy(true);
+    try {
+      const response = await globalThis.fetch(`${SERVER_URL}/rooms/${encodeURIComponent(joinId)}/management/players/${encodeURIComponent(targetPlayerId)}/rebuy/decline`, {
+        method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json' },
+      });
+      if (!response.ok) throw new Error('Rebuy decision unavailable');
+      await loadManagement();
+      setStatus(`${playerName} מחוץ לשולחן. אפשר להחזיר אותו בהמשך דרך ניהול השולחן.`);
+    } catch { setStatus('לא הצלחנו לעדכן את החלטת המארח. נסו שוב.'); } finally { setManagementBusy(false); }
+  }
+
   async function transferHost(targetPlayerId: string | undefined, leaveAfterHand: boolean) {
     if (!isCurrentHost || managementBusy || !globalThis.confirm('להעביר את ניהול השולחן? לאחר האישור ההרשאות יעברו מיד.')) return;
     setManagementBusy(true);
@@ -617,6 +637,8 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
 
   const turnMessage = view.street === 'showdown'
     ? 'היד הסתיימה'
+    : view.isSittingOut && !ownSeat
+      ? 'אתם מחוץ לשולחן · המארח יכול להחזיר אתכם עם ז׳יטונים ליד הבאה'
     : view.allInRunout
       ? `כולם באול אין — ממתינים לחשיפת ${streetNames[view.allInRunout.nextStreet]}`
     : isTurn
@@ -660,8 +682,8 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
         </div>
       </section>
       <section className="player-panel" aria-label="היד שלכם">
-        <div className="your-hand"><p><span aria-hidden="true">◆</span> הקלפים שלכם</p><div className="hole-cards"><PlayingCard card={view.holeCards[0]} /><PlayingCard card={view.holeCards[1]} /></div></div>
-        <div className="your-stack"><span>הערימה שלכם</span><strong><i aria-hidden="true" />{ownSeat?.stack.toLocaleString('he-IL') ?? '—'}</strong><small>צ׳יפים</small></div>
+        <div className="your-hand"><p><span aria-hidden="true">◆</span> {view.holeCards.length ? 'הקלפים שלכם' : 'מחוץ לשולחן'}</p><div className="hole-cards">{view.holeCards.length ? <><PlayingCard card={view.holeCards[0]} /><PlayingCard card={view.holeCards[1]} /></> : <small>ממתינים להחזרה ליד הבאה</small>}</div></div>
+        <div className="your-stack"><span>הערימה שלכם</span><strong><i aria-hidden="true" />{ownSeat?.stack.toLocaleString('he-IL') ?? (view.isSittingOut ? '0' : '—')}</strong><small>צ׳יפים</small></div>
         {status.includes('נכשל') || status.includes('לא זמינה') ? <p className="table-status" role="alert">{status}</p> : null}
         {isTurn ? <div className="action-bar" aria-label="פעולות בתור שלכם">
           <button type="button" className="action-fold" disabled={pending} onClick={() => void act({ type: 'fold' })}><span aria-hidden="true">✕</span> פרישה</button>
@@ -697,9 +719,13 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
           {canRevealAtShowdown ? <button type="button" className="reveal-hand-button" disabled={revealingHand} onClick={() => void revealHand()}>{revealingHand ? 'חושפים…' : 'לחשוף את היד שלי'}</button> : null}
           {view.gameCompleted
             ? isCurrentHost ? <div className="final-hand-decisions"><button type="button" disabled={revealingSummary || continuingHand} onClick={() => void revealFinalSummary()}>{revealingSummary ? 'מציגים…' : 'הצגת הסיכום'}</button><button type="button" disabled={revealingSummary || continuingHand} onClick={() => setContinueDialogOpen(true)}>עוד יד</button></div> : <small>היד האחרונה הסתיימה. ממתינים להחלטת המארח.</small>
-            : isCurrentHost ? <button type="button" className="next-hand-button" disabled={startingNextHand} onClick={() => void startNextHand()}>{startingNextHand ? 'מחלקים…' : management?.nextHandIsFinal ? 'התחלת היד האחרונה' : 'היד הבאה'}</button> : <small>המארח יכול להתחיל את היד הבאה.</small>}
+            : isCurrentHost ? <button type="button" className="next-hand-button" disabled={startingNextHand || bustedPlayers.length > 0} onClick={() => void startNextHand()}>{startingNextHand ? 'מחלקים…' : bustedPlayers.length ? 'קודם מחליטים לגבי שחקנים שהתרוקנו' : management?.nextHandIsFinal ? 'התחלת היד האחרונה' : 'היד הבאה'}</button> : <small>המארח יכול להתחיל את היד הבאה.</small>}
         </div> : null}
       </section>
+      {isCurrentHost && view.street === 'showdown' && !view.finalSummaryVisible && bustedPlayers.length > 0 ? <div className="rebuy-backdrop"><section className="rebuy-dialog" role="dialog" aria-modal="true" aria-labelledby="rebuy-title">
+        <p>החלטת מארח בין ידיים</p><h2 id="rebuy-title">נגמרו לשחקנים הז׳יטונים</h2><small>אפשר להחזיר אותם ליד הבאה, או להשאיר אותם בחדר מחוץ לשולחן. גם בהמשך תוכלו להוסיף להם ז׳יטונים מאותו חשבון שחקן.</small>
+        {bustedPlayers.map((player) => <div key={player.id} className="rebuy-player"><strong>{player.displayName}{player.isHost ? ' · אתם' : ''}</strong><div><input aria-label={`כמות ז׳יטונים ל${player.displayName}`} type="number" inputMode="numeric" min="1" placeholder="כמות ז׳יטונים" value={topUpAmounts[player.id] ?? ''} onChange={(event) => setTopUpAmounts((current) => ({ ...current, [player.id]: Number(event.target.value) }))} /><button type="button" disabled={managementBusy || !Number.isSafeInteger(topUpAmounts[player.id]) || (topUpAmounts[player.id] ?? 0) < 1} onClick={() => void addChips(player.id, player.displayName, topUpAmounts[player.id] ?? 0)}>הוספת ז׳יטונים</button><button type="button" className="rebuy-decline" disabled={managementBusy} onClick={() => void declineRebuy(player.id, player.displayName)}>לא להוסיף כרגע</button></div></div>)}
+      </section></div> : null}
       {continueDialogOpen && isCurrentHost && view?.gameCompleted && !view.finalSummaryVisible ? <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
         if (event.target === event.currentTarget && !continuingHand) setContinueDialogOpen(false);
       }}><section className="continue-hand-dialog" role="dialog" aria-modal="true" aria-labelledby="continue-hand-title">
@@ -720,9 +746,9 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
         </div>
         <button type="button" className="management-roster-toggle" aria-expanded={playersOpen} onClick={() => setPlayersOpen((open) => !open)}><span>רשימת שחקנים</span><strong>{management?.players.length ?? 0}</strong><i aria-hidden="true">{playersOpen ? '−' : '+'}</i></button>
         {playersOpen ? <section className="management-players"><h3>שחקנים וניהול ערימות</h3>{management?.players.map((player) => <article key={player.id} className={player.leaveAfterHand ? 'player-management-leaving' : ''}>
-          <div><strong>{player.displayName}{player.isHost ? ' · מארח' : ''}</strong><small>{player.currentStack.toLocaleString('he-IL')} ז׳יטונים{player.pendingChips ? ` · ${player.pendingChips.toLocaleString('he-IL')}+ ממתינים` : ''}{player.leaveAfterHand ? ' · יוצא ביד הבאה' : ''}</small></div>
+          <div><strong>{player.displayName}{player.isHost ? ' · מארח' : ''}</strong><small>{player.currentStack.toLocaleString('he-IL')} ז׳יטונים{player.isSittingOut ? ' · מחוץ לשולחן' : ''}{player.pendingChips ? ` · ${player.pendingChips.toLocaleString('he-IL')}+ ממתינים ליד הבאה` : ''}{player.leaveAfterHand ? ' · יוצא ביד הבאה' : ''}</small></div>
           <div className="player-management-actions">
-            {!player.leaveAfterHand ? <><input aria-label={`ז׳יטונים ל${player.displayName}`} type="number" inputMode="numeric" min="1" placeholder="כמות" value={topUpAmounts[player.id] ?? ''} onChange={(event) => setTopUpAmounts((current) => ({ ...current, [player.id]: Number(event.target.value) }))} /><button type="button" disabled={managementBusy} onClick={() => void addChips(player.id, player.displayName, topUpAmounts[player.id] ?? 0)}>הוספה</button>{player.pendingChips > 0 ? <button type="button" className="management-cancel" disabled={managementBusy} onClick={() => void cancelChips(player.id)}>ביטול תוספת</button> : null}</> : null}
+            {!player.leaveAfterHand ? <><input aria-label={`ז׳יטונים ל${player.displayName}`} type="number" inputMode="numeric" min="1" placeholder="כמות" value={topUpAmounts[player.id] ?? ''} onChange={(event) => setTopUpAmounts((current) => ({ ...current, [player.id]: Number(event.target.value) }))} /><button type="button" disabled={managementBusy} onClick={() => void addChips(player.id, player.displayName, topUpAmounts[player.id] ?? 0)}>{player.isSittingOut ? 'החזרה לשולחן' : 'הוספה'}</button>{player.pendingChips > 0 ? <button type="button" className="management-cancel" disabled={managementBusy} onClick={() => void cancelChips(player.id)}>ביטול תוספת</button> : null}</> : null}
             {!player.isHost ? <button type="button" className="management-danger" disabled={Boolean(managingPlayerId)} onClick={() => void removePlayerBetweenHands(player.id, player.displayName, !player.leaveAfterHand)}>{player.leaveAfterHand ? 'ביטול יציאה' : 'הוצאה ביד הבאה'}</button> : null}
             {!player.isHost && !player.leaveAfterHand ? <><button type="button" className="management-transfer" disabled={managementBusy} onClick={() => void transferHost(player.id, false)}>העברת ניהול</button><button type="button" className="management-danger" disabled={managementBusy} onClick={() => void transferHost(player.id, true)}>העברה ויציאה שלי</button></> : null}
           </div>

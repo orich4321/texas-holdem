@@ -78,6 +78,7 @@ test('a second authenticated player cannot invoke host-only HTTP controls by cal
       `/rooms/${joinId}/management/blinds`,
       `/rooms/${joinId}/management/players/${targetPlayerId}/removal`,
       `/rooms/${joinId}/management/players/${targetPlayerId}/chips`,
+      `/rooms/${joinId}/management/players/${targetPlayerId}/rebuy/decline`,
       `/rooms/${joinId}/management/transfer-host`,
     ]) {
       const response = await globalThis.fetch(`${baseUrl}${path}`, { method: 'POST', headers: { cookie: `poker_player_token=${guestToken}` } });
