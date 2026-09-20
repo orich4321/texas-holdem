@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 import { AppBrand } from '../../ui';
+import { parsePositiveInteger } from '../../numeric-input';
 
 declare const process: { env: { NODE_ENV?: string; NEXT_PUBLIC_GAME_URL?: string; NEXT_PUBLIC_SERVER_URL?: string } };
 
@@ -150,9 +151,13 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   const [playersOpen, setPlayersOpen] = useState(false);
   const [management, setManagement] = useState<ManagementView>();
   const [managementBusy, setManagementBusy] = useState(false);
-  const [smallBlind, setSmallBlind] = useState(1);
-  const [bigBlind, setBigBlind] = useState(2);
-  const [topUpAmounts, setTopUpAmounts] = useState<Record<string, number>>({});
+  const [smallBlind, setSmallBlind] = useState('1');
+  const [bigBlind, setBigBlind] = useState('2');
+  const [topUpAmounts, setTopUpAmounts] = useState<Record<string, string>>({});
+  const selectedSmallBlind = parsePositiveInteger(smallBlind);
+  const selectedBigBlind = parsePositiveInteger(bigBlind);
+  const validBlinds = selectedSmallBlind !== undefined && selectedSmallBlind <= 100_000
+    && selectedBigBlind !== undefined && selectedBigBlind <= 100_000 && selectedBigBlind > selectedSmallBlind;
   const socketRef = useRef<ReturnType<typeof io> | null>(null);
   const latestSequenceRef = useRef(-1);
   const actionPendingRef = useRef(false);
@@ -464,8 +469,8 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
       const next = await response.json() as ManagementView;
       if (!response.ok || !Array.isArray(next.players)) throw new Error('Management unavailable');
       setManagement(next);
-      setSmallBlind(next.smallBlind);
-      setBigBlind(next.bigBlind);
+      setSmallBlind(String(next.smallBlind));
+      setBigBlind(String(next.bigBlind));
     } catch {
       setStatus('לא הצלחנו לטעון את ניהול השולחן. נסו שוב.');
     }
@@ -506,11 +511,11 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   }
 
   async function saveBlinds() {
-    if (!isCurrentHost || managementBusy) return;
+    if (!isCurrentHost || managementBusy || !validBlinds) return;
     setManagementBusy(true);
     try {
       const response = await globalThis.fetch(`${SERVER_URL}/rooms/${encodeURIComponent(joinId)}/management/blinds`, {
-        method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ smallBlind, bigBlind }),
+        method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ smallBlind: selectedSmallBlind, bigBlind: selectedBigBlind }),
       });
       if (!response.ok) throw new Error('Blind update unavailable');
       await loadManagement();
@@ -527,6 +532,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
       });
       if (!response.ok) throw new Error('Chip adjustment unavailable');
       await loadManagement();
+      setTopUpAmounts((current) => ({ ...current, [targetPlayerId]: '' }));
       setStatus(`${amount.toLocaleString('he-IL')} ז׳יטונים יתווספו ל${playerName} ביד הבאה.`);
     } catch { setStatus('לא הצלחנו לתזמן את תוספת הז׳יטונים.'); } finally { setManagementBusy(false); }
   }
@@ -724,7 +730,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
       </section>
       {isCurrentHost && view.street === 'showdown' && !view.finalSummaryVisible && bustedPlayers.length > 0 ? <div className="rebuy-backdrop"><section className="rebuy-dialog" role="dialog" aria-modal="true" aria-labelledby="rebuy-title">
         <p>החלטת מארח בין ידיים</p><h2 id="rebuy-title">נגמרו לשחקנים הז׳יטונים</h2><small>אפשר להחזיר אותם ליד הבאה, או להשאיר אותם בחדר מחוץ לשולחן. גם בהמשך תוכלו להוסיף להם ז׳יטונים מאותו חשבון שחקן.</small>
-        {bustedPlayers.map((player) => <div key={player.id} className="rebuy-player"><strong>{player.displayName}{player.isHost ? ' · אתם' : ''}</strong><div><input aria-label={`כמות ז׳יטונים ל${player.displayName}`} type="number" inputMode="numeric" min="1" placeholder="כמות ז׳יטונים" value={topUpAmounts[player.id] ?? ''} onChange={(event) => setTopUpAmounts((current) => ({ ...current, [player.id]: Number(event.target.value) }))} /><button type="button" disabled={managementBusy || !Number.isSafeInteger(topUpAmounts[player.id]) || (topUpAmounts[player.id] ?? 0) < 1} onClick={() => void addChips(player.id, player.displayName, topUpAmounts[player.id] ?? 0)}>הוספת ז׳יטונים</button><button type="button" className="rebuy-decline" disabled={managementBusy} onClick={() => void declineRebuy(player.id, player.displayName)}>לא להוסיף כרגע</button></div></div>)}
+        {bustedPlayers.map((player) => <div key={player.id} className="rebuy-player"><strong>{player.displayName}{player.isHost ? ' · אתם' : ''}</strong><div><input aria-label={`כמות ז׳יטונים ל${player.displayName}`} type="number" inputMode="numeric" min="1" placeholder="כמות ז׳יטונים" value={topUpAmounts[player.id] ?? ''} onChange={(event) => setTopUpAmounts((current) => ({ ...current, [player.id]: event.target.value }))} /><button type="button" disabled={managementBusy || parsePositiveInteger(topUpAmounts[player.id] ?? '') === undefined} onClick={() => void addChips(player.id, player.displayName, parsePositiveInteger(topUpAmounts[player.id] ?? '') ?? 0)}>הוספת ז׳יטונים</button><button type="button" className="rebuy-decline" disabled={managementBusy} onClick={() => void declineRebuy(player.id, player.displayName)}>לא להוסיף כרגע</button></div></div>)}
       </section></div> : null}
       {continueDialogOpen && isCurrentHost && view?.gameCompleted && !view.finalSummaryVisible ? <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
         if (event.target === event.currentTarget && !continuingHand) setContinueDialogOpen(false);
@@ -741,14 +747,14 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
         <p className="management-note">שינויים בערימות, בליינדים ויציאות יחולו לפני היד הבאה.</p>
         <div className="management-grid">
           <section className="management-card"><h3>היד האחרונה</h3><p>{management?.nextHandIsFinal ? 'היד הבאה מסומנת כאחרונה.' : 'המשחק ימשיך כרגיל.'}</p><button type="button" className={management?.nextHandIsFinal ? 'management-cancel' : 'management-gold'} disabled={managementBusy} onClick={() => void scheduleFinalHand(!management?.nextHandIsFinal)}>{management?.nextHandIsFinal ? 'ביטול הסימון' : 'סימון סיבוב אחרון'}</button></section>
-          <section className="management-card"><h3>בליינדים מהיד הבאה</h3><div className="blind-inputs"><label>סמול<input type="number" inputMode="numeric" min="1" value={smallBlind} onChange={(event) => setSmallBlind(Number(event.target.value))} /></label><label>ביג<input type="number" inputMode="numeric" min="2" value={bigBlind} onChange={(event) => setBigBlind(Number(event.target.value))} /></label></div><button type="button" disabled={managementBusy} onClick={() => void saveBlinds()}>שמירת בליינדים</button></section>
+          <section className="management-card"><h3>בליינדים מהיד הבאה</h3><div className="blind-inputs"><label>סמול<input type="number" inputMode="numeric" min="1" value={smallBlind} onChange={(event) => setSmallBlind(event.target.value)} /></label><label>ביג<input type="number" inputMode="numeric" min="2" value={bigBlind} onChange={(event) => setBigBlind(event.target.value)} /></label></div><button type="button" disabled={managementBusy || !validBlinds} onClick={() => void saveBlinds()}>שמירת בליינדים</button></section>
           <section className="management-card management-invite"><h3>הוספת שחקנים</h3><p>הקישור תמיד פותח את מסך האורח.</p><button type="button" onClick={() => void copyInvitationForNextHand()}>העתקת קישור הזמנה</button></section>
         </div>
         <button type="button" className="management-roster-toggle" aria-expanded={playersOpen} onClick={() => setPlayersOpen((open) => !open)}><span>רשימת שחקנים</span><strong>{management?.players.length ?? 0}</strong><i aria-hidden="true">{playersOpen ? '−' : '+'}</i></button>
         {playersOpen ? <section className="management-players"><h3>שחקנים וניהול ערימות</h3>{management?.players.map((player) => <article key={player.id} className={player.leaveAfterHand ? 'player-management-leaving' : ''}>
           <div><strong>{player.displayName}{player.isHost ? ' · מארח' : ''}</strong><small>{player.currentStack.toLocaleString('he-IL')} ז׳יטונים{player.isSittingOut ? ' · מחוץ לשולחן' : ''}{player.pendingChips ? ` · ${player.pendingChips.toLocaleString('he-IL')}+ ממתינים ליד הבאה` : ''}{player.leaveAfterHand ? ' · יוצא ביד הבאה' : ''}</small></div>
           <div className="player-management-actions">
-            {!player.leaveAfterHand ? <><input aria-label={`ז׳יטונים ל${player.displayName}`} type="number" inputMode="numeric" min="1" placeholder="כמות" value={topUpAmounts[player.id] ?? ''} onChange={(event) => setTopUpAmounts((current) => ({ ...current, [player.id]: Number(event.target.value) }))} /><button type="button" disabled={managementBusy} onClick={() => void addChips(player.id, player.displayName, topUpAmounts[player.id] ?? 0)}>{player.isSittingOut ? 'החזרה לשולחן' : 'הוספה'}</button>{player.pendingChips > 0 ? <button type="button" className="management-cancel" disabled={managementBusy} onClick={() => void cancelChips(player.id)}>ביטול תוספת</button> : null}</> : null}
+            {!player.leaveAfterHand ? <><input aria-label={`ז׳יטונים ל${player.displayName}`} type="number" inputMode="numeric" min="1" placeholder="כמות" value={topUpAmounts[player.id] ?? ''} onChange={(event) => setTopUpAmounts((current) => ({ ...current, [player.id]: event.target.value }))} /><button type="button" disabled={managementBusy || parsePositiveInteger(topUpAmounts[player.id] ?? '') === undefined} onClick={() => void addChips(player.id, player.displayName, parsePositiveInteger(topUpAmounts[player.id] ?? '') ?? 0)}>{player.isSittingOut ? 'החזרה לשולחן' : 'הוספה'}</button>{player.pendingChips > 0 ? <button type="button" className="management-cancel" disabled={managementBusy} onClick={() => void cancelChips(player.id)}>ביטול תוספת</button> : null}</> : null}
             {!player.isHost ? <button type="button" className="management-danger" disabled={Boolean(managingPlayerId)} onClick={() => void removePlayerBetweenHands(player.id, player.displayName, !player.leaveAfterHand)}>{player.leaveAfterHand ? 'ביטול יציאה' : 'הוצאה ביד הבאה'}</button> : null}
             {!player.isHost && !player.leaveAfterHand ? <><button type="button" className="management-transfer" disabled={managementBusy} onClick={() => void transferHost(player.id, false)}>העברת ניהול</button><button type="button" className="management-danger" disabled={managementBusy} onClick={() => void transferHost(player.id, true)}>העברה ויציאה שלי</button></> : null}
           </div>

@@ -2,13 +2,26 @@
 
 import { type FormEvent, useState } from 'react';
 import { DEFAULT_ROOM_SETTINGS, EMPTY_NICKNAME_MESSAGE, submitRoomCreation, type RoomSettings } from './room-creation';
+import { parsePositiveInteger } from './numeric-input';
 import { AppBrand, IconBadge } from './ui';
 
 export default function HomePage() {
   const [nickname, setNickname] = useState('');
-  const [settings, setSettings] = useState<RoomSettings>(DEFAULT_ROOM_SETTINGS);
+  const [settings, setSettings] = useState({
+    initialStack: String(DEFAULT_ROOM_SETTINGS.initialStack),
+    smallBlind: String(DEFAULT_ROOM_SETTINGS.smallBlind),
+    bigBlind: String(DEFAULT_ROOM_SETTINGS.bigBlind),
+  });
   const [pending, setPending] = useState(false);
   const [status, setStatus] = useState<string>();
+  const initialStack = parsePositiveInteger(settings.initialStack);
+  const smallBlind = parsePositiveInteger(settings.smallBlind);
+  const bigBlind = parsePositiveInteger(settings.bigBlind);
+  const validSettings: RoomSettings | undefined = initialStack !== undefined && initialStack >= 100 && initialStack <= 1_000_000
+    && smallBlind !== undefined && smallBlind <= 100_000
+    && bigBlind !== undefined && bigBlind <= 100_000 && bigBlind > smallBlind && initialStack >= bigBlind
+    ? { initialStack, smallBlind, bigBlind, maxPlayers: DEFAULT_ROOM_SETTINGS.maxPlayers }
+    : undefined;
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -19,7 +32,7 @@ export default function HomePage() {
       setStatus(EMPTY_NICKNAME_MESSAGE);
       return;
     }
-    if (!Number.isSafeInteger(settings.initialStack) || settings.initialStack < 100 || !Number.isSafeInteger(settings.smallBlind) || !Number.isSafeInteger(settings.bigBlind) || settings.smallBlind < 1 || settings.bigBlind <= settings.smallBlind || settings.initialStack < settings.bigBlind) {
+    if (!validSettings) {
       setStatus('בדקו את ערימת הפתיחה ואת גובה הבליינדים.');
       return;
     }
@@ -31,7 +44,7 @@ export default function HomePage() {
       // Chromium rejects before any network request is made.
       fetch: (...args) => globalThis.fetch(...args),
       navigate: (destination) => globalThis.location.assign(destination),
-    }, settings);
+    }, validSettings);
 
     if (!result.ok) setStatus(result.message);
     setPending(false);
@@ -74,14 +87,14 @@ export default function HomePage() {
           />
           <fieldset className="game-settings" disabled={pending}>
             <legend>מבנה המשחק</legend>
-            <label>צ׳יפים לכל שחקן<input inputMode="numeric" type="number" min="100" max="1000000" value={settings.initialStack} onChange={(event) => setSettings((current) => ({ ...current, initialStack: Number(event.target.value) }))} /></label>
+            <label>צ׳יפים לכל שחקן<input inputMode="numeric" type="number" min="100" max="1000000" value={settings.initialStack} onChange={(event) => setSettings((current) => ({ ...current, initialStack: event.target.value }))} /></label>
             <div className="game-settings-row">
-              <label>סמול בליינד<input inputMode="numeric" type="number" min="1" max="100000" value={settings.smallBlind} onChange={(event) => setSettings((current) => ({ ...current, smallBlind: Number(event.target.value) }))} /></label>
-              <label>ביג בליינד<input inputMode="numeric" type="number" min="2" max="100000" value={settings.bigBlind} onChange={(event) => setSettings((current) => ({ ...current, bigBlind: Number(event.target.value) }))} /></label>
+              <label>סמול בליינד<input inputMode="numeric" type="number" min="1" max="100000" value={settings.smallBlind} onChange={(event) => setSettings((current) => ({ ...current, smallBlind: event.target.value }))} /></label>
+              <label>ביג בליינד<input inputMode="numeric" type="number" min="2" max="100000" value={settings.bigBlind} onChange={(event) => setSettings((current) => ({ ...current, bigBlind: event.target.value }))} /></label>
             </div>
             <small>כל מי שמצטרף מקבל את אותה ערימת פתיחה.</small>
           </fieldset>
-          <button type="submit" disabled={pending}>
+          <button type="submit" disabled={pending || !validSettings}>
             <span aria-hidden="true">♠</span>{pending ? 'פותחים שולחן…' : 'פתחו שולחן פרטי'}
           </button>
           {status ? (
