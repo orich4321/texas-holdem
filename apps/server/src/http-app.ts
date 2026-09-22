@@ -5,8 +5,9 @@ import { createOriginPolicy, isAllowedRequestOrigin } from './origin-policy.js';
 import type { RoomRepository } from './persistence/room-repository.js';
 import { parseCookieHeader } from './socket-session.js';
 
-const MAX_REQUEST_BODY_SIZE = '16kb';
+const MAX_REQUEST_BODY_SIZE = '80kb';
 const MAX_DISPLAY_NAME_CODE_POINTS = 24;
+const MAX_AVATAR_BYTES = 48 * 1024;
 const MIN_INITIAL_STACK = 100;
 const MAX_INITIAL_STACK = 1_000_000;
 const MAX_BLIND = 100_000;
@@ -34,6 +35,7 @@ type CreateAppDependencies = {
 
 type CreateRoomRequest = {
   displayName?: unknown;
+  avatarDataUrl?: unknown;
   initialStack?: unknown;
   smallBlind?: unknown;
   bigBlind?: unknown;
@@ -42,11 +44,27 @@ type CreateRoomRequest = {
 
 type ValidatedRoomInput = {
   displayName: string;
+  avatarDataUrl?: string;
   initialStack: number;
   smallBlind: number;
   bigBlind: number;
   maxPlayers: number;
 };
+
+function validateAvatarDataUrl(value: unknown): string | undefined | false {
+  if (value === undefined || value === null || value === '') return undefined;
+  if (typeof value !== 'string') return false;
+  const match = /^data:image\/(webp|jpeg|png);base64,([A-Za-z0-9+/]+={0,2})$/.exec(value);
+  if (!match || match[2].length % 4 !== 0) return false;
+  const bytes = Buffer.from(match[2], 'base64');
+  if (bytes.length === 0 || bytes.length > MAX_AVATAR_BYTES) return false;
+  const validMagic = match[1] === 'jpeg'
+    ? bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff
+    : match[1] === 'png'
+      ? bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+      : bytes.length >= 12 && bytes.subarray(0, 4).toString('ascii') === 'RIFF' && bytes.subarray(8, 12).toString('ascii') === 'WEBP';
+  return validMagic ? value : false;
+}
 
 function validateDisplayName(body: unknown): string | undefined {
   if (body === null || typeof body !== 'object' || Array.isArray(body)) return undefined;
@@ -61,7 +79,9 @@ function validateDisplayName(body: unknown): string | undefined {
 function validateCreateRoomInput(body: unknown): ValidatedRoomInput | undefined {
   const displayName = validateDisplayName(body);
   if (!displayName) return undefined;
-  const { initialStack = DEFAULT_INITIAL_STACK, smallBlind = DEFAULT_SMALL_BLIND, bigBlind = DEFAULT_BIG_BLIND, maxPlayers = DEFAULT_MAX_PLAYERS } = body as CreateRoomRequest;
+  const { avatarDataUrl: rawAvatarDataUrl, initialStack = DEFAULT_INITIAL_STACK, smallBlind = DEFAULT_SMALL_BLIND, bigBlind = DEFAULT_BIG_BLIND, maxPlayers = DEFAULT_MAX_PLAYERS } = body as CreateRoomRequest;
+  const avatarDataUrl = validateAvatarDataUrl(rawAvatarDataUrl);
+  if (avatarDataUrl === false) return undefined;
   if (![initialStack, smallBlind, bigBlind, maxPlayers].every(Number.isSafeInteger)) return undefined;
   if (
     (initialStack as number) < MIN_INITIAL_STACK || (initialStack as number) > MAX_INITIAL_STACK
@@ -71,12 +91,14 @@ function validateCreateRoomInput(body: unknown): ValidatedRoomInput | undefined 
     || (maxPlayers as number) < MIN_ROOM_PLAYERS || (maxPlayers as number) > MAX_ROOM_PLAYERS
   ) return undefined;
 
-  return { displayName, initialStack: initialStack as number, smallBlind: smallBlind as number, bigBlind: bigBlind as number, maxPlayers: maxPlayers as number };
+  return { displayName, ...(avatarDataUrl ? { avatarDataUrl } : {}), initialStack: initialStack as number, smallBlind: smallBlind as number, bigBlind: bigBlind as number, maxPlayers: maxPlayers as number };
 }
 
-function validateJoinRoomInput(body: unknown): { displayName: string } | undefined {
+function validateJoinRoomInput(body: unknown): { displayName: string; avatarDataUrl?: string } | undefined {
   const displayName = validateDisplayName(body);
-  return displayName ? { displayName } : undefined;
+  if (!displayName) return undefined;
+  const avatarDataUrl = validateAvatarDataUrl((body as CreateRoomRequest).avatarDataUrl);
+  return avatarDataUrl === false ? undefined : { displayName, ...(avatarDataUrl ? { avatarDataUrl } : {}) };
 }
 
 function validatePlayerAction(body: unknown): PlayerAction | undefined {
@@ -197,7 +219,7 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
     try {
       const room = await roomRepository.createRoom({
         status: 'WAITING',
-        host: { id: randomUUID(), displayName: input.displayName, initialStack: input.initialStack },
+        host: { id: randomUUID(), displayName: input.displayName, avatarDataUrl: input.avatarDataUrl, initialStack: input.initialStack },
         settings: { initialStack: input.initialStack, smallBlind: input.smallBlind, bigBlind: input.bigBlind, maxPlayers: input.maxPlayers },
       });
       setPlayerSessionCookie(response, room.hostAccessToken);
@@ -656,8 +678,8 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
           bigBlind: room.bigBlind,
           maxPlayers: room.maxPlayers,
         },
-        host: { displayName: host.displayName },
-        players: room.players.filter((player) => !player.isSittingOut).map(({ displayName, initialStack, currentStack }) => ({ displayName, initialStack, currentStack })),
+        host: { displayName: host.displayName, ...(host.avatarDataUrl ? { avatarDataUrl: host.avatarDataUrl } : {}) },
+        players: room.players.filter((player) => !player.isSittingOut).map(({ displayName, avatarDataUrl, initialStack, currentStack }) => ({ displayName, ...(avatarDataUrl ? { avatarDataUrl } : {}), initialStack, currentStack })),
       });
     } catch {
       console.error('Room lookup failed');

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { io } from 'socket.io-client';
 import { AppBrand } from '../../ui';
 import { parsePositiveInteger } from '../../numeric-input';
+import { ProfileImage } from '../../profile-image';
 
 declare const process: { env: { NODE_ENV?: string; NEXT_PUBLIC_GAME_URL?: string; NEXT_PUBLIC_SERVER_URL?: string } };
 
@@ -47,7 +48,7 @@ type PlayerView = {
   toCall: number;
   raise?: { minRaiseTo: number; maxRaiseTo: number; minimumIncrement: number };
   holeCards: readonly [Card, Card] | readonly [];
-  seats: readonly { seatNumber: number; playerId: string; playerName: string; stack: number; currentBet: number; isFolded: boolean }[];
+  seats: readonly { seatNumber: number; playerId: string; playerName: string; avatarDataUrl?: string; stack: number; currentBet: number; isFolded: boolean }[];
   exposedHands: readonly ExposedHand[];
   allInRunout?: AllInRunout;
   showdown?: Showdown;
@@ -112,7 +113,9 @@ function isPlayerView(value: unknown): value is PlayerView {
     && typeof view.toCall === 'number'
     && Array.isArray(view.communityCards) && view.communityCards.every(isCard)
     && Array.isArray(view.holeCards) && (view.holeCards.length === 2 || (view.holeCards.length === 0 && view.isSittingOut === true)) && view.holeCards.every(isCard)
-    && Array.isArray(view.seats)
+    && Array.isArray(view.seats) && view.seats.every((seat) => seat !== null && typeof seat === 'object'
+      && typeof (seat as Record<string, unknown>).playerName === 'string'
+      && ((seat as Record<string, unknown>).avatarDataUrl === undefined || typeof (seat as Record<string, unknown>).avatarDataUrl === 'string'))
     && Array.isArray(view.exposedHands) && view.exposedHands.every(isExposedHand)
     && (view.raise === undefined || (view.raise !== null && typeof view.raise === 'object'
       && ['minRaiseTo', 'maxRaiseTo', 'minimumIncrement'].every((key) => typeof (view.raise as Record<string, unknown>)[key] === 'number')))
@@ -677,6 +680,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
               const isWinner = winnerSeatNumbers.has(seat.seatNumber);
               return <article key={seat.playerId} className={`table-seat${isYou ? ' table-seat-self' : ''}${isActor ? ' table-seat-active' : ''}${isWinner ? ' table-seat-winner' : ''}${seat.isFolded ? ' table-seat-folded' : ''}`}>
                 <span className={`seat-number${seat.seatNumber === view.dealerSeat ? ' dealer-button' : ''}`}>{seat.seatNumber === view.dealerSeat ? 'D' : seat.seatNumber}</span>
+                <ProfileImage className="table-seat-avatar" dataUrl={seat.avatarDataUrl} fallback={seat.playerName.slice(0, 1)} />
                 <strong>{seat.playerName}{isYou ? ' · אתם' : ''}</strong>
                 <small>{seat.isFolded ? 'פרש/ה מהיד' : <><i aria-hidden="true" />{seat.stack.toLocaleString('he-IL')} צ׳יפים</>}</small>
                 {seat.currentBet > 0 ? <em>הימור {seat.currentBet.toLocaleString('he-IL')}</em> : null}

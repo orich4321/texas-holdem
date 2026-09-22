@@ -22,6 +22,7 @@ let baseUrl;
 let repository;
 
 const snapshotKeyring = new Map([['integration-current', Buffer.from('integration snapshot signing key that is safely over 32 bytes', 'utf8')]]);
+const avatarDataUrl = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
 
 if (integrationEnabled) {
   before(async () => {
@@ -103,6 +104,21 @@ test('POST /rooms uses the new chip and blind defaults when settings are omitted
   assert.equal(room?.players[0]?.currentStack, 500);
 });
 
+test('host and guest profile images persist and are exposed in the public lobby', { skip: !integrationEnabled }, async () => {
+  const created = await postRoom({ displayName: 'Host avatar', avatarDataUrl });
+  assert.equal(created.status, 201);
+  const { roomId } = await created.json();
+  const joined = await postJoin(roomId, { displayName: 'Guest avatar', avatarDataUrl });
+  assert.equal(joined.status, 201);
+
+  const room = await repository.findRoomByJoinId(roomId);
+  assert.deepEqual(room?.players.map((player) => player.avatarDataUrl), [avatarDataUrl, avatarDataUrl]);
+  const lobby = await globalThis.fetch(`${baseUrl}/rooms/${roomId}`);
+  const body = await lobby.json();
+  assert.equal(body.host.avatarDataUrl, avatarDataUrl);
+  assert.deepEqual(body.players.map((player) => player.avatarDataUrl), [avatarDataUrl, avatarDataUrl]);
+});
+
 test('the last-hand summary remains hidden until its host releases it for everyone', { skip: !integrationEnabled }, async () => {
   const created = await postRoom({ displayName: 'Host', initialStack: 1000 });
   const { roomId } = await created.json();
@@ -134,6 +150,8 @@ test('POST /rooms rejects invalid creation input with a stable client error', { 
     { displayName: 'Ada', initialStack: 1.5 },
     { displayName: 'Ada', initialStack: 0 },
     { displayName: 'Ada', initialStack: 1_000_001 },
+    { displayName: 'Ada', initialStack: 500, avatarDataUrl: 'data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=' },
+    { displayName: 'Ada', initialStack: 500, avatarDataUrl: 'data:image/png;base64,bm90LXJlYWxseS1hLXBuZw==' },
   ]) {
     const response = await postRoom(body);
     assert.equal(response.status, 400);
@@ -151,7 +169,7 @@ test('POST /rooms rejects invalid creation input with a stable client error', { 
   const oversizedResponse = await globalThis.fetch(`${baseUrl}/rooms`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ displayName: 'A'.repeat(20_000), initialStack: 100 }),
+    body: JSON.stringify({ displayName: 'A'.repeat(100_000), initialStack: 100 }),
   });
   assert.equal(oversizedResponse.status, 413);
   assert.deepEqual(await oversizedResponse.json(), { error: { code: 'INVALID_REQUEST' } });

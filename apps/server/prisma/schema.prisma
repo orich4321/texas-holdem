@@ -40,6 +40,7 @@ model Player {
   id           String   @id @db.Uuid
   roomId       String   @db.Uuid
   displayName  String
+  avatarDataUrl String?
   initialStack Int
   currentStack    Int
   accessTokenHash String @unique

@@ -41,6 +41,7 @@ export async function submitRoomCreation(
   nickname: string,
   boundaries: RoomCreationBoundaries,
   settings: RoomSettings = DEFAULT_ROOM_SETTINGS,
+  avatarDataUrl?: string,
 ): Promise<RoomCreationResult> {
   const displayName = nickname.trim();
   if (!displayName) return { ok: false, message: EMPTY_NICKNAME_MESSAGE };
@@ -50,7 +51,7 @@ export async function submitRoomCreation(
       method: 'POST',
       credentials: 'include',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ displayName, ...settings }),
+      body: JSON.stringify({ displayName, ...settings, ...(avatarDataUrl ? { avatarDataUrl } : {}) }),
     });
     if (response.status !== 201) return { ok: false, message: CREATION_ERROR_MESSAGE };
 

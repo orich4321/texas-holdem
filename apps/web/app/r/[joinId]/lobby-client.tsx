@@ -10,12 +10,15 @@ import {
 } from '../../lobby-api';
 import TableClient from './table-client';
 import { AppBrand, StateScreen } from '../../ui';
+import { AvatarPicker } from '../../avatar-picker';
+import { ProfileImage } from '../../profile-image';
 
 type LobbyClientProps = { joinId: string; isHostRoute?: boolean };
 
 export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClientProps) {
   const [lobby, setLobby] = useState<Lobby>();
   const [nickname, setNickname] = useState('');
+  const [avatarDataUrl, setAvatarDataUrl] = useState<string>();
   const [loadError, setLoadError] = useState<string>();
   const [joinMessage, setJoinMessage] = useState<string>();
   const [loading, setLoading] = useState(true);
@@ -69,9 +72,10 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
     }
 
     setJoining(true);
-    const result = await joinLobby(joinId, nickname, { fetch: (...args) => globalThis.fetch(...args) });
+    const result = await joinLobby(joinId, nickname, { fetch: (...args) => globalThis.fetch(...args) }, avatarDataUrl);
     if (result.ok) {
       setNickname('');
+      setAvatarDataUrl(undefined);
       await refreshLobby();
     } else {
       setJoinMessage(result.message);
@@ -145,7 +149,7 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
         <div className="lobby-content">
           <div className="lobby-main-column">
             <div className="lobby-host" aria-label={`המארח: ${lobby.host.displayName}`}>
-              <span className="lobby-avatar" aria-hidden="true">♛</span>
+              <ProfileImage className="lobby-avatar" dataUrl={lobby.host.avatarDataUrl} fallback="♛" />
               <div><span>מנהל השולחן</span><strong>{lobby.host.displayName}</strong></div>
               <span className="lobby-host-chip"><i /> מחובר</span>
             </div>
@@ -159,6 +163,7 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
                 {lobby.players.map((player, index) => (
                   <li key={`${player.displayName}-${index}`}>
                     <span className="lobby-seat" aria-hidden="true">{index + 1}</span>
+                    <ProfileImage className="lobby-player-avatar" dataUrl={player.avatarDataUrl} fallback={player.displayName.slice(0, 1)} />
                     <strong>{player.displayName}</strong>
                     <span>{player.currentStack.toLocaleString('he-IL')} <small>צ׳יפים</small></span>
                   </li>
@@ -194,6 +199,7 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
               <form className="lobby-join-form" onSubmit={handleJoin}>
                 <div className="lobby-form-heading"><h2>הצטרפות לשולחן</h2><span>{lobby.settings.initialStack.toLocaleString('he-IL')} צ׳יפים</span></div>
                 <label htmlFor="lobby-nickname">הכינוי שלכם</label>
+                <AvatarPicker value={avatarDataUrl} onChange={setAvatarDataUrl} disabled={joining} />
                 <div className="lobby-input-row">
                   <input id="lobby-nickname" name="nickname" type="text" autoComplete="nickname" maxLength={24} placeholder="איך לקרוא לכם?" value={nickname} onChange={(event) => setNickname(event.target.value)} disabled={joining} aria-describedby={joinMessage ? 'join-status' : undefined} />
                   <button type="submit" disabled={joining}>{joining ? 'מצטרפים…' : 'שבו בשולחן'}</button>

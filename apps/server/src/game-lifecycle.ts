@@ -44,6 +44,7 @@ export interface GameSeatInput {
   seatNumber: number;
   playerId: string;
   playerName: string;
+  avatarDataUrl?: string;
   stack: number;
 }
 
@@ -90,6 +91,7 @@ export interface ServerPlayerView {
     seatNumber: number;
     playerId: string;
     playerName: string;
+    avatarDataUrl?: string;
     stack: number;
     currentBet: number;
     isFolded: boolean;
@@ -138,6 +140,7 @@ function bestFiveCards(cards: readonly Card[]): readonly Card[] {
 export class ServerGameLifecycle {
   private hand: StartedHand | undefined;
   private readonly namesByPlayerId: ReadonlyMap<string, string>;
+  private readonly avatarsByPlayerId: ReadonlyMap<string, string>;
   private readonly playerIdBySeat: ReadonlyMap<number, string>;
   private readonly startInput: Readonly<{
     seats: readonly { seatNumber: number; playerId: string; stack: number }[];
@@ -171,15 +174,18 @@ export class ServerGameLifecycle {
       throw new Error('A server game requires between two and nine seats');
     }
     const names = new Map<string, string>();
+    const avatars = new Map<string, string>();
     const playerIds = new Map<number, string>();
     for (const seat of input.seats) {
       if (!seat || typeof seat.playerId !== 'string' || seat.playerId.length === 0 || typeof seat.playerName !== 'string' || seat.playerName.length === 0 || names.has(seat.playerId) || playerIds.has(seat.seatNumber)) {
         throw new Error('Server game seats must have unique player IDs, seats, and names');
       }
       names.set(seat.playerId, seat.playerName);
+      if (seat.avatarDataUrl) avatars.set(seat.playerId, seat.avatarDataUrl);
       playerIds.set(seat.seatNumber, seat.playerId);
     }
     this.namesByPlayerId = names;
+    this.avatarsByPlayerId = avatars;
     this.playerIdBySeat = playerIds;
     this.startInput = Object.freeze({
       seats: Object.freeze(input.seats.map(({ seatNumber, playerId, stack }) => Object.freeze({ seatNumber, playerId, stack }))),
@@ -266,6 +272,7 @@ export class ServerGameLifecycle {
         seatNumber: seat.seatNumber,
         playerId: seat.playerId,
         playerName: this.namesByPlayerId.get(seat.playerId)!,
+        ...(this.avatarsByPlayerId.get(seat.playerId) ? { avatarDataUrl: this.avatarsByPlayerId.get(seat.playerId) } : {}),
         stack: settledStacks?.get(seat.seatNumber) ?? seat.stack,
         currentBet: seat.currentBet,
         isFolded: seat.isFolded === true,

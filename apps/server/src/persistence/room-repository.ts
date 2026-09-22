@@ -21,6 +21,7 @@ import { startServerHand } from '../hand-start.js';
 type PlayerInput = {
   id: string;
   displayName: string;
+  avatarDataUrl?: string;
   initialStack: number;
 };
 
@@ -58,6 +59,7 @@ const publicPlayerSelect = {
   id: true,
   roomId: true,
   displayName: true,
+  avatarDataUrl: true,
   initialStack: true,
   currentStack: true,
   leftAt: true,
@@ -194,6 +196,7 @@ export class RoomRepository {
           data: {
             id: player.id,
             displayName: player.displayName,
+            avatarDataUrl: player.avatarDataUrl,
             initialStack: player.initialStack,
             currentStack: player.initialStack,
             accessTokenHash: this.hashAccessToken(accessToken).toString('hex'),
@@ -282,6 +285,7 @@ export class RoomRepository {
       id: player.id,
       roomId: player.roomId,
       displayName: player.displayName,
+      avatarDataUrl: player.avatarDataUrl,
       initialStack: player.initialStack,
       currentStack: player.currentStack,
       createdAt: player.createdAt,
@@ -443,7 +447,7 @@ export class RoomRepository {
           finalSummaryVisible: true,
           players: {
             orderBy: { createdAt: 'asc' },
-            select: { id: true, displayName: true, currentStack: true, isSittingOut: true },
+            select: { id: true, displayName: true, avatarDataUrl: true, currentStack: true, isSittingOut: true },
           },
         },
       }),
@@ -465,6 +469,7 @@ export class RoomRepository {
           seatNumber: seat.seatNumber,
           playerId: player.id,
           playerName: player.displayName,
+          avatarDataUrl: player.avatarDataUrl ?? undefined,
           stack: player.currentStack,
         };
       }),
@@ -487,7 +492,7 @@ export class RoomRepository {
     return this.db.$transaction(async (tx) => {
       const room = await tx.room.findUnique({
         where: { id: roomId },
-        select: { status: true, hostPlayerId: true, players: { orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, currentStack: true } } },
+        select: { status: true, hostPlayerId: true, players: { orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, avatarDataUrl: true, currentStack: true } } },
       });
       if (!room || !room.hostPlayerId || room.status !== 'IN_PROGRESS' || !room.players.some((player) => player.id === playerId)) throw new Error('Game action is unavailable');
 
@@ -510,7 +515,7 @@ export class RoomRepository {
         seats: hand.seats.map((seat) => {
           const player = playersById.get(seat.playerId);
           if (!player) throw new Error('Game action is unavailable');
-          return { seatNumber: seat.seatNumber, playerId: player.id, playerName: player.displayName, stack: player.currentStack };
+          return { seatNumber: seat.seatNumber, playerId: player.id, playerName: player.displayName, avatarDataUrl: player.avatarDataUrl ?? undefined, stack: player.currentStack };
         }),
         dealerSeat: hand.dealerSeat, smallBlind: hand.smallBlindAmount, bigBlind: hand.bigBlindAmount,
       }, recovery);
@@ -586,7 +591,7 @@ export class RoomRepository {
     return this.db.$transaction(async (tx) => {
       const room = await tx.room.findUnique({
         where: { joinId },
-        select: { id: true, hostPlayerId: true, status: true, players: { orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, currentStack: true } } },
+        select: { id: true, hostPlayerId: true, status: true, players: { orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, avatarDataUrl: true, currentStack: true } } },
       });
       if (!room || room.hostPlayerId !== hostPlayerId || room.status !== 'IN_PROGRESS') throw new Error('All-in board is unavailable');
       const locked = await tx.room.updateMany({ where: { id: room.id, hostPlayerId, status: 'IN_PROGRESS' }, data: { updatedAt: new Date() } });
@@ -599,7 +604,7 @@ export class RoomRepository {
         seats: recovery.hand.seats.map((seat) => {
           const player = playersById.get(seat.playerId);
           if (!player) throw new Error('All-in board is unavailable');
-          return { seatNumber: seat.seatNumber, playerId: player.id, playerName: player.displayName, stack: player.currentStack };
+          return { seatNumber: seat.seatNumber, playerId: player.id, playerName: player.displayName, avatarDataUrl: player.avatarDataUrl ?? undefined, stack: player.currentStack };
         }),
         dealerSeat: recovery.hand.dealerSeat, smallBlind: recovery.hand.smallBlindAmount, bigBlind: recovery.hand.bigBlindAmount,
       }, recovery);
@@ -660,7 +665,7 @@ export class RoomRepository {
     return this.db.$transaction(async (tx) => {
       const room = await tx.room.findUnique({
         where: { id: roomId },
-        select: { status: true, hostPlayerId: true, finalSummaryVisible: true, players: { orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, currentStack: true } } },
+        select: { status: true, hostPlayerId: true, finalSummaryVisible: true, players: { orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, avatarDataUrl: true, currentStack: true } } },
       });
       if (!room || !room.hostPlayerId || (room.status !== 'IN_PROGRESS' && (room.status !== 'COMPLETED' || room.finalSummaryVisible)) || !room.players.some((player) => player.id === playerId)) throw new Error('Showdown reveal is unavailable');
       const locked = await tx.room.updateMany({ where: { id: roomId, status: room.status }, data: { updatedAt: new Date() } });
@@ -673,7 +678,7 @@ export class RoomRepository {
         seats: recovery.hand.seats.map((seat) => {
           const player = playersById.get(seat.playerId);
           if (!player) throw new Error('Showdown reveal is unavailable');
-          return { seatNumber: seat.seatNumber, playerId: player.id, playerName: player.displayName, stack: player.currentStack };
+          return { seatNumber: seat.seatNumber, playerId: player.id, playerName: player.displayName, avatarDataUrl: player.avatarDataUrl ?? undefined, stack: player.currentStack };
         }),
         dealerSeat: recovery.hand.dealerSeat, smallBlind: recovery.hand.smallBlindAmount, bigBlind: recovery.hand.bigBlindAmount,
       }, recovery);

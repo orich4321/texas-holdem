@@ -4,9 +4,11 @@ import { type FormEvent, useState } from 'react';
 import { DEFAULT_ROOM_SETTINGS, EMPTY_NICKNAME_MESSAGE, submitRoomCreation, type RoomSettings } from './room-creation';
 import { parsePositiveInteger } from './numeric-input';
 import { AppBrand, IconBadge } from './ui';
+import { AvatarPicker } from './avatar-picker';
 
 export default function HomePage() {
   const [nickname, setNickname] = useState('');
+  const [avatarDataUrl, setAvatarDataUrl] = useState<string>();
   const [settings, setSettings] = useState({
     initialStack: String(DEFAULT_ROOM_SETTINGS.initialStack),
     smallBlind: String(DEFAULT_ROOM_SETTINGS.smallBlind),
@@ -44,7 +46,7 @@ export default function HomePage() {
       // Chromium rejects before any network request is made.
       fetch: (...args) => globalThis.fetch(...args),
       navigate: (destination) => globalThis.location.assign(destination),
-    }, validSettings);
+    }, validSettings, avatarDataUrl);
 
     if (!result.ok) setStatus(result.message);
     setPending(false);
@@ -85,6 +87,7 @@ export default function HomePage() {
             disabled={pending}
             aria-describedby={status ? 'host-status' : undefined}
           />
+          <AvatarPicker value={avatarDataUrl} onChange={setAvatarDataUrl} disabled={pending} />
           <fieldset className="game-settings" disabled={pending}>
             <legend>מבנה המשחק</legend>
             <label>צ׳יפים לכל שחקן<input inputMode="numeric" type="number" min="100" max="1000000" value={settings.initialStack} onChange={(event) => setSettings((current) => ({ ...current, initialStack: event.target.value }))} /></label>

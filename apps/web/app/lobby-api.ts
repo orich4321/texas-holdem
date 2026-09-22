@@ -17,8 +17,8 @@ export type Lobby = {
   isParticipant: boolean;
   canStart: boolean;
   settings: { initialStack: number; smallBlind: number; bigBlind: number; maxPlayers: number };
-  host: { displayName: string };
-  players: Array<{ displayName: string; initialStack: number; currentStack: number }>;
+  host: { displayName: string; avatarDataUrl?: string | null };
+  players: Array<{ displayName: string; avatarDataUrl?: string | null; initialStack: number; currentStack: number }>;
 };
 
 type ResponseBoundary = { status: number; json: () => Promise<unknown> };
@@ -30,6 +30,7 @@ function isPlayer(value: unknown): value is Lobby['players'][number] {
   if (value === null || typeof value !== 'object') return false;
   const player = value as Record<string, unknown>;
   return typeof player.displayName === 'string'
+    && (player.avatarDataUrl === undefined || player.avatarDataUrl === null || typeof player.avatarDataUrl === 'string')
     && typeof player.initialStack === 'number' && isFinite(player.initialStack)
     && typeof player.currentStack === 'number' && isFinite(player.currentStack);
 }
@@ -47,6 +48,7 @@ function isLobby(value: unknown, expectedJoinId: string): value is Lobby {
     && lobby.host !== null
     && typeof lobby.host === 'object'
     && typeof (lobby.host as Record<string, unknown>).displayName === 'string'
+    && ((lobby.host as Record<string, unknown>).avatarDataUrl === undefined || (lobby.host as Record<string, unknown>).avatarDataUrl === null || typeof (lobby.host as Record<string, unknown>).avatarDataUrl === 'string')
     && Array.isArray(lobby.players)
     && lobby.players.length <= 9
     && lobby.players.every(isPlayer);
@@ -97,6 +99,7 @@ export async function joinLobby(
   joinId: string,
   nickname: string,
   boundaries: Boundaries,
+  avatarDataUrl?: string,
 ): Promise<{ ok: true } | { ok: false; message: string }> {
   const displayName = nickname.trim();
   if (!displayName) return { ok: false, message: EMPTY_NICKNAME_MESSAGE };
@@ -106,7 +109,7 @@ export async function joinLobby(
       method: 'POST',
       credentials: 'include',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ displayName }),
+      body: JSON.stringify({ displayName, ...(avatarDataUrl ? { avatarDataUrl } : {}) }),
     });
     if (response.status === 201) return { ok: true };
     if (response.status === 409) {

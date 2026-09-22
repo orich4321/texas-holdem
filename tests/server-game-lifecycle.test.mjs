@@ -13,7 +13,7 @@ import { signPrivateHandSnapshot, hydrateSignedPrivateHandSnapshot } from '../ap
 import { Buffer } from 'node:buffer';
 
 const seats = [
-  { seatNumber: 1, playerId: 'ada', playerName: 'עדה', stack: 100 },
+  { seatNumber: 1, playerId: 'ada', playerName: 'עדה', avatarDataUrl: 'data:image/jpeg;base64,/9j/2Q==', stack: 100 },
   { seatNumber: 2, playerId: 'ben', playerName: 'בן', stack: 100 },
   { seatNumber: 3, playerId: 'cy', playerName: 'סי', stack: 100 },
 ];
@@ -26,6 +26,8 @@ test('server lifecycle starts only through the server CSPRNG boundary and expose
   assert.equal(view.playerId, 'ada');
   assert.equal(view.holeCards.length, 2);
   assert.equal(view.seats.length, 3);
+  assert.equal(view.seats.find((seat) => seat.playerId === 'ada').avatarDataUrl, 'data:image/jpeg;base64,/9j/2Q==');
+  assert.equal(view.seats.find((seat) => seat.playerId === 'ben').avatarDataUrl, undefined);
   assert.deepEqual(view.raise, { minRaiseTo: 20, maxRaiseTo: 100, minimumIncrement: 10 });
   assert.equal(JSON.stringify(view).includes('holeCards'), true);
   assert.equal(JSON.stringify(view).match(/"holeCards"/g).length, 1);
