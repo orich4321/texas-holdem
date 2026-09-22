@@ -62,6 +62,16 @@ export type PlayerAction =
   | { type: 'all-in' }
   | { type: 'raise'; raiseTo: number };
 
+export type PlayerActionNotification = Readonly<{
+  sequence: number;
+  actorPlayerId: string;
+  actorPlayerName: string;
+  avatarDataUrl?: string;
+  action: PlayerAction;
+  /** Chips called, or the resulting total bet for a raise/all-in. */
+  amount?: number;
+}>;
+
 export interface ServerPlayerView {
   /** Durable snapshot sequence used by clients to reject stale delivery. */
   sequence?: number;
@@ -73,6 +83,8 @@ export interface ServerPlayerView {
   finalSummaryVisible?: boolean;
   /** Membership survives busting; spectators receive no private cards. */
   isSittingOut?: boolean;
+  /** Latest durable action, shared identically with every participant. */
+  lastAction?: PlayerActionNotification;
   playerId: string;
   street: StartedHand['street'];
   dealerSeat: number;

@@ -43,6 +43,9 @@ test('mobile table UI keeps the player anchored, reconnects safely, and exposes 
   assert.match(table, /management\/transfer-host/);
   assert.match(table, /management\/players\/\$\{encodeURIComponent\(targetPlayerId\)\}\/chips/);
   assert.match(table, /setTimeout\([^]*250\)/);
+  assert.match(table, /className="action-notification"/);
+  assert.match(table, /actionNoticeTimerRef[^]*2_000/);
+  assert.match(table, /seenActionSequenceRef/);
   assert.doesNotMatch(table, /setInterval\([^]*650\)/);
   assert.match(table, /final-summary/);
   assert.match(table, /!view\.finalSummaryVisible/);
@@ -60,6 +63,8 @@ test('mobile table UI keeps the player anchored, reconnects safely, and exposes 
   assert.match(table, /'לחשוף את היד שלי'/);
   assert.match(styles, /\.table-seat-winner\s*\{/);
   assert.match(styles, /\.playing-card-winning\s*\{/);
+  assert.match(styles, /\.action-notification\s*\{/);
+  assert.match(styles, /@keyframes action-notification-in/);
   assert.match(styles, /\.player-panel\s*\{[^}]*position:\s*sticky/s);
   assert.match(styles, /\.action-bar button\s*\{[^}]*min-height:\s*44px/s);
   assert.match(lobby, /lobby\.settings\.initialStack\.toLocaleString\('he-IL'\)/);

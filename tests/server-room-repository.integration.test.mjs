@@ -231,6 +231,9 @@ test('database transaction serializes an authenticated action into one private s
   assert.equal(typeof activePlayerId, 'string');
   const activeView = await repository.recoverLatestPlayerViewForPlayer(created.id, activePlayerId);
   const action = activeView.toCall === 0 ? { type: 'check' } : { type: 'call' };
+  const actionAmount = action.type === 'call'
+    ? Math.min(activeView.toCall, activeView.seats.find((seat) => seat.playerId === activePlayerId).stack)
+    : undefined;
 
   const attempts = await Promise.allSettled([
     repository.persistPlayerActionAtomically({ roomId: created.id, playerId: activePlayerId, action }),
@@ -241,7 +244,7 @@ test('database transaction serializes an authenticated action into one private s
 
   const events = await prisma.gameEvent.findMany({ where: { roomId: created.id }, orderBy: { sequence: 'asc' } });
   assert.equal(events.length, 2);
-  assert.deepEqual(events[1].payload, { actorPlayerId: activePlayerId, action });
+  assert.deepEqual(events[1].payload, { actorPlayerId: activePlayerId, action, ...(actionAmount !== undefined ? { amount: actionAmount } : {}) });
   assert.equal(JSON.stringify(events[1].payload).includes('holeCards'), false);
   assert.equal(JSON.stringify(events[1].payload).includes('deck'), false);
   const recovered = await repository.recoverLatestHandForPlayer(created.id, created.hostPlayerId);
@@ -249,6 +252,13 @@ test('database transaction serializes an authenticated action into one private s
   assert.equal(recovered.recovery.hand.currentActorSeat !== initial.recovery.hand.currentActorSeat, true);
   const guestView = await repository.recoverLatestPlayerViewForPlayer(created.id, created.players[1].id);
   assert.equal(JSON.stringify(guestView).match(/"holeCards"/g).length, 1);
+  assert.deepEqual(guestView.lastAction, {
+    sequence: 1,
+    actorPlayerId: activePlayerId,
+    actorPlayerName: activeView.seats.find((seat) => seat.playerId === activePlayerId).playerName,
+    action,
+    ...(actionAmount !== undefined ? { amount: actionAmount } : {}),
+  });
 });
 
 test('a host can add another hand after a final hand and decide afresh whether it is final', { skip: !integrationEnabled }, async () => {

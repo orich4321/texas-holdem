@@ -13,7 +13,20 @@ const SERVER_URL = process.env.NODE_ENV === 'production'
   : process.env.NEXT_PUBLIC_SERVER_URL ?? process.env.NEXT_PUBLIC_GAME_URL ?? 'http://localhost:3001';
 
 type Card = { rank: string; suit: string };
-type PlayerAction = { type: 'check' | 'call' | 'fold' | 'all-in' } | { type: 'raise'; raiseTo: number };
+type PlayerAction =
+  | { type: 'check' }
+  | { type: 'call' }
+  | { type: 'fold' }
+  | { type: 'all-in' }
+  | { type: 'raise'; raiseTo: number };
+type PlayerActionNotification = {
+  sequence: number;
+  actorPlayerId: string;
+  actorPlayerName: string;
+  avatarDataUrl?: string;
+  action: PlayerAction;
+  amount?: number;
+};
 type Showdown = {
   winners: readonly { seatNumber: number; playerId: string; playerName: string; chipsWon: number; winningCards?: readonly Card[] }[];
   pots: readonly { amount: number; winnerSeatNumbers: readonly number[] }[];
@@ -39,6 +52,7 @@ type PlayerView = {
   gameCompleted?: boolean;
   finalSummaryVisible?: boolean;
   isSittingOut?: boolean;
+  lastAction?: PlayerActionNotification;
   playerId: string;
   street: 'preflop' | 'flop' | 'turn' | 'river' | 'showdown';
   dealerSeat: number;
@@ -85,6 +99,34 @@ function isAllInRunout(value: unknown): value is AllInRunout {
     && ['flop', 'turn', 'river', 'showdown'].includes((value as Record<string, unknown>).nextStreet as string);
 }
 
+function isPlayerAction(value: unknown): value is PlayerAction {
+  if (value === null || typeof value !== 'object') return false;
+  const action = value as Record<string, unknown>;
+  return ['check', 'call', 'fold', 'all-in'].includes(action.type as string)
+    || (action.type === 'raise' && Number.isSafeInteger(action.raiseTo));
+}
+
+function isPlayerActionNotification(value: unknown): value is PlayerActionNotification {
+  if (value === null || typeof value !== 'object') return false;
+  const notice = value as Record<string, unknown>;
+  return Number.isSafeInteger(notice.sequence)
+    && typeof notice.actorPlayerId === 'string'
+    && typeof notice.actorPlayerName === 'string'
+    && (notice.avatarDataUrl === undefined || typeof notice.avatarDataUrl === 'string')
+    && (notice.amount === undefined || (Number.isSafeInteger(notice.amount) && (notice.amount as number) >= 0))
+    && isPlayerAction(notice.action);
+}
+
+function actionNoticeText(notice: PlayerActionNotification): string {
+  const amount = notice.amount?.toLocaleString('he-IL');
+  const action = notice.action;
+  if (action.type === 'check') return 'צ׳ק';
+  if (action.type === 'fold') return 'פרישה מהיד';
+  if (action.type === 'call') return amount ? `השוואה · ${amount}` : 'השוואה';
+  if (action.type === 'all-in') return amount ? `אול אין · ${amount}` : 'אול אין';
+  return `העלאה ל־${(notice.amount ?? action.raiseTo).toLocaleString('he-IL')}`;
+}
+
 function isFinalSummary(value: unknown, joinId: string): value is FinalSummary {
   if (value === null || typeof value !== 'object') return false;
   const summary = value as Record<string, unknown>;
@@ -106,6 +148,7 @@ function isPlayerView(value: unknown): value is PlayerView {
     && (view.gameCompleted === undefined || typeof view.gameCompleted === 'boolean')
     && (view.finalSummaryVisible === undefined || typeof view.finalSummaryVisible === 'boolean')
     && (view.isSittingOut === undefined || typeof view.isSittingOut === 'boolean')
+    && (view.lastAction === undefined || isPlayerActionNotification(view.lastAction))
     && typeof view.street === 'string'
     && typeof view.dealerSeat === 'number'
     && typeof view.currentActorSeat === 'number'
@@ -147,6 +190,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   const [revealingHand, setRevealingHand] = useState(false);
   const [showRaiseControls, setShowRaiseControls] = useState(false);
   const [waitingForNextHand, setWaitingForNextHand] = useState(false);
+  const [actionNotice, setActionNotice] = useState<PlayerActionNotification>();
   const [finalSummary, setFinalSummary] = useState<FinalSummary>();
   const [downloadingSummary, setDownloadingSummary] = useState(false);
   const [managingPlayerId, setManagingPlayerId] = useState<string>();
@@ -164,6 +208,9 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   const socketRef = useRef<ReturnType<typeof io> | null>(null);
   const latestSequenceRef = useRef(-1);
   const actionPendingRef = useRef(false);
+  const actionStreamInitializedRef = useRef(false);
+  const seenActionSequenceRef = useRef(-1);
+  const actionNoticeTimerRef = useRef<ReturnType<typeof globalThis.setTimeout> | undefined>(undefined);
 
   useEffect(() => {
     let active = true;
@@ -247,6 +294,31 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
       globalThis.document.removeEventListener('visibilitychange', onVisibilityChange);
     };
   }, [joinId]);
+
+  useEffect(() => {
+    if (!view) return;
+    const viewSequence = view.sequence ?? -1;
+    if (!actionStreamInitializedRef.current) {
+      actionStreamInitializedRef.current = true;
+      seenActionSequenceRef.current = viewSequence;
+      return;
+    }
+    if (!view.lastAction || view.lastAction.sequence <= seenActionSequenceRef.current) {
+      seenActionSequenceRef.current = Math.max(seenActionSequenceRef.current, viewSequence);
+      return;
+    }
+    seenActionSequenceRef.current = view.lastAction.sequence;
+    setActionNotice(view.lastAction);
+    if (actionNoticeTimerRef.current !== undefined) globalThis.clearTimeout(actionNoticeTimerRef.current);
+    actionNoticeTimerRef.current = globalThis.setTimeout(() => {
+      setActionNotice(undefined);
+      actionNoticeTimerRef.current = undefined;
+    }, 2_000);
+  }, [view]);
+
+  useEffect(() => () => {
+    if (actionNoticeTimerRef.current !== undefined) globalThis.clearTimeout(actionNoticeTimerRef.current);
+  }, []);
 
   const ownSeat = useMemo(() => view?.seats.find((seat) => seat.playerId === view.playerId), [view]);
   const bustedPlayers = management?.players.filter((player) => player.rebuyDecisionPending) ?? [];
@@ -656,6 +728,10 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
 
   return (
     <main className="table-shell" dir="rtl">
+      {actionNotice ? <aside className="action-notification" role="status" aria-live="polite">
+        <ProfileImage className="action-notification-avatar" dataUrl={actionNotice.avatarDataUrl} fallback={actionNotice.actorPlayerName.slice(0, 1)} />
+        <span><strong>{actionNotice.actorPlayerName}</strong><small>{actionNoticeText(actionNotice)}</small></span>
+      </aside> : null}
       <header className="table-header">
         <a href={`/r/${joinId}`} aria-label="חזרה ללובי"><AppBrand compact /></a>
         {isCurrentHost ? <button type="button" className="table-management-button" aria-expanded={managementOpen} onClick={() => {

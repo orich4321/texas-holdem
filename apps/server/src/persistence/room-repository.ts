@@ -15,7 +15,7 @@ import {
 } from './private-hand-snapshot.js';
 import type { VerifiedPrivateHandRecovery } from './private-hand-snapshot.js';
 import { signPrivateHandSnapshot } from './private-hand-snapshot.js';
-import { ServerGameLifecycle, type PlayerAction, type ServerPlayerView } from '../game-lifecycle.js';
+import { ServerGameLifecycle, type PlayerAction, type PlayerActionNotification, type ServerPlayerView } from '../game-lifecycle.js';
 import { startServerHand } from '../hand-start.js';
 
 type PlayerInput = {
@@ -175,6 +175,30 @@ function validatePersistedPlayerAction(action: unknown): asserts action is Playe
   if (keys.length !== 1 || keys[0] !== 'type') throw new Error('Invalid player action');
 }
 
+function actionNotificationFromEvent(
+  event: { sequence: number; payload: unknown } | undefined,
+  players: readonly { id: string; displayName: string; avatarDataUrl: string | null }[],
+): PlayerActionNotification | undefined {
+  if (!event || !event.payload || typeof event.payload !== 'object' || Array.isArray(event.payload)) return undefined;
+  const payload = event.payload as Record<string, unknown>;
+  const actor = typeof payload.actorPlayerId === 'string' ? players.find((player) => player.id === payload.actorPlayerId) : undefined;
+  if (!actor) return undefined;
+  try {
+    validatePersistedPlayerAction(payload.action);
+  } catch {
+    return undefined;
+  }
+  const amount = Number.isSafeInteger(payload.amount) && (payload.amount as number) >= 0 ? payload.amount as number : undefined;
+  return Object.freeze({
+    sequence: event.sequence,
+    actorPlayerId: actor.id,
+    actorPlayerName: actor.displayName,
+    ...(actor.avatarDataUrl ? { avatarDataUrl: actor.avatarDataUrl } : {}),
+    action: Object.freeze({ ...payload.action }),
+    ...(amount !== undefined ? { amount } : {}),
+  });
+}
+
 export class RoomRepository {
   constructor(
     private readonly db: PrismaClient,
@@ -184,8 +208,8 @@ export class RoomRepository {
     private readonly privateSnapshotKeyring: ReadonlyMap<string, PrivateSnapshotSigningKey> = new Map(),
   ) {}
 
-  private decorateView(view: ServerPlayerView, sequence: number, hostPlayerId: string, gameCompleted = false, finalSummaryVisible = false): ServerPlayerView {
-    return Object.freeze({ ...view, sequence, hostPlayerId, gameCompleted, finalSummaryVisible });
+  private decorateView(view: ServerPlayerView, sequence: number, hostPlayerId: string, gameCompleted = false, finalSummaryVisible = false, lastAction?: PlayerActionNotification): ServerPlayerView {
+    return Object.freeze({ ...view, sequence, hostPlayerId, gameCompleted, finalSummaryVisible, ...(lastAction ? { lastAction } : {}) });
   }
 
   private async createPlayerWithUniqueAccessToken(db: PlayerWriter, player: PlayerInput, roomId: string) {
@@ -449,6 +473,12 @@ export class RoomRepository {
             orderBy: { createdAt: 'asc' },
             select: { id: true, displayName: true, avatarDataUrl: true, currentStack: true, isSittingOut: true },
           },
+          events: {
+            where: { type: 'PLAYER_ACTION' },
+            orderBy: { sequence: 'desc' },
+            take: 1,
+            select: { sequence: true, payload: true },
+          },
         },
       }),
       this.recoverLatestHandForPlayer(roomId, playerId),
@@ -482,7 +512,10 @@ export class RoomRepository {
     const safeView = seatedInHand
       ? { ...baseView, isSittingOut: member?.isSittingOut ?? false }
       : { ...baseView, playerId, holeCards: [] as const, toCall: 0, raise: undefined, isSittingOut: true };
-    return this.decorateView(safeView, latest.sequence, room.hostPlayerId, room.status === 'COMPLETED', room.status === 'COMPLETED' && room.finalSummaryVisible);
+    const latestAction = room.events[0]?.sequence === latest.sequence
+      ? actionNotificationFromEvent(room.events[0], room.players)
+      : undefined;
+    return this.decorateView(safeView, latest.sequence, room.hostPlayerId, room.status === 'COMPLETED', room.status === 'COMPLETED' && room.finalSummaryVisible, latestAction);
   }
 
   /** Applies an authenticated action to the latest verified state and commits its successor atomically. */
@@ -520,12 +553,26 @@ export class RoomRepository {
         dealerSeat: hand.dealerSeat, smallBlind: hand.smallBlindAmount, bigBlind: hand.bigBlindAmount,
       }, recovery);
       if (clientActionId) {
-        const duplicate = await tx.gameEvent.findUnique({ where: { clientActionId }, select: { id: true } });
+        const duplicate = await tx.gameEvent.findFirst({
+          where: { roomId, clientActionId, type: 'PLAYER_ACTION' },
+          select: { sequence: true, payload: true },
+        });
         if (duplicate) {
-          const views = Object.freeze(hand.seats.map((seat) => this.decorateView(lifecycle.viewFor(seat.playerId), latest.sequence, room.hostPlayerId!)));
+          const lastAction = duplicate.sequence === latest.sequence ? actionNotificationFromEvent(duplicate, room.players) : undefined;
+          const views = Object.freeze(hand.seats.map((seat) => this.decorateView(lifecycle.viewFor(seat.playerId), latest.sequence, room.hostPlayerId!, false, false, lastAction)));
           return { sequence: latest.sequence, view: views.find((candidate) => candidate.playerId === playerId)!, views };
         }
       }
+      const beforeAction = lifecycle.viewFor(playerId);
+      const actorSeat = beforeAction.seats.find((seat) => seat.playerId === playerId);
+      if (!actorSeat) throw new Error('Game action is unavailable');
+      const actionAmount = action.type === 'call'
+        ? Math.min(beforeAction.toCall, actorSeat.stack)
+        : action.type === 'raise'
+          ? action.raiseTo
+          : action.type === 'all-in'
+            ? actorSeat.currentBet + actorSeat.stack
+            : undefined;
       const view = lifecycle.applyAction(playerId, action);
       let gameCompleted = false;
       const settledHand = lifecycle.handForDurableSnapshot();
@@ -571,15 +618,18 @@ export class RoomRepository {
         }
       }
       const sequence = latest.sequence + 1;
-      const views = Object.freeze(settledHand.seats.map((seat) => this.decorateView(lifecycle.viewFor(seat.playerId), sequence, room.hostPlayerId!, gameCompleted)));
+      const publicAction = action.type === 'raise' ? { type: 'raise' as const, raiseTo: action.raiseTo } : { type: action.type };
+      const publicActionPayload = { actorPlayerId: playerId, action: publicAction, ...(actionAmount !== undefined ? { amount: actionAmount } : {}) };
+      const lastAction = actionNotificationFromEvent({ sequence, payload: publicActionPayload }, room.players);
+      if (!lastAction) throw new Error('Game action is unavailable');
+      const views = Object.freeze(settledHand.seats.map((seat) => this.decorateView(lifecycle.viewFor(seat.playerId), sequence, room.hostPlayerId!, gameCompleted, false, lastAction)));
       const activeKey = this.privateSnapshotKeyring.entries().next().value as [string, PrivateSnapshotSigningKey] | undefined;
       if (!activeKey) throw new Error('Game action is unavailable');
       const [keyId, key] = activeKey;
       const snapshot = signPrivateHandSnapshot(lifecycle.handForDurableSnapshot(), { roomId, sequence, keyId }, key);
-      const publicAction = action.type === 'raise' ? { type: 'raise' as const, raiseTo: action.raiseTo } : { type: action.type };
-      await tx.gameEvent.create({ data: { roomId, sequence, type: 'PLAYER_ACTION', payload: { actorPlayerId: playerId, action: publicAction }, ...(clientActionId ? { clientActionId } : {}) } });
+      await tx.gameEvent.create({ data: { roomId, sequence, type: 'PLAYER_ACTION', payload: publicActionPayload, ...(clientActionId ? { clientActionId } : {}) } });
       await tx.gameSnapshot.create({ data: { roomId, sequence, state: snapshot as unknown as Prisma.InputJsonValue } });
-      return { sequence, view: this.decorateView(view, sequence, room.hostPlayerId, gameCompleted), views };
+      return { sequence, view: this.decorateView(view, sequence, room.hostPlayerId, gameCompleted, false, lastAction), views };
     });
   }
 

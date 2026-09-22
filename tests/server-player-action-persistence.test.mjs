@@ -36,8 +36,13 @@ function createDb({ latest = { sequence: 0, state: initial }, currentHandStart =
     },
     gameEvent: {
       create: async (args) => { calls.push(['gameEvent.create', args]); return args.data; },
-      findFirst: async (args) => { calls.push(['gameEvent.findFirst', args]); return { type: currentHandStart }; },
-      findUnique: async (args) => { calls.push(['gameEvent.findUnique', args]); return duplicateAction ? { id: 'existing-event' } : null; },
+      findFirst: async (args) => {
+        calls.push(['gameEvent.findFirst', args]);
+        if (args.where.clientActionId) return duplicateAction
+          ? { sequence: latest.sequence, payload: { actorPlayerId: 'host-id', action: { type: 'call' }, amount: 5 } }
+          : null;
+        return { type: currentHandStart };
+      },
     },
     player: { update: async (args) => { calls.push(['player.update', args]); return args.data; } },
     settlement: { create: async (args) => { calls.push(['settlement.create', args]); return args.data; } },
@@ -53,8 +58,15 @@ test('accepted authoritative action persists a minimal event and next signed sna
 
   assert.equal(result.sequence, 1);
   assert.equal(result.view.playerId, 'host-id');
+  assert.deepEqual(result.view.lastAction, {
+    sequence: 1,
+    actorPlayerId: 'host-id',
+    actorPlayerName: 'אורי',
+    action: { type: 'call' },
+    amount: 5,
+  });
   assert.deepEqual(db.calls.map(([name]) => name), ['room.findUnique', 'room.updateMany', 'gameSnapshot.findFirst', 'gameEvent.create', 'gameSnapshot.create']);
-  assert.deepEqual(db.calls[3][1].data, { roomId: room.id, sequence: 1, type: 'PLAYER_ACTION', payload: { actorPlayerId: 'host-id', action: { type: 'call' } } });
+  assert.deepEqual(db.calls[3][1].data, { roomId: room.id, sequence: 1, type: 'PLAYER_ACTION', payload: { actorPlayerId: 'host-id', action: { type: 'call' }, amount: 5 } });
   const signed = db.calls[4][1].data.state;
   const recovered = hydrateSignedPrivateHandSnapshot(signed, { roomId: room.id, sequence: 1 }, keyring);
   assert.equal(recovered.hand.currentActorSeat, 2);
@@ -72,6 +84,9 @@ test('retrying a socket action through HTTP with the same client ID never applie
     action: { type: 'call' },
   });
   assert.equal(result.sequence, 0);
+  assert.deepEqual(result.view.lastAction, {
+    sequence: 0, actorPlayerId: 'host-id', actorPlayerName: 'אורי', action: { type: 'call' }, amount: 5,
+  });
   assert.equal(db.calls.filter(([name]) => name === 'gameEvent.create').length, 0);
   assert.equal(db.calls.filter(([name]) => name === 'gameSnapshot.create').length, 0);
 });
