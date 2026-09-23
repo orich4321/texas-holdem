@@ -81,7 +81,8 @@ test('mobile table UI keeps the player anchored, reconnects safely, and exposes 
   assert.match(table, /seat\.seatNumber === view\.bigBlindSeat/);
   assert.match(table, /table-seat-sitting-out/);
   assert.match(styles, /\.table-seat-sitting-out\s*\{/);
-  assert.match(table, /view\.seats\.filter\(\(seat\) => !seat\.isFolded\)\.length >= 2/);
+  assert.match(table, /view\.holeCards\.length === 2/);
+  assert.doesNotMatch(table, /canRevealAtShowdown[\s\S]{0,250}!ownSeat\.isFolded/);
   assert.match(table, /'לחשוף את היד שלי'/);
   assert.match(styles, /\.table-seat-winner\s*\{/);
   assert.match(styles, /\.playing-card-winning\s*\{/);

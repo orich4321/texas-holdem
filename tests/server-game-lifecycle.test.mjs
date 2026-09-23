@@ -280,6 +280,13 @@ test('the final fold immediately ends the hand and awards the full pot without d
     { playerId: 'ada', stack: 110 },
     { playerId: 'ben', stack: 90 },
   ]);
+  game.revealShowdownHand('ben');
+  assert.equal(game.viewFor('ada').exposedHands.find((hand) => hand.playerId === 'ben')?.reason, 'voluntary', 'a folded player may show after the hand');
+  game.revealShowdownHand('ada');
+  assert.deepEqual(game.viewFor('ben').exposedHands.map((hand) => [hand.playerId, hand.reason]), [
+    ['ada', 'voluntary'],
+    ['ben', 'voluntary'],
+  ], 'the uncontested winner may also show and every player sees both hands');
 });
 
 test('a verified recovered hand resumes without a fresh deal and cannot be started again', () => {

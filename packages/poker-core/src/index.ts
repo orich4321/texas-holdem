@@ -424,7 +424,7 @@ export function hydrateStartedHandForVerifiedServerRecovery(snapshot: unknown): 
   const revealedUnique = new Set(revealedSeatNumbers);
   if (!validBlindSeats || hand.smallBlindSeat === hand.bigBlindSeat || (!validUncontestedBoard && (hand.communityCards.length !== communityCardCount || hand.burnedCards.length !== burnedCardCount)) || committed !== hand.pot || currentBet !== hand.currentBet || hand.streetPot > hand.pot || pendingUnique.size !== hand.pendingActorSeats.length || locksUnique.size !== hand.raiseLockedSeats.length || revealedUnique.size !== revealedSeatNumbers.length || (revealedSeatNumbers.length > 0 && (hand.street !== 'showdown' || revealedSeatNumbers.some((seatNumber) => {
     const seat = seatsByNumber.get(seatNumber);
-    return !seat || !seat.holeCards || seat.isFolded === true;
+    return !seat || !seat.holeCards;
   }))) || hand.pendingActorSeats.some((seatNumber) => {
     const seat = seatsByNumber.get(seatNumber);
     return !seat || !seat.holeCards || seat.isFolded === true || seat.stack <= 0;
@@ -1171,8 +1171,8 @@ export function revealShowdownSeat(hand: StartedHand, seatNumber: number): Start
     throw new Error('A showdown reveal requires an authoritative completed hand');
   }
   const seat = hand.seats.find((candidate) => candidate.seatNumber === seatNumber);
-  if (!seat?.holeCards || seat.isFolded === true) {
-    throw new Error('Only a player who reached showdown may reveal cards');
+  if (!seat?.holeCards) {
+    throw new Error('Only a player dealt into the completed hand may reveal cards');
   }
   if (hand.revealedSeatNumbers.includes(seatNumber)) {
     throw new Error('This showdown hand is already revealed');

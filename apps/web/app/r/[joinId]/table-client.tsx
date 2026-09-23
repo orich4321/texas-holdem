@@ -419,8 +419,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
     view?.street === 'showdown'
     && !view.finalSummaryVisible
     && ownSeat
-    && !ownSeat.isFolded
-    && view.seats.filter((seat) => !seat.isFolded).length >= 2
+    && view.holeCards.length === 2
     && !view.exposedHands.some((hand) => hand.playerId === view.playerId),
   );
   const isCurrentHost = Boolean(view && (view.hostPlayerId ? view.hostPlayerId === view.playerId : isHost));

@@ -276,14 +276,11 @@ export class ServerGameLifecycle {
     );
     const voluntarilyRevealed = new Set(hand.revealedSeatNumbers);
     const exposedHands = Object.freeze(hand.seats.flatMap((seat) => {
-      if (!seat.holeCards || seat.isFolded) return [];
-      const reason = allInRunout || allInShowdown
-        ? 'all-in' as const
-        : winnerSeatNumbers.has(seat.seatNumber)
-          ? 'winner' as const
-          : voluntarilyRevealed.has(seat.seatNumber)
-            ? 'voluntary' as const
-            : undefined;
+      if (!seat.holeCards) return [];
+      let reason: 'all-in' | 'winner' | 'voluntary' | undefined;
+      if (voluntarilyRevealed.has(seat.seatNumber)) reason = 'voluntary';
+      else if (!seat.isFolded && (allInRunout || allInShowdown)) reason = 'all-in';
+      else if (!seat.isFolded && winnerSeatNumbers.has(seat.seatNumber)) reason = 'winner';
       if (!reason) return [];
       return [Object.freeze({
         seatNumber: seat.seatNumber,
@@ -377,7 +374,7 @@ export class ServerGameLifecycle {
           : runOutAllInToShowdown(hand);
   }
 
-  /** A player who reached a contested showdown may make their own cards public. */
+  /** Any player dealt into the completed hand may voluntarily make their own cards public. */
   revealShowdownHand(playerId: string): ServerPlayerView {
     const hand = this.requireHand();
     const seat = hand.seats.find((candidate) => candidate.playerId === playerId);

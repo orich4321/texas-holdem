@@ -3,7 +3,7 @@ import { Buffer } from 'node:buffer';
 import { test } from 'node:test';
 
 import { RoomRepository } from '../apps/server/src/persistence/room-repository.ts';
-import { advancePreflopToFlop, applyPreflopAllIn, applyPreflopCall, applyPreflopRaise, runOutAllInToShowdown, startHand } from '../packages/poker-core/src/index.ts';
+import { advancePreflopToFlop, applyPreflopAllIn, applyPreflopCall, applyPreflopFold, applyPreflopRaise, finishUncontestedHand, runOutAllInToShowdown, startHand } from '../packages/poker-core/src/index.ts';
 import { signPrivateHandSnapshot, hydrateSignedPrivateHandSnapshot } from '../apps/server/src/persistence/private-hand-snapshot.ts';
 
 const key = Buffer.from('a server-only snapshot signing key with adequate length', 'utf8');
@@ -213,5 +213,21 @@ test('a voluntary showdown reveal is signed into the next snapshot without accep
   });
   assert.equal(JSON.stringify(db.calls.find(([name]) => name === 'gameEvent.create')[1].data).includes('holeCards'), false);
   const persisted = hydrateSignedPrivateHandSnapshot(db.calls.find(([name]) => name === 'gameSnapshot.create')[1].data.state, { roomId: room.id, sequence: 1 }, keyring);
+  assert.deepEqual(persisted.hand.revealedSeatNumbers, [2]);
+});
+
+test('a folded player can reveal their server-authoritative cards after an uncontested finish', async () => {
+  const recoveredRaise = hydrateSignedPrivateHandSnapshot(raisedSnapshot, { roomId: room.id, sequence: 1 }, keyring).hand;
+  const foldedShowdown = finishUncontestedHand(applyPreflopFold(recoveredRaise, 2));
+  const foldedSnapshot = signPrivateHandSnapshot(foldedShowdown, { roomId: room.id, sequence: 2, keyId }, key);
+  const db = createDb({ latest: { sequence: 2, state: foldedSnapshot } });
+  const repository = new RoomRepository(db, undefined, undefined, undefined, keyring);
+
+  const result = await repository.revealShowdownHandAtomically({ roomId: room.id, playerId: 'player-1' });
+
+  assert.equal(result.sequence, 3);
+  assert.equal(result.view.exposedHands.find((hand) => hand.playerId === 'player-1')?.reason, 'voluntary');
+  assert.deepEqual(result.views.find((view) => view.playerId === 'host-id')?.exposedHands.find((hand) => hand.playerId === 'player-1')?.holeCards, result.view.holeCards);
+  const persisted = hydrateSignedPrivateHandSnapshot(db.calls.find(([name]) => name === 'gameSnapshot.create')[1].data.state, { roomId: room.id, sequence: 3 }, keyring);
   assert.deepEqual(persisted.hand.revealedSeatNumbers, [2]);
 });
