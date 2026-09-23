@@ -1001,7 +1001,7 @@ export class RoomRepository {
       where: { id: roomId, status: 'COMPLETED', finalSummaryVisible: true, players: { some: { id: playerId } } },
       select: {
         joinId: true, initialStack: true, smallBlind: true, bigBlind: true,
-        players: { orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, initialStack: true, currentStack: true, leftAt: true } },
+        players: { orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, avatarDataUrl: true, initialStack: true, currentStack: true, leftAt: true } },
         chipAdjustments: { where: { status: 'APPLIED' }, orderBy: { createdAt: 'asc' }, select: { playerId: true, authorizedByPlayerId: true, amount: true, stackBefore: true, stackAfter: true, createdAt: true, appliedAt: true } },
         events: { orderBy: { sequence: 'asc' }, select: { sequence: true, type: true, payload: true, createdAt: true } },
         settlements: { orderBy: { createdAt: 'asc' }, select: { idempotencyKey: true, result: true, createdAt: true } },
@@ -1016,6 +1016,7 @@ export class RoomRepository {
         const totalBuyIn = player.initialStack + addedChips;
         return Object.freeze({
           displayName: player.displayName,
+          ...(player.avatarDataUrl ? { avatarDataUrl: player.avatarDataUrl } : {}),
           initialStack: player.initialStack,
           addedChips,
           totalBuyIn,
@@ -1023,7 +1024,7 @@ export class RoomRepository {
           net: player.currentStack - totalBuyIn,
           leftAt: player.leftAt?.toISOString() ?? null,
         });
-      })),
+      }).sort((first, second) => second.net - first.net || second.finalStack - first.finalStack)),
       chipAdjustments: Object.freeze(room.chipAdjustments.map((adjustment) => Object.freeze({
         playerId: adjustment.playerId,
         authorizedByPlayerId: adjustment.authorizedByPlayerId,

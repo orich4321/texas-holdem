@@ -50,6 +50,11 @@ test('mobile table UI keeps the player anchored, reconnects safely, and exposes 
   assert.match(table, /seenActionSequenceRef/);
   assert.doesNotMatch(table, /setInterval\([^]*650\)/);
   assert.match(table, /final-summary/);
+  assert.match(table, /className="final-summary-avatar" dataUrl=\{standing\.avatarDataUrl\}/);
+  assert.match(table, /className="final-summary-result"/);
+  assert.match(table, /standing\.net > 0 \? 'רווח' : standing\.net < 0 \? 'הפסד'/);
+  assert.match(styles, /\.final-summary-result strong\s*\{[^}]*font-size:\s*clamp\(1\.25rem/s);
+  assert.match(styles, /\.final-summary ul\s*\{[^}]*overflow-y:\s*auto/s);
   assert.match(table, /!view\.finalSummaryVisible/);
   assert.match(table, /game\/final-summary\/reveal/);
   assert.match(table, /הצגת הסיכום/);

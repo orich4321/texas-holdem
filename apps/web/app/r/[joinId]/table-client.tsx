@@ -43,7 +43,7 @@ type AllInRunout = { nextStreet: 'flop' | 'turn' | 'river' | 'showdown' };
 type FinalSummary = {
   version: number;
   room: { joinId: string; initialStack: number; smallBlind: number; bigBlind: number };
-  standings: readonly { displayName: string; initialStack: number; addedChips?: number; totalBuyIn?: number; finalStack: number; net: number }[];
+  standings: readonly { displayName: string; avatarDataUrl?: string; initialStack: number; addedChips?: number; totalBuyIn?: number; finalStack: number; net: number }[];
   handCount: number;
 };
 type PlayerView = {
@@ -135,7 +135,8 @@ function isFinalSummary(value: unknown, joinId: string): value is FinalSummary {
     && (summary.room as Record<string, unknown>).joinId === joinId
     && Array.isArray(summary.standings)
     && summary.standings.every((standing) => standing !== null && typeof standing === 'object'
-      && ['displayName', 'initialStack', 'finalStack', 'net'].every((key) => typeof (standing as Record<string, unknown>)[key] === (key === 'displayName' ? 'string' : 'number')))
+      && ['displayName', 'initialStack', 'finalStack', 'net'].every((key) => typeof (standing as Record<string, unknown>)[key] === (key === 'displayName' ? 'string' : 'number'))
+      && ((standing as Record<string, unknown>).avatarDataUrl === undefined || typeof (standing as Record<string, unknown>).avatarDataUrl === 'string'))
     && typeof summary.handCount === 'number';
 }
 
@@ -843,11 +844,19 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
         </article>)}</section> : null}
         {ownSeat?.stack === 0 ? <button type="button" className="busted-host-exit" disabled={managementBusy} onClick={() => void transferHost(undefined, true)}>נגמרו לי הז׳יטונים · יציאה ומינוי אוטומטי</button> : null}
       </section></div> : null}
-      {finalSummary ? <div className="modal-backdrop"><section className="final-summary" aria-live="polite" aria-label="סיכום המשחק">
-        <p>המשחק הסתיים</p>
-        <h2>סיכום סופי</h2>
-        <ul>{finalSummary.standings.map((standing) => <li key={standing.displayName}><strong>{standing.displayName}</strong><span>{standing.finalStack.toLocaleString('he-IL')} צ׳יפים · כניסות {(standing.totalBuyIn ?? standing.initialStack).toLocaleString('he-IL')} · {standing.net >= 0 ? '+' : ''}{standing.net.toLocaleString('he-IL')}</span></li>)}</ul>
-        <small>{finalSummary.handCount} ידיים הסתיימו{isCurrentHost ? ' · פירוט הפעולות והתשלומים נשמר בקובץ.' : '.'}</small>
+      {finalSummary ? <div className="modal-backdrop final-summary-backdrop"><section className="final-summary" aria-live="polite" aria-label="סיכום המשחק">
+        <header className="final-summary-header"><span aria-hidden="true">♠</span><div><p>המשחק הסתיים</p><h2>סיכום השולחן</h2><small>{finalSummary.handCount} ידיים שוחקו</small></div><span aria-hidden="true">♥</span></header>
+        <ul>{finalSummary.standings.map((standing, index) => {
+          const resultClass = standing.net > 0 ? 'is-profit' : standing.net < 0 ? 'is-loss' : 'is-even';
+          const resultLabel = standing.net > 0 ? 'רווח' : standing.net < 0 ? 'הפסד' : 'ללא שינוי';
+          return <li key={`${standing.displayName}-${index}`} className={`${resultClass}${index === 0 ? ' is-leader' : ''}`}>
+            <strong className="final-summary-rank" aria-label={`מקום ${index + 1}`}>{index + 1}</strong>
+            <ProfileImage className="final-summary-avatar" dataUrl={standing.avatarDataUrl} fallback={standing.displayName.slice(0, 1)} />
+            <div className="final-summary-player"><strong>{standing.displayName}</strong><small>נשארו {standing.finalStack.toLocaleString('he-IL')} · כניסות {(standing.totalBuyIn ?? standing.initialStack).toLocaleString('he-IL')}</small></div>
+            <div className="final-summary-result"><small>{resultLabel}</small><strong dir="ltr">{standing.net > 0 ? '+' : ''}{standing.net.toLocaleString('he-IL')}</strong><span>צ׳יפים</span></div>
+          </li>;
+        })}</ul>
+        <small className="final-summary-note">הדירוג מסודר לפי הרווח הנקי{isCurrentHost ? ' · פירוט מלא נשמר בקובץ JSON.' : '.'}</small>
         {isCurrentHost ? <button type="button" disabled={downloadingSummary} onClick={() => void downloadFinalSummary()}>{downloadingSummary ? 'מורידים…' : 'הורדת סיכום JSON'}</button> : null}
       </section></div> : null}
     </main>

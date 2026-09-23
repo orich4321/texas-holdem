@@ -77,6 +77,27 @@ test('final accounting subtracts every applied rebuy from the player result', as
   assert.equal(summary.chipAdjustments[0].amount, 500);
 });
 
+test('final standings include profile images and rank players by net result', async () => {
+  const avatarDataUrl = 'data:image/png;base64,cG9rZXI=';
+  const db = {
+    room: { findFirst: async () => ({
+      joinId, initialStack: 500, smallBlind: 1, bigBlind: 2,
+      players: [
+        { id: hostId, displayName: 'מפסיד', avatarDataUrl: null, initialStack: 500, currentStack: 100, leftAt: null },
+        { id: guestId, displayName: 'מנצח', avatarDataUrl, initialStack: 500, currentStack: 900, leftAt: null },
+      ],
+      chipAdjustments: [], settlements: [], events: [],
+    }) },
+  };
+
+  const summary = await new RoomRepository(db).getFinalSummaryForPlayer(roomId, guestId);
+
+  assert.deepEqual(summary.standings.map(({ displayName, avatarDataUrl: avatar, net }) => ({ displayName, avatar, net })), [
+    { displayName: 'מנצח', avatar: avatarDataUrl, net: 400 },
+    { displayName: 'מפסיד', avatar: undefined, net: -400 },
+  ]);
+});
+
 test('the completed summary stays hidden until the host releases it', async () => {
   const calls = [];
   const repository = new RoomRepository({ $transaction: async (callback) => callback({
