@@ -45,6 +45,7 @@ test('mobile table UI keeps the player anchored, reconnects safely, and exposes 
   assert.match(table, /setTimeout\([^]*250\)/);
   assert.match(table, /className="action-notification"/);
   assert.match(table, /className="table-seat-avatar" dataUrl=\{seat\.avatarDataUrl\}/);
+  assert.match(table, /className="table-seat-info"/);
   assert.match(table, /actionNoticeTimerRef[^]*2_000/);
   assert.match(table, /seenActionSequenceRef/);
   assert.doesNotMatch(table, /setInterval\([^]*650\)/);
@@ -67,6 +68,10 @@ test('mobile table UI keeps the player anchored, reconnects safely, and exposes 
   assert.match(styles, /\.action-notification\s*\{/);
   assert.match(styles, /\.table-seat\s*\{[^}]*width:\s*clamp\(104px,[^}]*min-height:\s*clamp\(60px/s);
   assert.match(styles, /\.table-seat-avatar\s*\{[^}]*width:\s*clamp\(34px,[^}]*background-size:\s*cover/s);
+  const seatNameRule = styles.match(/\.table-seat strong\s*\{([^}]*)\}/)?.[1] ?? '';
+  assert.match(seatNameRule, /overflow-wrap:\s*anywhere/);
+  assert.match(seatNameRule, /white-space:\s*normal/);
+  assert.doesNotMatch(seatNameRule, /text-overflow:\s*ellipsis/);
   assert.match(styles, /@keyframes action-notification-in/);
   assert.match(styles, /\.player-panel\s*\{[^}]*position:\s*sticky/s);
   assert.match(styles, /\.action-bar button\s*\{[^}]*min-height:\s*44px/s);

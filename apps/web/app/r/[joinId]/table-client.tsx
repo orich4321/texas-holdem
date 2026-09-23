@@ -757,10 +757,12 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
               return <article key={seat.playerId} className={`table-seat${isYou ? ' table-seat-self' : ''}${isActor ? ' table-seat-active' : ''}${isWinner ? ' table-seat-winner' : ''}${seat.isFolded ? ' table-seat-folded' : ''}`}>
                 <span className={`seat-number${seat.seatNumber === view.dealerSeat ? ' dealer-button' : ''}`}>{seat.seatNumber === view.dealerSeat ? 'D' : seat.seatNumber}</span>
                 <ProfileImage className="table-seat-avatar" dataUrl={seat.avatarDataUrl} fallback={seat.playerName.slice(0, 1)} />
-                <strong>{seat.playerName}{isYou ? ' · אתם' : ''}</strong>
-                <small>{seat.isFolded ? 'פרש/ה מהיד' : <><i aria-hidden="true" />{seat.stack.toLocaleString('he-IL')} צ׳יפים</>}</small>
-                {seat.currentBet > 0 ? <em>הימור {seat.currentBet.toLocaleString('he-IL')}</em> : null}
-                {uncalledReturnBySeat.has(seat.seatNumber) ? <em>הוחזרו {uncalledReturnBySeat.get(seat.seatNumber)!.toLocaleString('he-IL')} צ׳יפים שלא הושוו</em> : null}
+                <div className="table-seat-info">
+                  <strong>{seat.playerName}{isYou ? ' · אתם' : ''}</strong>
+                  <small>{seat.isFolded ? 'פרש/ה מהיד' : <><i aria-hidden="true" />{seat.stack.toLocaleString('he-IL')} צ׳יפים</>}</small>
+                  {seat.currentBet > 0 ? <em>הימור {seat.currentBet.toLocaleString('he-IL')}</em> : null}
+                  {uncalledReturnBySeat.has(seat.seatNumber) ? <em>הוחזרו {uncalledReturnBySeat.get(seat.seatNumber)!.toLocaleString('he-IL')} צ׳יפים שלא הושוו</em> : null}
+                </div>
                 {exposed ? <div className="seat-revealed-cards" aria-label={`הקלפים של ${seat.playerName}`}><PlayingCard card={exposed.holeCards[0]} highlighted={winningCardKeys.has(cardKey(exposed.holeCards[0]))} /><PlayingCard card={exposed.holeCards[1]} highlighted={winningCardKeys.has(cardKey(exposed.holeCards[1]))} /></div> : null}
               </article>;
             })}
