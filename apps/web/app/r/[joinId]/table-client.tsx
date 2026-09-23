@@ -25,8 +25,10 @@ type PlayerActionNotification = {
   actorPlayerName: string;
   avatarDataUrl?: string;
   action: PlayerAction;
+  raiseKind?: 'bet' | 'raise';
   amount?: number;
 };
+type TimedActionNotification = PlayerActionNotification & { expiresAt: number };
 type Showdown = {
   winners: readonly { seatNumber: number; playerId: string; playerName: string; chipsWon: number; winningCards?: readonly Card[] }[];
   pots: readonly { amount: number; winnerSeatNumbers: readonly number[] }[];
@@ -113,6 +115,7 @@ function isPlayerActionNotification(value: unknown): value is PlayerActionNotifi
     && typeof notice.actorPlayerId === 'string'
     && typeof notice.actorPlayerName === 'string'
     && (notice.avatarDataUrl === undefined || typeof notice.avatarDataUrl === 'string')
+    && (notice.raiseKind === undefined || notice.raiseKind === 'bet' || notice.raiseKind === 'raise')
     && (notice.amount === undefined || (Number.isSafeInteger(notice.amount) && (notice.amount as number) >= 0))
     && isPlayerAction(notice.action);
 }
@@ -124,7 +127,19 @@ function actionNoticeText(notice: PlayerActionNotification): string {
   if (action.type === 'fold') return 'פרישה מהיד';
   if (action.type === 'call') return amount ? `השוואה · ${amount}` : 'השוואה';
   if (action.type === 'all-in') return amount ? `אול אין · ${amount}` : 'אול אין';
-  return `העלאה ל־${(notice.amount ?? action.raiseTo).toLocaleString('he-IL')}`;
+  return `${notice.raiseKind === 'bet' ? 'הימור' : 'העלאה'} ל־${(notice.amount ?? action.raiseTo).toLocaleString('he-IL')}`;
+}
+
+function actionPresentation(notice: PlayerActionNotification) {
+  const amount = notice.amount?.toLocaleString('he-IL');
+  if (notice.action.type === 'check') return { icon: '✓', label: 'צ׳ק', tone: 'check' };
+  if (notice.action.type === 'fold') return { icon: '✕', label: 'פולד', tone: 'fold' };
+  if (notice.action.type === 'call') return { icon: '=', label: amount ? `השוואה ${amount}` : 'השוואה', tone: 'call' };
+  if (notice.action.type === 'all-in') return { icon: '▲', label: amount ? `אול אין ${amount}` : 'אול אין', tone: 'all-in' };
+  const raiseAmount = (notice.amount ?? notice.action.raiseTo).toLocaleString('he-IL');
+  return notice.raiseKind === 'bet'
+    ? { icon: '↑', label: `הימור ${raiseAmount}`, tone: 'bet' }
+    : { icon: '⇈', label: `העלאה ${raiseAmount}`, tone: 'raise' };
 }
 
 function isFinalSummary(value: unknown, joinId: string): value is FinalSummary {
@@ -191,7 +206,8 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   const [revealingHand, setRevealingHand] = useState(false);
   const [showRaiseControls, setShowRaiseControls] = useState(false);
   const [waitingForNextHand, setWaitingForNextHand] = useState(false);
-  const [actionNotice, setActionNotice] = useState<PlayerActionNotification>();
+  const [actionNotices, setActionNotices] = useState<readonly TimedActionNotification[]>([]);
+  const [seatActions, setSeatActions] = useState<ReadonlyMap<string, PlayerActionNotification>>(() => new Map());
   const [finalSummary, setFinalSummary] = useState<FinalSummary>();
   const [downloadingSummary, setDownloadingSummary] = useState(false);
   const [managingPlayerId, setManagingPlayerId] = useState<string>();
@@ -211,7 +227,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   const actionPendingRef = useRef(false);
   const actionStreamInitializedRef = useRef(false);
   const seenActionSequenceRef = useRef(-1);
-  const actionNoticeTimerRef = useRef<ReturnType<typeof globalThis.setTimeout> | undefined>(undefined);
+  const previousStreetRef = useRef<PlayerView['street'] | undefined>(undefined);
 
   useEffect(() => {
     let active = true;
@@ -299,6 +315,8 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   useEffect(() => {
     if (!view) return;
     const viewSequence = view.sequence ?? -1;
+    const streetChanged = previousStreetRef.current !== undefined && previousStreetRef.current !== view.street;
+    previousStreetRef.current = view.street;
     if (!actionStreamInitializedRef.current) {
       actionStreamInitializedRef.current = true;
       seenActionSequenceRef.current = viewSequence;
@@ -306,20 +324,36 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
     }
     if (!view.lastAction || view.lastAction.sequence <= seenActionSequenceRef.current) {
       seenActionSequenceRef.current = Math.max(seenActionSequenceRef.current, viewSequence);
+      if (streetChanged) {
+        const now = Date.now();
+        setActionNotices((current) => current[0] ? [{ ...current[0], expiresAt: now + 5_000 }] : []);
+        setSeatActions(new Map());
+      }
       return;
     }
     seenActionSequenceRef.current = view.lastAction.sequence;
-    setActionNotice(view.lastAction);
-    if (actionNoticeTimerRef.current !== undefined) globalThis.clearTimeout(actionNoticeTimerRef.current);
-    actionNoticeTimerRef.current = globalThis.setTimeout(() => {
-      setActionNotice(undefined);
-      actionNoticeTimerRef.current = undefined;
-    }, 2_000);
+    const receivedAt = Date.now();
+    const notice = view.lastAction;
+    setActionNotices((current) => {
+      const active = current.filter((entry) => entry.expiresAt > receivedAt && entry.sequence !== notice.sequence);
+      return [{ ...notice, expiresAt: receivedAt + (streetChanged ? 5_000 : 10_000) }, ...(streetChanged ? [] : active)];
+    });
+    setSeatActions((current) => {
+      const next = streetChanged ? new Map<string, PlayerActionNotification>() : new Map(current);
+      next.set(notice.actorPlayerId, notice);
+      return next;
+    });
   }, [view]);
 
-  useEffect(() => () => {
-    if (actionNoticeTimerRef.current !== undefined) globalThis.clearTimeout(actionNoticeTimerRef.current);
-  }, []);
+  useEffect(() => {
+    if (actionNotices.length === 0) return;
+    const nextExpiry = Math.min(...actionNotices.map((notice) => notice.expiresAt));
+    const timer = globalThis.setTimeout(() => {
+      const now = Date.now();
+      setActionNotices((current) => current.filter((notice) => notice.expiresAt > now));
+    }, Math.max(0, nextExpiry - Date.now()) + 20);
+    return () => globalThis.clearTimeout(timer);
+  }, [actionNotices]);
 
   const ownSeat = useMemo(() => view?.seats.find((seat) => seat.playerId === view.playerId), [view]);
   const bustedPlayers = management?.players.filter((player) => player.rebuyDecisionPending) ?? [];
@@ -330,7 +364,6 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
     return [...view.seats.slice(ownIndex), ...view.seats.slice(0, ownIndex)];
   }, [view]);
   const isTurn = Boolean(view && ownSeat && view.currentActorSeat === ownSeat.seatNumber && view.street !== 'showdown' && !view.allInRunout);
-  const activeSeat = view?.seats.find((seat) => seat.seatNumber === view.currentActorSeat);
   const exposedBySeat = useMemo(() => new Map(view?.exposedHands.map((hand) => [hand.seatNumber, hand])), [view]);
   const winnerSeatNumbers = useMemo(() => new Set(view?.showdown?.winners.map((winner) => winner.seatNumber) ?? []), [view?.showdown]);
   const winningCardKeys = useMemo(() => new Set(view?.showdown?.winners.flatMap((winner) => winner.winningCards?.map(cardKey) ?? []) ?? []), [view?.showdown]);
@@ -725,14 +758,16 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
       ? `כולם באול אין — ממתינים לחשיפת ${streetNames[view.allInRunout.nextStreet]}`
     : isTurn
       ? `התור שלכם${view.toCall ? ` · צריך להשוות ${view.toCall.toLocaleString('he-IL')}` : ' · אפשר לעשות צ׳ק'}`
-      : `ממתינים ל${activeSeat?.playerName ?? 'שחקן הבא'}`;
+      : undefined;
 
   return (
     <main className="table-shell" dir="rtl">
-      {actionNotice ? <aside className="action-notification" role="status" aria-live="polite">
-        <ProfileImage className="action-notification-avatar" dataUrl={actionNotice.avatarDataUrl} fallback={actionNotice.actorPlayerName.slice(0, 1)} />
-        <span><strong>{actionNotice.actorPlayerName}</strong><small>{actionNoticeText(actionNotice)}</small></span>
-      </aside> : null}
+      {actionNotices.length ? <div className="action-notifications" role="status" aria-live="polite" aria-label="פעולות אחרונות">
+        {actionNotices.map((notice) => <aside className="action-notification" key={notice.sequence}>
+          <ProfileImage className="action-notification-avatar" dataUrl={notice.avatarDataUrl} fallback={notice.actorPlayerName.slice(0, 1)} />
+          <span><strong>{notice.actorPlayerName}</strong><small>{actionNoticeText(notice)}</small></span>
+        </aside>)}
+      </div> : null}
       <header className="table-header">
         <a href={`/r/${joinId}`} aria-label="חזרה ללובי"><AppBrand compact /></a>
         {isCurrentHost ? <button type="button" className="table-management-button" aria-expanded={managementOpen} onClick={() => {
@@ -742,7 +777,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
         <div className="table-round"><span>שלב במשחק</span><strong>{streetNames[view.street]}</strong></div>
         <div className="table-header-pot"><span>{view.showdown ? 'קופה שחולקה' : 'קופה נוכחית'}</span><strong><i aria-hidden="true" />{displayedPot.toLocaleString('he-IL')}</strong></div>
       </header>
-      <p className={`turn-banner${isTurn ? ' turn-banner-active' : ''}`} role="status" aria-live="polite"><span aria-hidden="true" />{turnMessage}</p>
+      {turnMessage ? <p className={`turn-banner${isTurn ? ' turn-banner-active' : ''}`} role="status" aria-live="polite"><span aria-hidden="true" />{turnMessage}</p> : null}
       <section className="poker-table" aria-label="שולחן טקסס הולדם">
         <div className="table-felt">
           <div className="table-pot"><span><i aria-hidden="true" /> {view.showdown ? 'קופה שחולקה' : 'קופה'}</span><strong>{displayedPot.toLocaleString('he-IL')}</strong></div>
@@ -755,6 +790,8 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
               const isActor = seat.seatNumber === view.currentActorSeat && view.street !== 'showdown' && !view.allInRunout;
               const exposed = exposedBySeat.get(seat.seatNumber);
               const isWinner = winnerSeatNumbers.has(seat.seatNumber);
+              const seatAction = seatActions.get(seat.playerId);
+              const presentedAction = seatAction ? actionPresentation(seatAction) : undefined;
               return <article key={seat.playerId} className={`table-seat${isYou ? ' table-seat-self' : ''}${isActor ? ' table-seat-active' : ''}${isWinner ? ' table-seat-winner' : ''}${seat.isFolded ? ' table-seat-folded' : ''}`}>
                 <span className={`seat-number${seat.seatNumber === view.dealerSeat ? ' dealer-button' : ''}`}>{seat.seatNumber === view.dealerSeat ? 'D' : seat.seatNumber}</span>
                 <ProfileImage className="table-seat-avatar" dataUrl={seat.avatarDataUrl} fallback={seat.playerName.slice(0, 1)} />
@@ -764,6 +801,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
                   {seat.currentBet > 0 ? <em>הימור {seat.currentBet.toLocaleString('he-IL')}</em> : null}
                   {uncalledReturnBySeat.has(seat.seatNumber) ? <em>הוחזרו {uncalledReturnBySeat.get(seat.seatNumber)!.toLocaleString('he-IL')} צ׳יפים שלא הושוו</em> : null}
                 </div>
+                {presentedAction ? <span className={`seat-action seat-action-${presentedAction.tone}`} aria-label={`${seat.playerName}: ${presentedAction.label}`}><i aria-hidden="true">{presentedAction.icon}</i><b>{presentedAction.label}</b></span> : null}
                 {exposed ? <div className="seat-revealed-cards" aria-label={`הקלפים של ${seat.playerName}`}><PlayingCard card={exposed.holeCards[0]} highlighted={winningCardKeys.has(cardKey(exposed.holeCards[0]))} /><PlayingCard card={exposed.holeCards[1]} highlighted={winningCardKeys.has(cardKey(exposed.holeCards[1]))} /></div> : null}
               </article>;
             })}

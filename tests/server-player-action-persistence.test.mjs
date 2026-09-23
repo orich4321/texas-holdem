@@ -74,6 +74,16 @@ test('accepted authoritative action persists a minimal event and next signed sna
   assert.equal(JSON.stringify(db.calls[3][1].data).includes('deck'), false);
 });
 
+test('a preflop wager over the blinds is identified publicly as a raise', async () => {
+  const db = createDb();
+  const repository = new RoomRepository(db, undefined, undefined, undefined, keyring);
+
+  const result = await repository.persistPlayerActionAtomically({ roomId: room.id, playerId: 'host-id', action: { type: 'raise', raiseTo: 20 } });
+
+  assert.equal(result.view.lastAction?.raiseKind, 'raise');
+  assert.equal(db.calls[3][1].data.payload.raiseKind, 'raise');
+});
+
 test('retrying a socket action through HTTP with the same client ID never applies it twice', async () => {
   const db = createDb({ duplicateAction: true });
   const repository = new RoomRepository(db, undefined, undefined, undefined, keyring);

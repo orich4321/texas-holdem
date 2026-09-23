@@ -189,12 +189,14 @@ function actionNotificationFromEvent(
     return undefined;
   }
   const amount = Number.isSafeInteger(payload.amount) && (payload.amount as number) >= 0 ? payload.amount as number : undefined;
+  const raiseKind = payload.raiseKind === 'bet' || payload.raiseKind === 'raise' ? payload.raiseKind : undefined;
   return Object.freeze({
     sequence: event.sequence,
     actorPlayerId: actor.id,
     actorPlayerName: actor.displayName,
     ...(actor.avatarDataUrl ? { avatarDataUrl: actor.avatarDataUrl } : {}),
     action: Object.freeze({ ...payload.action }),
+    ...(raiseKind ? { raiseKind } : {}),
     ...(amount !== undefined ? { amount } : {}),
   });
 }
@@ -573,6 +575,9 @@ export class RoomRepository {
           : action.type === 'all-in'
             ? actorSeat.currentBet + actorSeat.stack
             : undefined;
+      const raiseKind = action.type === 'raise'
+        ? Math.max(...beforeAction.seats.map((seat) => seat.currentBet)) === 0 ? 'bet' as const : 'raise' as const
+        : undefined;
       const view = lifecycle.applyAction(playerId, action);
       let gameCompleted = false;
       const settledHand = lifecycle.handForDurableSnapshot();
@@ -619,7 +624,7 @@ export class RoomRepository {
       }
       const sequence = latest.sequence + 1;
       const publicAction = action.type === 'raise' ? { type: 'raise' as const, raiseTo: action.raiseTo } : { type: action.type };
-      const publicActionPayload = { actorPlayerId: playerId, action: publicAction, ...(actionAmount !== undefined ? { amount: actionAmount } : {}) };
+      const publicActionPayload = { actorPlayerId: playerId, action: publicAction, ...(raiseKind ? { raiseKind } : {}), ...(actionAmount !== undefined ? { amount: actionAmount } : {}) };
       const lastAction = actionNotificationFromEvent({ sequence, payload: publicActionPayload }, room.players);
       if (!lastAction) throw new Error('Game action is unavailable');
       const views = Object.freeze(settledHand.seats.map((seat) => this.decorateView(lifecycle.viewFor(seat.playerId), sequence, room.hostPlayerId!, gameCompleted, false, lastAction)));

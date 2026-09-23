@@ -43,11 +43,14 @@ test('mobile table UI keeps the player anchored, reconnects safely, and exposes 
   assert.match(table, /management\/transfer-host/);
   assert.match(table, /management\/players\/\$\{encodeURIComponent\(targetPlayerId\)\}\/chips/);
   assert.match(table, /setTimeout\([^]*250\)/);
-  assert.match(table, /className="action-notification"/);
+  assert.match(table, /className="action-notifications"/);
+  assert.match(table, /className=\{`seat-action seat-action-\$\{presentedAction\.tone\}`\}/);
+  assert.match(table, /receivedAt \+ \(streetChanged \? 5_000 : 10_000\)/);
+  assert.match(table, /setActionNotices\(\(current\).*current\[0\]/s);
   assert.match(table, /className="table-seat-avatar" dataUrl=\{seat\.avatarDataUrl\}/);
   assert.match(table, /className="table-seat-info"/);
-  assert.match(table, /actionNoticeTimerRef[^]*2_000/);
   assert.match(table, /seenActionSequenceRef/);
+  assert.doesNotMatch(table, /`ממתינים ל\$\{activeSeat/);
   assert.doesNotMatch(table, /setInterval\([^]*650\)/);
   assert.match(table, /final-summary/);
   assert.match(table, /className="final-summary-avatar" dataUrl=\{standing\.avatarDataUrl\}/);
@@ -71,6 +74,10 @@ test('mobile table UI keeps the player anchored, reconnects safely, and exposes 
   assert.match(styles, /\.table-seat-winner\s*\{/);
   assert.match(styles, /\.playing-card-winning\s*\{/);
   assert.match(styles, /\.action-notification\s*\{/);
+  assert.match(styles, /\.community-cards\s*\{[^}]*z-index:\s*7/s);
+  assert.match(styles, /\.seat-action-fold\s*\{[^}]*#d77f79/s);
+  assert.match(styles, /\.seat-action-call, \.seat-action-bet\s*\{[^}]*#78a7c2/s);
+  assert.match(styles, /\.table-seat:nth-child\(3\)\s*\{\s*top:\s*61%/);
   assert.match(styles, /\.table-seat\s*\{[^}]*width:\s*clamp\(104px,[^}]*min-height:\s*clamp\(60px/s);
   assert.match(styles, /\.table-seat-avatar\s*\{[^}]*width:\s*clamp\(34px,[^}]*background-size:\s*cover/s);
   const seatNameRule = styles.match(/\.table-seat strong\s*\{([^}]*)\}/)?.[1] ?? '';

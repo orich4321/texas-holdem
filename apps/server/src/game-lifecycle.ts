@@ -68,6 +68,8 @@ export type PlayerActionNotification = Readonly<{
   actorPlayerName: string;
   avatarDataUrl?: string;
   action: PlayerAction;
+  /** Distinguishes an opening wager from a raise over an existing wager. */
+  raiseKind?: 'bet' | 'raise';
   /** Chips called, or the resulting total bet for a raise/all-in. */
   amount?: number;
 }>;
