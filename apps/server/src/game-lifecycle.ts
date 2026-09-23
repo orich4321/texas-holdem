@@ -116,6 +116,8 @@ export interface ServerPlayerView {
   playerId: string;
   street: StartedHand['street'];
   dealerSeat: number;
+  smallBlindSeat: number;
+  bigBlindSeat: number;
   currentActorSeat: number;
   communityCards: readonly Card[];
   pot: number;
@@ -135,6 +137,7 @@ export interface ServerPlayerView {
     stack: number;
     currentBet: number;
     isFolded: boolean;
+    isSittingOut: boolean;
   }[];
   /** Cards intentionally made public by a showdown or an all-in runout. */
   exposedHands: readonly {
@@ -294,6 +297,8 @@ export class ServerGameLifecycle {
       playerId,
       street: hand.street,
       dealerSeat: hand.dealerSeat,
+      smallBlindSeat: hand.smallBlindSeat,
+      bigBlindSeat: hand.bigBlindSeat,
       currentActorSeat: hand.currentActorSeat,
       communityCards: Object.freeze(hand.communityCards.map((card) => Object.freeze({ ...card }))),
       // Once settlement has happened there are no chips left in the live pot.
@@ -316,6 +321,7 @@ export class ServerGameLifecycle {
         stack: settledStacks?.get(seat.seatNumber) ?? seat.stack,
         currentBet: seat.currentBet,
         isFolded: seat.isFolded === true,
+        isSittingOut: false,
       }))),
       exposedHands,
       ...(allInRunout ? { allInRunout: Object.freeze({ nextStreet: allInRunout }) } : {}),

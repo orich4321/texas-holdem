@@ -12,12 +12,13 @@ const keyring = new Map([[keyId, key]]);
 const room = {
   id: 'room-db-id', joinId: '0123456789abcdef', hostPlayerId: 'host-id', status: 'IN_PROGRESS',
   players: [
-    { id: 'host-id', displayName: 'אורי', currentStack: 100, createdAt: new Date('2026-01-01') },
-    { id: 'player-1', displayName: 'נועה', currentStack: 100, createdAt: new Date('2026-01-02') },
+    { id: 'host-id', displayName: 'אורי', avatarDataUrl: null, currentStack: 100, isSittingOut: false, createdAt: new Date('2026-01-01') },
+    { id: 'player-1', displayName: 'נועה', avatarDataUrl: null, currentStack: 100, isSittingOut: false, createdAt: new Date('2026-01-02') },
+    { id: 'parked-player', displayName: 'ממתין', avatarDataUrl: null, currentStack: 0, isSittingOut: true, createdAt: new Date('2026-01-03') },
   ],
 };
 const initial = signPrivateHandSnapshot(startHand({
-  seats: room.players.map((player, index) => ({ seatNumber: index + 1, playerId: player.id, stack: player.currentStack })),
+  seats: room.players.slice(0, 2).map((player, index) => ({ seatNumber: index + 1, playerId: player.id, stack: player.currentStack })),
   dealerSeat: 1, smallBlind: 5, bigBlind: 10, randomInt: () => 0,
 }), { roomId: room.id, sequence: 0, keyId }, key);
 const raised = applyPreflopRaise(hydrateSignedPrivateHandSnapshot(initial, { roomId: room.id, sequence: 0 }, keyring).hand, 1, 20);
@@ -65,6 +66,15 @@ test('accepted authoritative action persists a minimal event and next signed sna
     action: { type: 'call' },
     amount: 5,
   });
+  assert.deepEqual(result.view.seats.find((seat) => seat.playerId === 'parked-player'), {
+    seatNumber: -3,
+    playerId: 'parked-player',
+    playerName: 'ממתין',
+    stack: 0,
+    currentBet: 0,
+    isFolded: false,
+    isSittingOut: true,
+  });
   assert.deepEqual(db.calls.map(([name]) => name), ['room.findUnique', 'room.updateMany', 'gameSnapshot.findFirst', 'gameEvent.create', 'gameSnapshot.create']);
   assert.deepEqual(db.calls[3][1].data, { roomId: room.id, sequence: 1, type: 'PLAYER_ACTION', payload: { actorPlayerId: 'host-id', action: { type: 'call' }, amount: 5 } });
   const signed = db.calls[4][1].data.state;
@@ -82,6 +92,17 @@ test('a preflop wager over the blinds is identified publicly as a raise', async 
 
   assert.equal(result.view.lastAction?.raiseKind, 'raise');
   assert.equal(db.calls[3][1].data.payload.raiseKind, 'raise');
+});
+
+test('a raise to the complete stack is canonically persisted and announced as all-in', async () => {
+  const db = createDb();
+  const repository = new RoomRepository(db, undefined, undefined, undefined, keyring);
+
+  const result = await repository.persistPlayerActionAtomically({ roomId: room.id, playerId: 'host-id', action: { type: 'raise', raiseTo: 100 } });
+
+  assert.deepEqual(result.view.lastAction?.action, { type: 'all-in' });
+  assert.equal(result.view.lastAction?.raiseKind, undefined);
+  assert.deepEqual(db.calls[3][1].data.payload, { actorPlayerId: 'host-id', action: { type: 'all-in' }, amount: 100 });
 });
 
 test('retrying a socket action through HTTP with the same client ID never applies it twice', async () => {
@@ -109,7 +130,7 @@ test('the last fold atomically persists the uncontested winner and updated chip 
 
   assert.equal(result.view.street, 'showdown');
   assert.deepEqual(result.view.showdown?.winners.map((winner) => winner.playerId), ['host-id']);
-  assert.deepEqual(result.view.seats.map((seat) => [seat.playerId, seat.stack]), [['host-id', 110], ['player-1', 90]]);
+  assert.deepEqual(result.view.seats.map((seat) => [seat.playerId, seat.stack]), [['host-id', 110], ['player-1', 90], ['parked-player', 0]]);
   assert.deepEqual(db.calls.filter(([name]) => name === 'player.update').map(([, args]) => args.data.currentStack).sort((a, b) => a - b), [90, 110]);
   assert.equal(db.calls.filter(([name]) => name === 'settlement.create').length, 1);
   const persistedResult = db.calls.find(([name]) => name === 'settlement.create')[1].data.result;

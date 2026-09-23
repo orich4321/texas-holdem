@@ -196,7 +196,10 @@ test('a busted member sits out, keeps their session, and can return to the same 
   const spectator = await repository.recoverLatestPlayerViewForPlayer(created.id, bustedId);
   assert.equal(spectator.isSittingOut, true);
   assert.deepEqual(spectator.holeCards, [], 'spectators must not receive another player’s private cards');
-  assert.equal(spectator.seats.some((seat) => seat.playerId === bustedId), false);
+  const parkedSeatIndex = spectator.seats.findIndex((seat) => seat.playerId === bustedId);
+  assert.notEqual(parkedSeatIndex, -1, 'a busted member remains visibly parked at the table');
+  assert.equal(spectator.seats[parkedSeatIndex].isSittingOut, true);
+  assert.equal(spectator.seats[parkedSeatIndex].stack, 0);
   assert.equal((await repository.findPlayerByRoomJoinIdAndAccessToken(created.joinId, created.hostAccessToken)).id, created.hostPlayerId);
   await finishHand();
   await repository.startNextHandForHostAtomically({ joinId: created.joinId, hostPlayerId: created.hostPlayerId });
@@ -206,6 +209,8 @@ test('a busted member sits out, keeps their session, and can return to the same 
   await repository.startNextHandForHostAtomically({ joinId: created.joinId, hostPlayerId: created.hostPlayerId });
   const returned = await repository.recoverLatestPlayerViewForPlayer(created.id, bustedId);
   assert.equal(returned.holeCards.length, 2);
+  assert.equal(returned.seats.findIndex((seat) => seat.playerId === bustedId), parkedSeatIndex, 'a rebuy restores the same visual table position');
+  assert.equal(returned.seats.find((seat) => seat.playerId === bustedId).isSittingOut, false);
   assert.ok(returned.seats.find((seat) => seat.playerId === bustedId).stack <= 500, 'the next hand may have posted a blind');
   assert.equal((await prisma.player.findUnique({ where: { id: bustedId } })).currentStack, 500);
   assert.equal((await repository.getHostManagement(created.joinId, created.hostPlayerId)).players.find((player) => player.id === bustedId).isSittingOut, false);

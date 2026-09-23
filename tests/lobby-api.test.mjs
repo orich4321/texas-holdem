@@ -76,6 +76,11 @@ test('mobile table UI keeps the player anchored, reconnects safely, and exposes 
   assert.match(table, /4_500/);
   assert.match(styles, /\.pot-award-card\s*\{/);
   assert.match(styles, /\.table-seat-pot-eligible\s*\{/);
+  assert.match(table, /raiseTo === view\.raise\.maxRaiseTo \? \{ type: 'all-in' \}/);
+  assert.match(table, /seat\.seatNumber === view\.smallBlindSeat/);
+  assert.match(table, /seat\.seatNumber === view\.bigBlindSeat/);
+  assert.match(table, /table-seat-sitting-out/);
+  assert.match(styles, /\.table-seat-sitting-out\s*\{/);
   assert.match(table, /view\.seats\.filter\(\(seat\) => !seat\.isFolded\)\.length >= 2/);
   assert.match(table, /'לחשוף את היד שלי'/);
   assert.match(styles, /\.table-seat-winner\s*\{/);

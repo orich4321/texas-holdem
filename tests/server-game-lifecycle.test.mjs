@@ -24,8 +24,11 @@ test('server lifecycle starts only through the server CSPRNG boundary and expose
 
   assert.equal(view.street, 'preflop');
   assert.equal(view.playerId, 'ada');
+  assert.equal(view.smallBlindSeat, 2);
+  assert.equal(view.bigBlindSeat, 3);
   assert.equal(view.holeCards.length, 2);
   assert.equal(view.seats.length, 3);
+  assert.equal(view.seats.every((seat) => seat.isSittingOut === false), true);
   assert.equal(view.seats.find((seat) => seat.playerId === 'ada').avatarDataUrl, 'data:image/jpeg;base64,/9j/2Q==');
   assert.equal(view.seats.find((seat) => seat.playerId === 'ben').avatarDataUrl, undefined);
   assert.deepEqual(view.raise, { minRaiseTo: 20, maxRaiseTo: 100, minimumIncrement: 10 });

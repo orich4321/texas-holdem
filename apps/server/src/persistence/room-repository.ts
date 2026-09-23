@@ -41,6 +41,14 @@ type CreateRoomInput = {
 
 type PlayerWriter = Pick<PrismaClient, 'player'>;
 
+type RoomViewPlayer = Readonly<{
+  id: string;
+  displayName: string;
+  avatarDataUrl: string | null;
+  currentStack: number;
+  isSittingOut: boolean;
+}>;
+
 const MAX_ACCESS_TOKEN_ATTEMPTS = 5;
 const MAX_CHIP_ADJUSTMENT = 1_000_000;
 const DEFAULT_ROOM_SETTINGS: RoomGameSettings = Object.freeze({ initialStack: 500, smallBlind: 1, bigBlind: 2, maxPlayers: 9 });
@@ -210,8 +218,26 @@ export class RoomRepository {
     private readonly privateSnapshotKeyring: ReadonlyMap<string, PrivateSnapshotSigningKey> = new Map(),
   ) {}
 
-  private decorateView(view: ServerPlayerView, sequence: number, hostPlayerId: string, gameCompleted = false, finalSummaryVisible = false, lastAction?: PlayerActionNotification): ServerPlayerView {
-    return Object.freeze({ ...view, sequence, hostPlayerId, gameCompleted, finalSummaryVisible, ...(lastAction ? { lastAction } : {}) });
+  private decorateView(view: ServerPlayerView, sequence: number, hostPlayerId: string, gameCompleted = false, finalSummaryVisible = false, lastAction?: PlayerActionNotification, roomPlayers?: readonly RoomViewPlayer[]): ServerPlayerView {
+    const activeSeats = new Map(view.seats.map((seat) => [seat.playerId, seat]));
+    const seats = roomPlayers
+      ? roomPlayers.map((player, index) => {
+        const activeSeat = activeSeats.get(player.id);
+        return Object.freeze(activeSeat
+          ? { ...activeSeat, isSittingOut: player.isSittingOut }
+          : {
+            seatNumber: -(index + 1),
+            playerId: player.id,
+            playerName: player.displayName,
+            ...(player.avatarDataUrl ? { avatarDataUrl: player.avatarDataUrl } : {}),
+            stack: player.currentStack,
+            currentBet: 0,
+            isFolded: false,
+            isSittingOut: true,
+          });
+      })
+      : view.seats;
+    return Object.freeze({ ...view, seats: Object.freeze(seats), sequence, hostPlayerId, gameCompleted, finalSummaryVisible, ...(lastAction ? { lastAction } : {}) });
   }
 
   private async createPlayerWithUniqueAccessToken(db: PlayerWriter, player: PlayerInput, roomId: string) {
@@ -517,7 +543,7 @@ export class RoomRepository {
     const latestAction = room.events[0]?.sequence === latest.sequence
       ? actionNotificationFromEvent(room.events[0], room.players)
       : undefined;
-    return this.decorateView(safeView, latest.sequence, room.hostPlayerId, room.status === 'COMPLETED', room.status === 'COMPLETED' && room.finalSummaryVisible, latestAction);
+    return this.decorateView(safeView, latest.sequence, room.hostPlayerId, room.status === 'COMPLETED', room.status === 'COMPLETED' && room.finalSummaryVisible, latestAction, room.players);
   }
 
   /** Applies an authenticated action to the latest verified state and commits its successor atomically. */
@@ -527,7 +553,7 @@ export class RoomRepository {
     return this.db.$transaction(async (tx) => {
       const room = await tx.room.findUnique({
         where: { id: roomId },
-        select: { status: true, hostPlayerId: true, players: { orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, avatarDataUrl: true, currentStack: true } } },
+        select: { status: true, hostPlayerId: true, players: { where: { leftAt: null }, orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, avatarDataUrl: true, currentStack: true, isSittingOut: true } } },
       });
       if (!room || !room.hostPlayerId || room.status !== 'IN_PROGRESS' || !room.players.some((player) => player.id === playerId)) throw new Error('Game action is unavailable');
 
@@ -561,24 +587,32 @@ export class RoomRepository {
         });
         if (duplicate) {
           const lastAction = duplicate.sequence === latest.sequence ? actionNotificationFromEvent(duplicate, room.players) : undefined;
-          const views = Object.freeze(hand.seats.map((seat) => this.decorateView(lifecycle.viewFor(seat.playerId), latest.sequence, room.hostPlayerId!, false, false, lastAction)));
+          const views = Object.freeze(hand.seats.map((seat) => this.decorateView(lifecycle.viewFor(seat.playerId), latest.sequence, room.hostPlayerId!, false, false, lastAction, room.players)));
           return { sequence: latest.sequence, view: views.find((candidate) => candidate.playerId === playerId)!, views };
         }
       }
       const beforeAction = lifecycle.viewFor(playerId);
       const actorSeat = beforeAction.seats.find((seat) => seat.playerId === playerId);
       if (!actorSeat) throw new Error('Game action is unavailable');
-      const actionAmount = action.type === 'call'
+      // A raise to the actor's complete stack is semantically an all-in even
+      // when an older client submitted it through the generic raise control.
+      const effectiveAction: PlayerAction = action.type === 'raise' && action.raiseTo === actorSeat.currentBet + actorSeat.stack
+        ? { type: 'all-in' }
+        : action;
+      const isAllInCall = effectiveAction.type === 'call' && actorSeat.stack > 0 && beforeAction.toCall >= actorSeat.stack;
+      const actionAmount = isAllInCall
+        ? actorSeat.currentBet + actorSeat.stack
+        : effectiveAction.type === 'call'
         ? Math.min(beforeAction.toCall, actorSeat.stack)
-        : action.type === 'raise'
-          ? action.raiseTo
-          : action.type === 'all-in'
+        : effectiveAction.type === 'raise'
+          ? effectiveAction.raiseTo
+          : effectiveAction.type === 'all-in'
             ? actorSeat.currentBet + actorSeat.stack
             : undefined;
-      const raiseKind = action.type === 'raise'
+      const raiseKind = effectiveAction.type === 'raise'
         ? Math.max(...beforeAction.seats.map((seat) => seat.currentBet)) === 0 ? 'bet' as const : 'raise' as const
         : undefined;
-      const view = lifecycle.applyAction(playerId, action);
+      const view = lifecycle.applyAction(playerId, effectiveAction);
       let gameCompleted = false;
       const settledHand = lifecycle.handForDurableSnapshot();
       const settlement = settledHand.street === 'showdown'
@@ -623,18 +657,22 @@ export class RoomRepository {
         }
       }
       const sequence = latest.sequence + 1;
-      const publicAction = action.type === 'raise' ? { type: 'raise' as const, raiseTo: action.raiseTo } : { type: action.type };
+      const publicAction = isAllInCall
+        ? { type: 'all-in' as const }
+        : effectiveAction.type === 'raise'
+          ? { type: 'raise' as const, raiseTo: effectiveAction.raiseTo }
+          : { type: effectiveAction.type };
       const publicActionPayload = { actorPlayerId: playerId, action: publicAction, ...(raiseKind ? { raiseKind } : {}), ...(actionAmount !== undefined ? { amount: actionAmount } : {}) };
       const lastAction = actionNotificationFromEvent({ sequence, payload: publicActionPayload }, room.players);
       if (!lastAction) throw new Error('Game action is unavailable');
-      const views = Object.freeze(settledHand.seats.map((seat) => this.decorateView(lifecycle.viewFor(seat.playerId), sequence, room.hostPlayerId!, gameCompleted, false, lastAction)));
+      const views = Object.freeze(settledHand.seats.map((seat) => this.decorateView(lifecycle.viewFor(seat.playerId), sequence, room.hostPlayerId!, gameCompleted, false, lastAction, room.players)));
       const activeKey = this.privateSnapshotKeyring.entries().next().value as [string, PrivateSnapshotSigningKey] | undefined;
       if (!activeKey) throw new Error('Game action is unavailable');
       const [keyId, key] = activeKey;
       const snapshot = signPrivateHandSnapshot(lifecycle.handForDurableSnapshot(), { roomId, sequence, keyId }, key);
       await tx.gameEvent.create({ data: { roomId, sequence, type: 'PLAYER_ACTION', payload: publicActionPayload, ...(clientActionId ? { clientActionId } : {}) } });
       await tx.gameSnapshot.create({ data: { roomId, sequence, state: snapshot as unknown as Prisma.InputJsonValue } });
-      return { sequence, view: this.decorateView(view, sequence, room.hostPlayerId, gameCompleted, false, lastAction), views };
+      return { sequence, view: this.decorateView(view, sequence, room.hostPlayerId, gameCompleted, false, lastAction, room.players), views };
     });
   }
 
@@ -646,7 +684,7 @@ export class RoomRepository {
     return this.db.$transaction(async (tx) => {
       const room = await tx.room.findUnique({
         where: { joinId },
-        select: { id: true, hostPlayerId: true, status: true, players: { orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, avatarDataUrl: true, currentStack: true } } },
+        select: { id: true, hostPlayerId: true, status: true, players: { where: { leftAt: null }, orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, avatarDataUrl: true, currentStack: true, isSittingOut: true } } },
       });
       if (!room || room.hostPlayerId !== hostPlayerId || room.status !== 'IN_PROGRESS') throw new Error('All-in board is unavailable');
       const locked = await tx.room.updateMany({ where: { id: room.id, hostPlayerId, status: 'IN_PROGRESS' }, data: { updatedAt: new Date() } });
@@ -708,7 +746,7 @@ export class RoomRepository {
       const snapshot = signPrivateHandSnapshot(hand, { roomId: room.id, sequence, keyId }, key);
       await tx.gameEvent.create({ data: { roomId: room.id, sequence, type: 'ALL_IN_RUNOUT_ADVANCED', payload: { street: hand.street } } });
       await tx.gameSnapshot.create({ data: { roomId: room.id, sequence, state: snapshot as unknown as Prisma.InputJsonValue } });
-      return { sequence, views: Object.freeze(hand.seats.map((seat) => this.decorateView(lifecycle.viewFor(seat.playerId), sequence, room.hostPlayerId!, gameCompleted))) };
+      return { sequence, views: Object.freeze(hand.seats.map((seat) => this.decorateView(lifecycle.viewFor(seat.playerId), sequence, room.hostPlayerId!, gameCompleted, false, undefined, room.players))) };
     });
   }
 
@@ -720,7 +758,7 @@ export class RoomRepository {
     return this.db.$transaction(async (tx) => {
       const room = await tx.room.findUnique({
         where: { id: roomId },
-        select: { status: true, hostPlayerId: true, finalSummaryVisible: true, players: { orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, avatarDataUrl: true, currentStack: true } } },
+        select: { status: true, hostPlayerId: true, finalSummaryVisible: true, players: { where: { leftAt: null }, orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, avatarDataUrl: true, currentStack: true, isSittingOut: true } } },
       });
       if (!room || !room.hostPlayerId || (room.status !== 'IN_PROGRESS' && (room.status !== 'COMPLETED' || room.finalSummaryVisible)) || !room.players.some((player) => player.id === playerId)) throw new Error('Showdown reveal is unavailable');
       const locked = await tx.room.updateMany({ where: { id: roomId, status: room.status }, data: { updatedAt: new Date() } });
@@ -744,8 +782,8 @@ export class RoomRepository {
       await tx.gameSnapshot.create({ data: { roomId, sequence, state: snapshot as unknown as Prisma.InputJsonValue } });
       return {
         sequence,
-        view: this.decorateView(view, sequence, room.hostPlayerId, room.status === 'COMPLETED', room.finalSummaryVisible),
-        views: Object.freeze(recovery.hand.seats.map((seat) => this.decorateView(lifecycle.viewFor(seat.playerId), sequence, room.hostPlayerId!, room.status === 'COMPLETED', room.finalSummaryVisible))),
+        view: this.decorateView(view, sequence, room.hostPlayerId, room.status === 'COMPLETED', room.finalSummaryVisible, undefined, room.players),
+        views: Object.freeze(recovery.hand.seats.map((seat) => this.decorateView(lifecycle.viewFor(seat.playerId), sequence, room.hostPlayerId!, room.status === 'COMPLETED', room.finalSummaryVisible, undefined, room.players))),
       };
     });
   }

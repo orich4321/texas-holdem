@@ -58,13 +58,15 @@ type PlayerView = {
   playerId: string;
   street: 'preflop' | 'flop' | 'turn' | 'river' | 'showdown';
   dealerSeat: number;
+  smallBlindSeat: number;
+  bigBlindSeat: number;
   currentActorSeat: number;
   communityCards: readonly Card[];
   pot: number;
   toCall: number;
   raise?: { minRaiseTo: number; maxRaiseTo: number; minimumIncrement: number };
   holeCards: readonly [Card, Card] | readonly [];
-  seats: readonly { seatNumber: number; playerId: string; playerName: string; avatarDataUrl?: string; stack: number; currentBet: number; isFolded: boolean }[];
+  seats: readonly { seatNumber: number; playerId: string; playerName: string; avatarDataUrl?: string; stack: number; currentBet: number; isFolded: boolean; isSittingOut: boolean }[];
   exposedHands: readonly ExposedHand[];
   allInRunout?: AllInRunout;
   showdown?: Showdown;
@@ -192,6 +194,8 @@ function isPlayerView(value: unknown): value is PlayerView {
     && (view.lastAction === undefined || isPlayerActionNotification(view.lastAction))
     && typeof view.street === 'string'
     && typeof view.dealerSeat === 'number'
+    && typeof view.smallBlindSeat === 'number'
+    && typeof view.bigBlindSeat === 'number'
     && typeof view.currentActorSeat === 'number'
     && typeof view.pot === 'number'
     && typeof view.toCall === 'number'
@@ -199,6 +203,7 @@ function isPlayerView(value: unknown): value is PlayerView {
     && Array.isArray(view.holeCards) && (view.holeCards.length === 2 || (view.holeCards.length === 0 && view.isSittingOut === true)) && view.holeCards.every(isCard)
     && Array.isArray(view.seats) && view.seats.every((seat) => seat !== null && typeof seat === 'object'
       && typeof (seat as Record<string, unknown>).playerName === 'string'
+      && typeof (seat as Record<string, unknown>).isSittingOut === 'boolean'
       && ((seat as Record<string, unknown>).avatarDataUrl === undefined || typeof (seat as Record<string, unknown>).avatarDataUrl === 'string'))
     && Array.isArray(view.exposedHands) && view.exposedHands.every(isExposedHand)
     && (view.raise === undefined || (view.raise !== null && typeof view.raise === 'object'
@@ -395,6 +400,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
     return [...view.seats.slice(ownIndex), ...view.seats.slice(0, ownIndex)];
   }, [view]);
   const isTurn = Boolean(view && ownSeat && view.currentActorSeat === ownSeat.seatNumber && view.street !== 'showdown' && !view.allInRunout);
+  const callIsAllIn = Boolean(isTurn && ownSeat && view && view.toCall > 0 && view.toCall >= ownSeat.stack);
   const exposedBySeat = useMemo(() => new Map(view?.exposedHands.map((hand) => [hand.seatNumber, hand])), [view]);
   const showdownPotSignature = view?.showdown?.pots.map((pot) => `${pot.amount}:${pot.payouts.map((payout) => `${payout.seatNumber}-${payout.amount}`).join(',')}`).join('|') ?? '';
   const safeActivePotIndex = Math.min(activePotIndex, Math.max(0, (view?.showdown?.pots.length ?? 1) - 1));
@@ -560,7 +566,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
 
   function submitRaise() {
     if (!view?.raise || raiseTo === undefined) return;
-    void act({ type: 'raise', raiseTo });
+    void act(raiseTo === view.raise.maxRaiseTo ? { type: 'all-in' } : { type: 'raise', raiseTo });
   }
 
   function selectQuickRaise(fraction: number) {
@@ -855,16 +861,22 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
               const isPotEligible = Boolean(activeShowdownPot && eligibleSeatNumbers.has(seat.seatNumber));
               const seatAction = seatActions.get(seat.playerId);
               const presentedAction = seatAction ? actionPresentation(seatAction) : undefined;
-              return <article key={seat.playerId} className={`table-seat${isYou ? ' table-seat-self' : ''}${isActor ? ' table-seat-active' : ''}${isPotEligible ? ' table-seat-pot-eligible' : ''}${isWinner ? ' table-seat-winner' : ''}${seat.isFolded ? ' table-seat-folded' : ''}`}>
-                <span className={`seat-number${seat.seatNumber === view.dealerSeat ? ' dealer-button' : ''}`}>{seat.seatNumber === view.dealerSeat ? 'D' : seat.seatNumber}</span>
+              return <article key={seat.playerId} className={`table-seat${isYou ? ' table-seat-self' : ''}${isActor ? ' table-seat-active' : ''}${isPotEligible ? ' table-seat-pot-eligible' : ''}${isWinner ? ' table-seat-winner' : ''}${seat.isFolded ? ' table-seat-folded' : ''}${seat.isSittingOut ? ' table-seat-sitting-out' : ''}`}>
+                <span className="seat-roles" aria-label={seat.isSittingOut ? `${seat.playerName} לא משתתף ביד` : `תפקידי ${seat.playerName}`}>
+                  {seat.isSittingOut ? <i className="seat-role seat-role-out">OUT</i> : <>
+                    {seat.seatNumber === view.dealerSeat ? <i className="seat-role dealer-button">D</i> : null}
+                    {seat.seatNumber === view.smallBlindSeat ? <i className="seat-role blind-button">SB</i> : null}
+                    {seat.seatNumber === view.bigBlindSeat ? <i className="seat-role blind-button">BB</i> : null}
+                  </>}
+                </span>
                 <ProfileImage className="table-seat-avatar" dataUrl={seat.avatarDataUrl} fallback={seat.playerName.slice(0, 1)} />
                 <div className="table-seat-info">
                   <strong>{seat.playerName}{isYou ? ' · אתם' : ''}</strong>
-                  <small>{seat.isFolded ? 'פרש/ה מהיד' : <><i aria-hidden="true" />{seat.stack.toLocaleString('he-IL')} צ׳יפים</>}</small>
-                  {seat.currentBet > 0 ? <em>הימור {seat.currentBet.toLocaleString('he-IL')}</em> : null}
+                  <small>{seat.isSittingOut ? 'יושב/ת בחוץ · לא מקבל/ת קלפים' : seat.isFolded ? 'פרש/ה מהיד' : <><i aria-hidden="true" />{seat.stack.toLocaleString('he-IL')} צ׳יפים</>}</small>
+                  {!seat.isSittingOut && seat.currentBet > 0 ? <em>הימור {seat.currentBet.toLocaleString('he-IL')}</em> : null}
                   {uncalledReturnBySeat.has(seat.seatNumber) ? <em>הוחזרו {uncalledReturnBySeat.get(seat.seatNumber)!.toLocaleString('he-IL')} צ׳יפים שלא הושוו</em> : null}
                 </div>
-                {presentedAction ? <span className={`seat-action seat-action-${presentedAction.tone}`} aria-label={`${seat.playerName}: ${presentedAction.label}`}><i aria-hidden="true">{presentedAction.icon}</i><b>{presentedAction.label}</b></span> : null}
+                {presentedAction && !seat.isSittingOut ? <span className={`seat-action seat-action-${presentedAction.tone}`} aria-label={`${seat.playerName}: ${presentedAction.label}`}><i aria-hidden="true">{presentedAction.icon}</i><b>{presentedAction.label}</b></span> : null}
                 {exposed ? <div className="seat-revealed-cards" aria-label={`הקלפים של ${seat.playerName}`}><PlayingCard card={exposed.holeCards[0]} highlighted={winningCardKeys.has(cardKey(exposed.holeCards[0]))} /><PlayingCard card={exposed.holeCards[1]} highlighted={winningCardKeys.has(cardKey(exposed.holeCards[1]))} /></div> : null}
               </article>;
             })}
@@ -877,7 +889,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
         {status.includes('נכשל') || status.includes('לא זמינה') ? <p className="table-status" role="alert">{status}</p> : null}
         {isTurn ? <div className="action-bar" aria-label="פעולות בתור שלכם">
           <button type="button" className="action-fold" disabled={pending} onClick={() => void act({ type: 'fold' })}><span aria-hidden="true">✕</span> פרישה</button>
-          <button type="button" className="action-primary" disabled={pending} onClick={() => void act(view.toCall === 0 ? { type: 'check' } : { type: 'call' })}><span aria-hidden="true">✓</span> {view.toCall === 0 ? 'צ׳ק' : `השוואה · ${view.toCall.toLocaleString('he-IL')}`}</button>
+          <button type="button" className="action-primary" disabled={pending} onClick={() => void act(view.toCall === 0 ? { type: 'check' } : { type: 'call' })}><span aria-hidden="true">✓</span> {view.toCall === 0 ? 'צ׳ק' : callIsAllIn ? `אול אין · ${ownSeat!.stack.toLocaleString('he-IL')}` : `השוואה · ${view.toCall.toLocaleString('he-IL')}`}</button>
           {view.raise ? <button type="button" className="action-raise-toggle" disabled={pending} aria-expanded={showRaiseControls} onClick={() => setShowRaiseControls((shown) => !shown)}><span aria-hidden="true">＋</span> הימור</button> : null}
           {view.raise && showRaiseControls ? <div className="raise-control" aria-label="בחירת סכום העלאה">
             <div className="raise-amount"><span>העלאה עד</span><strong>{(raiseTo ?? view.raise.minRaiseTo).toLocaleString('he-IL')}</strong><small>צ׳יפים</small></div>
@@ -898,7 +910,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
               <button type="button" disabled={pending} onClick={() => selectQuickRaise(1)}>קופה</button>
               <button type="button" disabled={pending} onClick={() => setRaiseTo(view.raise!.maxRaiseTo)}>אול אין</button>
             </div>
-            <button type="button" className="raise-submit" disabled={pending} onClick={submitRaise}><span aria-hidden="true">+</span> העלאה לסכום שנבחר</button>
+            <button type="button" className="raise-submit" disabled={pending} onClick={submitRaise}><span aria-hidden="true">+</span> {(raiseTo ?? view.raise.minRaiseTo) === view.raise.maxRaiseTo ? 'אול אין' : 'העלאה לסכום שנבחר'}</button>
           </div> : null}
         </div> : null}
         {view.allInRunout ? <div className="all-in-runout-panel" role="status">
