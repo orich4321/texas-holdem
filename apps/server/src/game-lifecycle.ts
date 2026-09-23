@@ -74,6 +74,32 @@ export type PlayerActionNotification = Readonly<{
   amount?: number;
 }>;
 
+type PublicShowdownPot = Readonly<{
+  amount: number;
+  eligibleSeatNumbers: readonly number[];
+  winnerSeatNumbers: readonly number[];
+  payouts: readonly Readonly<{ seatNumber: number; amount: number }>[];
+}>;
+
+function publicShowdownPot(hand: StartedHand, pot: ShowdownPot): PublicShowdownPot {
+  const dealerIndex = hand.seats.findIndex((seat) => seat.seatNumber === hand.dealerSeat);
+  if (dealerIndex === -1) throw new Error('Showdown view requires a seated dealer');
+  const share = Math.floor(pot.amount / pot.winnerSeatNumbers.length);
+  let remainder = pot.amount % pot.winnerSeatNumbers.length;
+  const clockwiseWinners = [...pot.winnerSeatNumbers].sort((left, right) => {
+    const leftIndex = hand.seats.findIndex((seat) => seat.seatNumber === left);
+    const rightIndex = hand.seats.findIndex((seat) => seat.seatNumber === right);
+    return ((leftIndex - dealerIndex - 1 + hand.seats.length) % hand.seats.length) - ((rightIndex - dealerIndex - 1 + hand.seats.length) % hand.seats.length);
+  });
+  const payoutBySeat = new Map(clockwiseWinners.map((seatNumber) => [seatNumber, share + (remainder-- > 0 ? 1 : 0)]));
+  return Object.freeze({
+    amount: pot.amount,
+    eligibleSeatNumbers: Object.freeze([...pot.eligibleSeatNumbers]),
+    winnerSeatNumbers: Object.freeze([...pot.winnerSeatNumbers]),
+    payouts: Object.freeze(pot.winnerSeatNumbers.map((seatNumber) => Object.freeze({ seatNumber, amount: payoutBySeat.get(seatNumber)! }))),
+  });
+}
+
 export interface ServerPlayerView {
   /** Durable snapshot sequence used by clients to reject stale delivery. */
   sequence?: number;
@@ -123,7 +149,7 @@ export interface ServerPlayerView {
   }>;
   showdown?: Readonly<{
     winners: readonly { seatNumber: number; playerId: string; playerName: string; chipsWon: number; winningCards?: readonly Card[] }[];
-    pots: readonly Pick<ShowdownPot, 'amount' | 'winnerSeatNumbers'>[];
+    pots: readonly PublicShowdownPot[];
     /** Chips above every opponent's matched commitment, returned to their owner. */
     uncalledReturns: readonly { seatNumber: number; amount: number }[];
   }>;
@@ -308,10 +334,7 @@ export class ServerGameLifecycle {
                   : {}),
               })),
           ),
-          pots: Object.freeze(showdown.pots.map((pot) => Object.freeze({
-            amount: pot.amount,
-            winnerSeatNumbers: Object.freeze([...pot.winnerSeatNumbers]),
-          }))),
+          pots: Object.freeze(showdown.pots.map((pot) => publicShowdownPot(hand, pot))),
           uncalledReturns: Object.freeze(showdown.uncalledReturns.map((returned) => Object.freeze({ ...returned }))),
         }),
       } : {}),

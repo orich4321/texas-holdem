@@ -31,7 +31,7 @@ type PlayerActionNotification = {
 type TimedActionNotification = PlayerActionNotification & { expiresAt: number };
 type Showdown = {
   winners: readonly { seatNumber: number; playerId: string; playerName: string; chipsWon: number; winningCards?: readonly Card[] }[];
-  pots: readonly { amount: number; winnerSeatNumbers: readonly number[] }[];
+  pots: readonly { amount: number; eligibleSeatNumbers: readonly number[]; winnerSeatNumbers: readonly number[]; payouts: readonly { seatNumber: number; amount: number }[] }[];
   uncalledReturns: readonly { seatNumber: number; amount: number }[];
 };
 type ExposedHand = {
@@ -99,6 +99,31 @@ function isExposedHand(value: unknown): value is ExposedHand {
 function isAllInRunout(value: unknown): value is AllInRunout {
   return value !== null && typeof value === 'object'
     && ['flop', 'turn', 'river', 'showdown'].includes((value as Record<string, unknown>).nextStreet as string);
+}
+
+function isShowdown(value: unknown): value is Showdown {
+  if (value === null || typeof value !== 'object') return false;
+  const showdown = value as Record<string, unknown>;
+  return Array.isArray(showdown.winners)
+    && showdown.winners.every((winner) => winner !== null && typeof winner === 'object'
+      && Number.isSafeInteger((winner as Record<string, unknown>).seatNumber)
+      && typeof (winner as Record<string, unknown>).playerName === 'string')
+    && Array.isArray(showdown.pots)
+    && showdown.pots.every((pot) => {
+      if (pot === null || typeof pot !== 'object') return false;
+      const record = pot as Record<string, unknown>;
+      if (!Number.isSafeInteger(record.amount) || (record.amount as number) <= 0
+        || !Array.isArray(record.eligibleSeatNumbers) || !record.eligibleSeatNumbers.every(Number.isSafeInteger)
+        || !Array.isArray(record.winnerSeatNumbers) || !record.winnerSeatNumbers.every(Number.isSafeInteger)
+        || !Array.isArray(record.payouts)) return false;
+      const payouts = record.payouts as unknown[];
+      return payouts.every((payout) => payout !== null && typeof payout === 'object'
+        && Number.isSafeInteger((payout as Record<string, unknown>).seatNumber)
+        && Number.isSafeInteger((payout as Record<string, unknown>).amount)
+        && ((payout as Record<string, unknown>).amount as number) > 0)
+        && payouts.reduce<number>((total, payout) => total + ((payout as Record<string, number>).amount), 0) === record.amount;
+    })
+    && Array.isArray(showdown.uncalledReturns);
 }
 
 function isPlayerAction(value: unknown): value is PlayerAction {
@@ -178,11 +203,16 @@ function isPlayerView(value: unknown): value is PlayerView {
     && Array.isArray(view.exposedHands) && view.exposedHands.every(isExposedHand)
     && (view.raise === undefined || (view.raise !== null && typeof view.raise === 'object'
       && ['minRaiseTo', 'maxRaiseTo', 'minimumIncrement'].every((key) => typeof (view.raise as Record<string, unknown>)[key] === 'number')))
-    && (view.allInRunout === undefined || isAllInRunout(view.allInRunout));
+    && (view.allInRunout === undefined || isAllInRunout(view.allInRunout))
+    && (view.showdown === undefined || isShowdown(view.showdown));
 }
 
 function cardKey(card: Card) {
   return `${card.rank}-${card.suit}`;
+}
+
+function showdownPotLabel(index: number) {
+  return index === 0 ? 'קופה ראשית' : `קופת צד ${index}`;
 }
 
 function PlayingCard({ card, hidden = false, placeholder = false, highlighted = false }: { card?: Card; hidden?: boolean; placeholder?: boolean; highlighted?: boolean }) {
@@ -208,6 +238,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   const [waitingForNextHand, setWaitingForNextHand] = useState(false);
   const [actionNotices, setActionNotices] = useState<readonly TimedActionNotification[]>([]);
   const [seatActions, setSeatActions] = useState<ReadonlyMap<string, PlayerActionNotification>>(() => new Map());
+  const [activePotIndex, setActivePotIndex] = useState(0);
   const [finalSummary, setFinalSummary] = useState<FinalSummary>();
   const [downloadingSummary, setDownloadingSummary] = useState(false);
   const [managingPlayerId, setManagingPlayerId] = useState<string>();
@@ -365,8 +396,17 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   }, [view]);
   const isTurn = Boolean(view && ownSeat && view.currentActorSeat === ownSeat.seatNumber && view.street !== 'showdown' && !view.allInRunout);
   const exposedBySeat = useMemo(() => new Map(view?.exposedHands.map((hand) => [hand.seatNumber, hand])), [view]);
-  const winnerSeatNumbers = useMemo(() => new Set(view?.showdown?.winners.map((winner) => winner.seatNumber) ?? []), [view?.showdown]);
-  const winningCardKeys = useMemo(() => new Set(view?.showdown?.winners.flatMap((winner) => winner.winningCards?.map(cardKey) ?? []) ?? []), [view?.showdown]);
+  const showdownPotSignature = view?.showdown?.pots.map((pot) => `${pot.amount}:${pot.payouts.map((payout) => `${payout.seatNumber}-${payout.amount}`).join(',')}`).join('|') ?? '';
+  const safeActivePotIndex = Math.min(activePotIndex, Math.max(0, (view?.showdown?.pots.length ?? 1) - 1));
+  const activeShowdownPot = view?.showdown?.pots[safeActivePotIndex];
+  const winnerSeatNumbers = useMemo(() => new Set(activeShowdownPot?.winnerSeatNumbers ?? []), [activeShowdownPot]);
+  const eligibleSeatNumbers = useMemo(() => new Set(activeShowdownPot?.eligibleSeatNumbers ?? []), [activeShowdownPot]);
+  const winningCardKeys = useMemo(() => {
+    if (!view?.showdown || !activeShowdownPot) return new Set<string>();
+    return new Set(view.showdown.winners
+      .filter((winner) => activeShowdownPot.winnerSeatNumbers.includes(winner.seatNumber))
+      .flatMap((winner) => winner.winningCards?.map(cardKey) ?? []));
+  }, [view?.showdown, activeShowdownPot]);
   const uncalledReturnBySeat = useMemo(() => new Map(view?.showdown?.uncalledReturns?.map((returned) => [returned.seatNumber, returned.amount]) ?? []), [view?.showdown]);
   const displayedPot = view?.showdown?.pots.reduce((total, pot) => total + pot.amount, 0) ?? view?.pot ?? 0;
   const canRevealAtShowdown = Boolean(
@@ -378,6 +418,17 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
     && !view.exposedHands.some((hand) => hand.playerId === view.playerId),
   );
   const isCurrentHost = Boolean(view && (view.hostPlayerId ? view.hostPlayerId === view.playerId : isHost));
+
+  useEffect(() => {
+    setActivePotIndex(0);
+  }, [showdownPotSignature]);
+
+  useEffect(() => {
+    const potCount = view?.showdown?.pots.length ?? 0;
+    if (potCount < 2 || activePotIndex >= potCount - 1) return;
+    const timer = globalThis.setTimeout(() => setActivePotIndex((current) => Math.min(current + 1, potCount - 1)), 4_500);
+    return () => globalThis.clearTimeout(timer);
+  }, [showdownPotSignature, activePotIndex, view?.showdown?.pots.length]);
 
   useEffect(() => {
     if (!view?.raise) {
@@ -759,6 +810,12 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
     : isTurn
       ? `התור שלכם${view.toCall ? ` · צריך להשוות ${view.toCall.toLocaleString('he-IL')}` : ' · אפשר לעשות צ׳ק'}`
       : undefined;
+  const activePotPayouts = activeShowdownPot?.payouts.map((payout) => ({
+    ...payout,
+    playerName: view.seats.find((seat) => seat.seatNumber === payout.seatNumber)?.playerName ?? `מושב ${payout.seatNumber}`,
+  })) ?? [];
+  const activePotEligibleNames = activeShowdownPot?.eligibleSeatNumbers.map((seatNumber) =>
+    view.seats.find((seat) => seat.seatNumber === seatNumber)?.playerName ?? `מושב ${seatNumber}`) ?? [];
 
   return (
     <main className="table-shell" dir="rtl">
@@ -780,7 +837,12 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
       {turnMessage ? <p className={`turn-banner${isTurn ? ' turn-banner-active' : ''}`} role="status" aria-live="polite"><span aria-hidden="true" />{turnMessage}</p> : null}
       <section className="poker-table" aria-label="שולחן טקסס הולדם">
         <div className="table-felt">
-          <div className="table-pot"><span><i aria-hidden="true" /> {view.showdown ? 'קופה שחולקה' : 'קופה'}</span><strong>{displayedPot.toLocaleString('he-IL')}</strong></div>
+          {activeShowdownPot ? <section className="pot-award-card" key={safeActivePotIndex} aria-live="polite" aria-label={`${showdownPotLabel(safeActivePotIndex)} חולקה`}>
+            <header><span>{showdownPotLabel(safeActivePotIndex)} · {safeActivePotIndex + 1} מתוך {view.showdown!.pots.length}</span><strong><i aria-hidden="true" />{activeShowdownPot.amount.toLocaleString('he-IL')}</strong></header>
+            <p>{activePotPayouts.map((payout) => <span key={payout.seatNumber}><b>{payout.playerName}</b> זוכה ב־{payout.amount.toLocaleString('he-IL')} צ׳יפים</span>)}</p>
+            <small>זכאים לקופה: {activePotEligibleNames.join(' · ')}</small>
+            {view.showdown!.pots.length > 1 ? <nav aria-label="מעבר בין קופות">{view.showdown!.pots.map((pot, index) => <button type="button" className={index === safeActivePotIndex ? 'is-active' : ''} aria-label={`הצגת ${showdownPotLabel(index)}, ${pot.amount.toLocaleString('he-IL')} צ׳יפים`} aria-pressed={index === safeActivePotIndex} onClick={() => setActivePotIndex(index)} key={`${pot.amount}-${index}`}>{index + 1}</button>)}</nav> : null}
+          </section> : <div className="table-pot"><span><i aria-hidden="true" /> קופה</span><strong>{displayedPot.toLocaleString('he-IL')}</strong></div>}
           <div className="community-cards" aria-label="קלפי קהילה">
             {Array.from({ length: 5 }, (_, index) => <PlayingCard key={index} card={view.communityCards[index]} placeholder={!view.communityCards[index]} highlighted={Boolean(view.communityCards[index] && winningCardKeys.has(cardKey(view.communityCards[index])))} />)}
           </div>
@@ -790,9 +852,10 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
               const isActor = seat.seatNumber === view.currentActorSeat && view.street !== 'showdown' && !view.allInRunout;
               const exposed = exposedBySeat.get(seat.seatNumber);
               const isWinner = winnerSeatNumbers.has(seat.seatNumber);
+              const isPotEligible = Boolean(activeShowdownPot && eligibleSeatNumbers.has(seat.seatNumber));
               const seatAction = seatActions.get(seat.playerId);
               const presentedAction = seatAction ? actionPresentation(seatAction) : undefined;
-              return <article key={seat.playerId} className={`table-seat${isYou ? ' table-seat-self' : ''}${isActor ? ' table-seat-active' : ''}${isWinner ? ' table-seat-winner' : ''}${seat.isFolded ? ' table-seat-folded' : ''}`}>
+              return <article key={seat.playerId} className={`table-seat${isYou ? ' table-seat-self' : ''}${isActor ? ' table-seat-active' : ''}${isPotEligible ? ' table-seat-pot-eligible' : ''}${isWinner ? ' table-seat-winner' : ''}${seat.isFolded ? ' table-seat-folded' : ''}`}>
                 <span className={`seat-number${seat.seatNumber === view.dealerSeat ? ' dealer-button' : ''}`}>{seat.seatNumber === view.dealerSeat ? 'D' : seat.seatNumber}</span>
                 <ProfileImage className="table-seat-avatar" dataUrl={seat.avatarDataUrl} fallback={seat.playerName.slice(0, 1)} />
                 <div className="table-seat-info">

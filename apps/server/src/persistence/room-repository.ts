@@ -593,7 +593,7 @@ export class RoomRepository {
             roomId,
             idempotencyKey: `hand-${latest.sequence}`,
             result: {
-              pots: settlement.pots.map((pot) => ({ amount: pot.amount, winnerSeatNumbers: [...pot.winnerSeatNumbers] })),
+              pots: view.showdown?.pots.map((pot) => ({ amount: pot.amount, eligibleSeatNumbers: [...pot.eligibleSeatNumbers], winnerSeatNumbers: [...pot.winnerSeatNumbers], payouts: pot.payouts.map((payout) => ({ ...payout })) })) ?? [],
               uncalledReturns: settlement.uncalledReturns.map((returned) => ({ ...returned })),
               winners: view.showdown?.winners.map((winner) => ({
                 seatNumber: winner.seatNumber,
@@ -675,7 +675,7 @@ export class RoomRepository {
             roomId: room.id,
             idempotencyKey: `hand-${latest.sequence}`,
             result: {
-              pots: settlement.pots.map((pot) => ({ amount: pot.amount, winnerSeatNumbers: [...pot.winnerSeatNumbers] })),
+              pots: showdown?.pots.map((pot) => ({ amount: pot.amount, eligibleSeatNumbers: [...pot.eligibleSeatNumbers], winnerSeatNumbers: [...pot.winnerSeatNumbers], payouts: pot.payouts.map((payout) => ({ ...payout })) })) ?? [],
               uncalledReturns: settlement.uncalledReturns.map((returned) => ({ ...returned })),
               winners: showdown?.winners.map((winner) => ({
                 seatNumber: winner.seatNumber,

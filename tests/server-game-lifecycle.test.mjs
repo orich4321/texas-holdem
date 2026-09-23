@@ -208,12 +208,57 @@ test('showdown view pays only matched chips to a short-stack winner and exposes 
   const view = game.viewFor('short');
 
   assert.equal(view.pot, 0, 'the live pot is empty after authoritative settlement');
-  assert.deepEqual(view.showdown?.pots, [{ amount: 1_000, winnerSeatNumbers: [2] }]);
+  assert.deepEqual(view.showdown?.pots, [{
+    amount: 1_000,
+    eligibleSeatNumbers: [1, 2],
+    winnerSeatNumbers: [2],
+    payouts: [{ seatNumber: 2, amount: 1_000 }],
+  }]);
   assert.deepEqual(view.showdown?.uncalledReturns, [{ seatNumber: 1, amount: 1_000 }]);
   assert.deepEqual(view.seats.map(({ seatNumber, stack }) => ({ seatNumber, stack })), [
     { seatNumber: 1, stack: 1_000 },
     { seatNumber: 2, stack: 1_000 },
   ]);
+});
+
+test('showdown view exposes main and side pots in award order with exact eligible players and payouts', () => {
+  const unequalSeats = [
+    { seatNumber: 1, playerId: 'deep-a', playerName: 'עמוק א', stack: 100 },
+    { seatNumber: 2, playerId: 'short', playerName: 'קצר', stack: 35 },
+    { seatNumber: 3, playerId: 'deep-b', playerName: 'עמוק ב', stack: 100 },
+  ];
+  const preflop = startHand({
+    seats: unequalSeats.map(({ seatNumber, playerId, stack }) => ({ seatNumber, playerId, stack })),
+    dealerSeat: 1,
+    smallBlind: 5,
+    bigBlind: 10,
+    randomInt: (maxExclusive) => maxExclusive - 1,
+  });
+  const showdownHand = runOutAllInToShowdown(advancePreflopToFlop(
+    applyPreflopCall(applyPreflopCall(applyPreflopAllIn(preflop, 1), 2), 3),
+  ));
+  const key = Buffer.from('a server-only snapshot signing key with adequate length', 'utf8');
+  const context = { roomId: 'main-and-side-pot-room', sequence: 7, keyId: 'test-key' };
+  const recovery = hydrateSignedPrivateHandSnapshot(
+    signPrivateHandSnapshot(showdownHand, context, key),
+    context,
+    new Map([[context.keyId, key]]),
+  );
+  const game = ServerGameLifecycle.fromVerifiedRecoveredHand({
+    seats: unequalSeats,
+    dealerSeat: 1,
+    smallBlind: 5,
+    bigBlind: 10,
+  }, recovery);
+  const pots = game.viewFor('short').showdown?.pots;
+
+  assert.equal(pots?.length, 2);
+  assert.deepEqual(pots?.map(({ amount, eligibleSeatNumbers }) => ({ amount, eligibleSeatNumbers })), [
+    { amount: 105, eligibleSeatNumbers: [1, 2, 3] },
+    { amount: 130, eligibleSeatNumbers: [1, 3] },
+  ]);
+  assert.ok(pots?.every((pot) => pot.payouts.reduce((total, payout) => total + payout.amount, 0) === pot.amount));
+  assert.ok(pots?.every((pot) => pot.payouts.every((payout) => pot.winnerSeatNumbers.includes(payout.seatNumber))));
 });
 
 test('the final fold immediately ends the hand and awards the full pot without dealing extra board cards', () => {

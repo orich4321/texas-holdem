@@ -69,6 +69,13 @@ test('mobile table UI keeps the player anchored, reconnects safely, and exposes 
   assert.doesNotMatch(table, /className="showdown-panel"/);
   assert.match(table, /table-seat-winner/);
   assert.match(table, /playing-card-winning/);
+  assert.match(table, /showdownPotLabel\(safeActivePotIndex\)/);
+  assert.match(table, /activeShowdownPot\?\.eligibleSeatNumbers/);
+  assert.match(table, /activeShowdownPot\?\.payouts/);
+  assert.match(table, /setActivePotIndex\(\(current\).*current \+ 1/s);
+  assert.match(table, /4_500/);
+  assert.match(styles, /\.pot-award-card\s*\{/);
+  assert.match(styles, /\.table-seat-pot-eligible\s*\{/);
   assert.match(table, /view\.seats\.filter\(\(seat\) => !seat\.isFolded\)\.length >= 2/);
   assert.match(table, /'לחשוף את היד שלי'/);
   assert.match(styles, /\.table-seat-winner\s*\{/);
