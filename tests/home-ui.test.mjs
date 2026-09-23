@@ -93,6 +93,18 @@ test('home typography rules are scoped and use logical alignment', async () => {
   assert.doesNotMatch(styles, /text-align:\s*right/);
 });
 
+test('the poker palette uses restrained felt, brass, and action colors without neon mint', async () => {
+  const styles = await source('apps/web/app/globals.css');
+
+  assert.match(styles, /--felt:\s*#164936/);
+  assert.match(styles, /--brass-button:\s*#8d6c3d/);
+  assert.match(styles, /--action:\s*#3d604e/);
+  assert.doesNotMatch(
+    styles,
+    /#(?:8ceac8|40ca98|54d7a5|69d7ac|51d3a5|43cf9d|3bc997|2fbd8d|80e8c3|96eed0)\b/i,
+  );
+});
+
 test('room creation posts the normalized nickname and host-selected table settings before navigating to the matching host route', async () => {
   const { submitRoomCreation } = await roomCreation();
   const requests = [];
