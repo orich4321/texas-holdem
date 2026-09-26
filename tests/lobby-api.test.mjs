@@ -88,6 +88,7 @@ test('mobile table UI keeps the player anchored, reconnects safely, and exposes 
   assert.match(table, /בחרו קלף לחשיפה/);
   assert.match(table, /JSON\.stringify\(\{ cardIndex \}\)/);
   assert.match(table, /setSeatActions\(new Map\(\)\)/);
+  assert.match(table, /if \(view\?\.street !== 'showdown'\) return;\s*setActionNotices\(\[\]\);\s*setSeatActions\(new Map\(\)\);/s);
   assert.match(styles, /\.reveal-card-picker\s*\{/);
   assert.match(styles, /\.table-seat-winner\s*\{/);
   assert.match(styles, /\.playing-card-winning\s*\{/);

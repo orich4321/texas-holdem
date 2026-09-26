@@ -403,6 +403,12 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
     return () => globalThis.clearTimeout(timer);
   }, [actionNotices]);
 
+  useEffect(() => {
+    if (view?.street !== 'showdown') return;
+    setActionNotices([]);
+    setSeatActions(new Map());
+  }, [view?.street]);
+
   const ownSeat = useMemo(() => view?.seats.find((seat) => seat.playerId === view.playerId), [view]);
   const bustedPlayers = management?.players.filter((player) => player.rebuyDecisionPending) ?? [];
   const selectedRebuyPlayer = bustedPlayers.find((player) => player.id === rebuyPlayerId);
