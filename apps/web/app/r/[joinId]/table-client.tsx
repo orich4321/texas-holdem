@@ -262,6 +262,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   const [playersOpen, setPlayersOpen] = useState(false);
   const [management, setManagement] = useState<ManagementView>();
   const [managementBusy, setManagementBusy] = useState(false);
+  const [rebuyPlayerId, setRebuyPlayerId] = useState<string>();
   const [smallBlind, setSmallBlind] = useState('1');
   const [bigBlind, setBigBlind] = useState('2');
   const [topUpAmounts, setTopUpAmounts] = useState<Record<string, string>>({});
@@ -404,6 +405,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
 
   const ownSeat = useMemo(() => view?.seats.find((seat) => seat.playerId === view.playerId), [view]);
   const bustedPlayers = management?.players.filter((player) => player.rebuyDecisionPending) ?? [];
+  const selectedRebuyPlayer = bustedPlayers.find((player) => player.id === rebuyPlayerId);
   const orderedSeats = useMemo(() => {
     if (!view) return [];
     const ownIndex = view.seats.findIndex((seat) => seat.playerId === view.playerId);
@@ -714,6 +716,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
       if (!response.ok) throw new Error('Chip adjustment unavailable');
       await loadManagement();
       setTopUpAmounts((current) => ({ ...current, [targetPlayerId]: '' }));
+      setRebuyPlayerId(undefined);
       setStatus(`${amount.toLocaleString('he-IL')} ז׳יטונים יתווספו ל${playerName} ביד הבאה.`);
     } catch { setStatus('לא הצלחנו לתזמן את תוספת הז׳יטונים.'); } finally { setManagementBusy(false); }
   }
@@ -740,6 +743,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
       });
       if (!response.ok) throw new Error('Rebuy decision unavailable');
       await loadManagement();
+      if (rebuyPlayerId === targetPlayerId) setRebuyPlayerId(undefined);
       setStatus(`${playerName} מחוץ לשולחן. אפשר להחזיר אותו בהמשך דרך ניהול השולחן.`);
     } catch { setStatus('לא הצלחנו לעדכן את החלטת המארח. נסו שוב.'); } finally { setManagementBusy(false); }
   }
@@ -877,6 +881,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
               const isPotEligible = Boolean(activeShowdownPot && eligibleSeatNumbers.has(seat.seatNumber));
               const seatAction = seatActions.get(seat.playerId);
               const presentedAction = seatAction ? actionPresentation(seatAction) : undefined;
+              const pendingRebuy = isCurrentHost ? bustedPlayers.find((player) => player.id === seat.playerId) : undefined;
               return <article key={seat.playerId} className={`table-seat${isYou ? ' table-seat-self' : ''}${isActor ? ' table-seat-active' : ''}${isPotEligible ? ' table-seat-pot-eligible' : ''}${isWinner ? ' table-seat-winner' : ''}${seat.isFolded ? ' table-seat-folded' : ''}${seat.isSittingOut ? ' table-seat-sitting-out' : ''}`}>
                 <span className="seat-roles" aria-label={seat.isSittingOut ? `${seat.playerName} לא משתתף ביד` : `תפקידי ${seat.playerName}`}>
                   {seat.isSittingOut ? <i className="seat-role seat-role-out">OUT</i> : <>
@@ -894,6 +899,10 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
                 </div>
                 {presentedAction && !seat.isSittingOut ? <span className={`seat-action seat-action-${presentedAction.tone}`} aria-label={`${seat.playerName}: ${presentedAction.label}`}><i aria-hidden="true">{presentedAction.icon}</i><b>{presentedAction.label}</b></span> : null}
                 {exposed ? <div className="seat-revealed-cards" aria-label={`הקלפים שנחשפו של ${seat.playerName}`}>{exposedCards(exposed).map(({ cardIndex, card }) => <PlayingCard key={cardIndex} card={card} highlighted={winningCardKeys.has(cardKey(card))} />)}</div> : null}
+                {pendingRebuy ? <div className="seat-rebuy-actions" aria-label={`החלטת ז׳יטונים עבור ${seat.playerName}`}><button type="button" disabled={managementBusy} onClick={() => {
+                  setTopUpAmounts((current) => ({ ...current, [pendingRebuy.id]: current[pendingRebuy.id] ?? '' }));
+                  setRebuyPlayerId(pendingRebuy.id);
+                }}>＋ ז׳יטונים</button><button type="button" className="seat-rebuy-decline" disabled={managementBusy} onClick={() => void declineRebuy(pendingRebuy.id, pendingRebuy.displayName)}>לא כרגע</button></div> : null}
               </article>;
             })}
           </div>
@@ -944,9 +953,12 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
             : isCurrentHost ? <button type="button" className="next-hand-button" disabled={startingNextHand || bustedPlayers.length > 0} onClick={() => void startNextHand()}>{startingNextHand ? 'מחלקים…' : bustedPlayers.length ? 'קודם מחליטים לגבי שחקנים שהתרוקנו' : management?.nextHandIsFinal ? 'התחלת היד האחרונה' : 'היד הבאה'}</button> : <small>המארח יכול להתחיל את היד הבאה.</small>}
         </div> : null}
       </section>
-      {isCurrentHost && view.street === 'showdown' && !view.finalSummaryVisible && bustedPlayers.length > 0 ? <div className="rebuy-backdrop"><section className="rebuy-dialog" role="dialog" aria-modal="true" aria-labelledby="rebuy-title">
-        <p>החלטת מארח בין ידיים</p><h2 id="rebuy-title">נגמרו לשחקנים הז׳יטונים</h2><small>אפשר להחזיר אותם ליד הבאה, או להשאיר אותם בחדר מחוץ לשולחן. גם בהמשך תוכלו להוסיף להם ז׳יטונים מאותו חשבון שחקן.</small>
-        {bustedPlayers.map((player) => <div key={player.id} className="rebuy-player"><strong>{player.displayName}{player.isHost ? ' · אתם' : ''}</strong><div><input aria-label={`כמות ז׳יטונים ל${player.displayName}`} type="number" inputMode="numeric" min="1" placeholder="כמות ז׳יטונים" value={topUpAmounts[player.id] ?? ''} onChange={(event) => setTopUpAmounts((current) => ({ ...current, [player.id]: event.target.value }))} /><button type="button" disabled={managementBusy || parsePositiveInteger(topUpAmounts[player.id] ?? '') === undefined} onClick={() => void addChips(player.id, player.displayName, parsePositiveInteger(topUpAmounts[player.id] ?? '') ?? 0)}>הוספת ז׳יטונים</button><button type="button" className="rebuy-decline" disabled={managementBusy} onClick={() => void declineRebuy(player.id, player.displayName)}>לא להוסיף כרגע</button></div></div>)}
+      {isCurrentHost && view.street === 'showdown' && !view.finalSummaryVisible && selectedRebuyPlayer ? <div className="rebuy-amount-backdrop" role="presentation" onMouseDown={(event) => {
+        if (event.target === event.currentTarget && !managementBusy) setRebuyPlayerId(undefined);
+      }}><section className="rebuy-amount-dialog" role="dialog" aria-modal="true" aria-labelledby="rebuy-amount-title">
+        <header><div><small>החזרה ליד הבאה</small><h2 id="rebuy-amount-title">ז׳יטונים ל{selectedRebuyPlayer.displayName}</h2></div><button type="button" aria-label="סגירת החלון" disabled={managementBusy} onClick={() => setRebuyPlayerId(undefined)}>×</button></header>
+        <label>כמות ז׳יטונים<input autoFocus aria-label={`כמות ז׳יטונים ל${selectedRebuyPlayer.displayName}`} type="number" inputMode="numeric" min="1" placeholder="לדוגמה: 500" value={topUpAmounts[selectedRebuyPlayer.id] ?? ''} onChange={(event) => setTopUpAmounts((current) => ({ ...current, [selectedRebuyPlayer.id]: event.target.value }))} /></label>
+        <div><button type="button" className="rebuy-amount-cancel" disabled={managementBusy} onClick={() => setRebuyPlayerId(undefined)}>ביטול</button><button type="button" disabled={managementBusy || parsePositiveInteger(topUpAmounts[selectedRebuyPlayer.id] ?? '') === undefined} onClick={() => void addChips(selectedRebuyPlayer.id, selectedRebuyPlayer.displayName, parsePositiveInteger(topUpAmounts[selectedRebuyPlayer.id] ?? '') ?? 0)}>{managementBusy ? 'מוסיפים…' : 'הוספה ליד הבאה'}</button></div>
       </section></div> : null}
       {continueDialogOpen && isCurrentHost && view?.gameCompleted && !view.finalSummaryVisible ? <div className="modal-backdrop" role="presentation" onMouseDown={(event) => {
         if (event.target === event.currentTarget && !continuingHand) setContinueDialogOpen(false);

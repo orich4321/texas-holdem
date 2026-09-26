@@ -98,6 +98,13 @@ test('mobile table UI keeps the player anchored, reconnects safely, and exposes 
   assert.match(styles, /\.table-seat:nth-child\(3\)\s*\{\s*top:\s*61%/);
   assert.match(styles, /\.table-seat\s*\{[^}]*width:\s*clamp\(104px,[^}]*min-height:\s*clamp\(60px/s);
   assert.match(styles, /\.table-seat-avatar\s*\{[^}]*width:\s*clamp\(34px,[^}]*background-size:\s*cover/s);
+  assert.match(table, /className="seat-rebuy-actions"/);
+  assert.match(table, /＋ ז׳יטונים/);
+  assert.match(table, /לא כרגע/);
+  assert.match(table, /className="rebuy-amount-dialog"/);
+  assert.doesNotMatch(table, /className="rebuy-backdrop"/);
+  assert.match(styles, /\.seat-rebuy-actions\s*\{/);
+  assert.match(styles, /\.rebuy-amount-backdrop\s*\{[^}]*background:\s*rgba\(2,8,5,\.18\)/s);
   const seatNameRule = styles.match(/\.table-seat strong\s*\{([^}]*)\}/)?.[1] ?? '';
   assert.match(seatNameRule, /overflow-wrap:\s*anywhere/);
   assert.match(seatNameRule, /white-space:\s*normal/);

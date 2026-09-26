@@ -51,6 +51,32 @@ function createDb({ latest = { sequence: 0, state: initial }, currentHandStart =
   return { calls, $transaction: async (callback) => callback(tx) };
 }
 
+test('a busted seat stays visually active while the host reviews the hand, then sits out after declining a rebuy', async () => {
+  const allInHand = applyPreflopCall(
+    applyPreflopAllIn(hydrateSignedPrivateHandSnapshot(initial, { roomId: room.id, sequence: 0 }, keyring).hand, 1),
+    2,
+  );
+  const showdownHand = runOutAllInToShowdown(advancePreflopToFlop(allInHand));
+  const snapshot = signPrivateHandSnapshot(showdownHand, { roomId: room.id, sequence: 4, keyId }, key);
+  let decisionPending = true;
+  const players = room.players.slice(0, 2).map((player) => ({
+    ...player,
+    currentStack: player.id === 'player-1' ? 0 : 200,
+    isSittingOut: player.id === 'player-1',
+    rebuyDecisionPending: player.id === 'player-1' && decisionPending,
+  }));
+  const repository = new RoomRepository({
+    room: { findFirst: async () => ({ status: 'IN_PROGRESS', hostPlayerId: room.hostPlayerId, finalSummaryVisible: false, players: players.map((player) => ({ ...player, rebuyDecisionPending: player.id === 'player-1' && decisionPending })), events: [] }) },
+    gameSnapshot: { findFirst: async () => ({ sequence: 4, state: snapshot }) },
+  }, undefined, undefined, undefined, keyring);
+
+  const pendingView = await repository.recoverLatestPlayerViewForPlayer(room.id, 'host-id');
+  assert.equal(pendingView?.seats.find((seat) => seat.playerId === 'player-1')?.isSittingOut, false);
+  decisionPending = false;
+  const declinedView = await repository.recoverLatestPlayerViewForPlayer(room.id, 'host-id');
+  assert.equal(declinedView?.seats.find((seat) => seat.playerId === 'player-1')?.isSittingOut, true);
+});
+
 test('accepted authoritative action persists a minimal event and next signed snapshot atomically', async () => {
   const db = createDb();
   const repository = new RoomRepository(db, undefined, undefined, undefined, keyring);

@@ -47,6 +47,7 @@ type RoomViewPlayer = Readonly<{
   avatarDataUrl: string | null;
   currentStack: number;
   isSittingOut: boolean;
+  rebuyDecisionPending: boolean;
 }>;
 
 const MAX_ACCESS_TOKEN_ATTEMPTS = 5;
@@ -225,7 +226,7 @@ export class RoomRepository {
       ? roomPlayers.map((player, index) => {
         const activeSeat = activeSeats.get(player.id);
         return Object.freeze(activeSeat
-          ? { ...activeSeat, isSittingOut: player.isSittingOut }
+          ? { ...activeSeat, isSittingOut: player.isSittingOut && !player.rebuyDecisionPending }
           : {
             seatNumber: -(index + 1),
             playerId: player.id,
@@ -500,7 +501,7 @@ export class RoomRepository {
           finalSummaryVisible: true,
           players: {
             orderBy: { createdAt: 'asc' },
-            select: { id: true, displayName: true, avatarDataUrl: true, currentStack: true, isSittingOut: true },
+            select: { id: true, displayName: true, avatarDataUrl: true, currentStack: true, isSittingOut: true, rebuyDecisionPending: true },
           },
           events: {
             where: { type: 'PLAYER_ACTION' },
@@ -539,7 +540,7 @@ export class RoomRepository {
     if (!room.hostPlayerId) return null;
     const baseView = lifecycle.viewFor(seatedInHand ? playerId : hand.seats[0].playerId);
     const safeView = seatedInHand
-      ? { ...baseView, isSittingOut: member?.isSittingOut ?? false }
+      ? { ...baseView, isSittingOut: (member?.isSittingOut ?? false) && !(member?.rebuyDecisionPending ?? false) }
       : { ...baseView, playerId, holeCards: [] as const, toCall: 0, raise: undefined, isSittingOut: true };
     const latestAction = room.events[0]?.sequence === latest.sequence
       ? actionNotificationFromEvent(room.events[0], room.players)
@@ -554,7 +555,7 @@ export class RoomRepository {
     return this.db.$transaction(async (tx) => {
       const room = await tx.room.findUnique({
         where: { id: roomId },
-        select: { status: true, hostPlayerId: true, players: { where: { leftAt: null }, orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, avatarDataUrl: true, currentStack: true, isSittingOut: true } } },
+        select: { status: true, hostPlayerId: true, players: { where: { leftAt: null }, orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, avatarDataUrl: true, currentStack: true, isSittingOut: true, rebuyDecisionPending: true } } },
       });
       if (!room || !room.hostPlayerId || room.status !== 'IN_PROGRESS' || !room.players.some((player) => player.id === playerId)) throw new Error('Game action is unavailable');
 
@@ -685,7 +686,7 @@ export class RoomRepository {
     return this.db.$transaction(async (tx) => {
       const room = await tx.room.findUnique({
         where: { joinId },
-        select: { id: true, hostPlayerId: true, status: true, players: { where: { leftAt: null }, orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, avatarDataUrl: true, currentStack: true, isSittingOut: true } } },
+        select: { id: true, hostPlayerId: true, status: true, players: { where: { leftAt: null }, orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, avatarDataUrl: true, currentStack: true, isSittingOut: true, rebuyDecisionPending: true } } },
       });
       if (!room || room.hostPlayerId !== hostPlayerId || room.status !== 'IN_PROGRESS') throw new Error('All-in board is unavailable');
       const locked = await tx.room.updateMany({ where: { id: room.id, hostPlayerId, status: 'IN_PROGRESS' }, data: { updatedAt: new Date() } });
@@ -759,7 +760,7 @@ export class RoomRepository {
     return this.db.$transaction(async (tx) => {
       const room = await tx.room.findUnique({
         where: { id: roomId },
-        select: { status: true, hostPlayerId: true, finalSummaryVisible: true, players: { where: { leftAt: null }, orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, avatarDataUrl: true, currentStack: true, isSittingOut: true } } },
+        select: { status: true, hostPlayerId: true, finalSummaryVisible: true, players: { where: { leftAt: null }, orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, avatarDataUrl: true, currentStack: true, isSittingOut: true, rebuyDecisionPending: true } } },
       });
       if (!room || !room.hostPlayerId || (room.status !== 'IN_PROGRESS' && (room.status !== 'COMPLETED' || room.finalSummaryVisible)) || !room.players.some((player) => player.id === playerId)) throw new Error('Showdown reveal is unavailable');
       const locked = await tx.room.updateMany({ where: { id: roomId, status: room.status }, data: { updatedAt: new Date() } });
