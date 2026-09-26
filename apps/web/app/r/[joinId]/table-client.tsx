@@ -38,7 +38,8 @@ type ExposedHand = {
   seatNumber: number;
   playerId: string;
   playerName: string;
-  holeCards: readonly [Card, Card];
+  cards?: readonly { cardIndex: 0 | 1; card: Card }[];
+  holeCards?: readonly [Card, Card];
   reason: 'all-in' | 'winner' | 'voluntary';
 };
 type AllInRunout = { nextStreet: 'flop' | 'turn' | 'river' | 'showdown' };
@@ -91,11 +92,21 @@ function isCard(value: unknown): value is Card {
 function isExposedHand(value: unknown): value is ExposedHand {
   if (value === null || typeof value !== 'object') return false;
   const hand = value as Record<string, unknown>;
+  const cards = Array.isArray(hand.cards) && hand.cards.length >= 1 && hand.cards.length <= 2
+    && hand.cards.every((entry) => entry !== null && typeof entry === 'object'
+      && ((entry as Record<string, unknown>).cardIndex === 0 || (entry as Record<string, unknown>).cardIndex === 1)
+      && isCard((entry as Record<string, unknown>).card))
+    && new Set(hand.cards.map((entry) => (entry as Record<string, unknown>).cardIndex)).size === hand.cards.length;
+  const legacyHand = Array.isArray(hand.holeCards) && hand.holeCards.length === 2 && hand.holeCards.every(isCard);
   return typeof hand.seatNumber === 'number'
     && typeof hand.playerId === 'string'
     && typeof hand.playerName === 'string'
     && (hand.reason === 'all-in' || hand.reason === 'winner' || hand.reason === 'voluntary')
-    && Array.isArray(hand.holeCards) && hand.holeCards.length === 2 && hand.holeCards.every(isCard);
+    && (cards || legacyHand);
+}
+
+function exposedCards(hand: ExposedHand): readonly { cardIndex: 0 | 1; card: Card }[] {
+  return hand.cards ?? hand.holeCards?.map((card, cardIndex) => ({ cardIndex: cardIndex as 0 | 1, card })) ?? [];
 }
 
 function isAllInRunout(value: unknown): value is AllInRunout {
@@ -238,7 +249,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   const [continueDialogOpen, setContinueDialogOpen] = useState(false);
   const [continuingHand, setContinuingHand] = useState(false);
   const [advancingRunout, setAdvancingRunout] = useState(false);
-  const [revealingHand, setRevealingHand] = useState(false);
+  const [revealingCardIndex, setRevealingCardIndex] = useState<0 | 1>();
   const [showRaiseControls, setShowRaiseControls] = useState(false);
   const [waitingForNextHand, setWaitingForNextHand] = useState(false);
   const [actionNotices, setActionNotices] = useState<readonly TimedActionNotification[]>([]);
@@ -374,11 +385,11 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
       const active = current.filter((entry) => entry.expiresAt > receivedAt && entry.sequence !== notice.sequence);
       return [{ ...notice, expiresAt: receivedAt + (streetChanged ? 5_000 : 10_000) }, ...(streetChanged ? [] : active)];
     });
-    setSeatActions((current) => {
-      const next = streetChanged ? new Map<string, PlayerActionNotification>() : new Map(current);
-      next.set(notice.actorPlayerId, notice);
-      return next;
-    });
+    if (streetChanged) {
+      setSeatActions(new Map());
+    } else {
+      setSeatActions((current) => new Map(current).set(notice.actorPlayerId, notice));
+    }
   }, [view]);
 
   useEffect(() => {
@@ -402,6 +413,11 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   const isTurn = Boolean(view && ownSeat && view.currentActorSeat === ownSeat.seatNumber && view.street !== 'showdown' && !view.allInRunout);
   const callIsAllIn = Boolean(isTurn && ownSeat && view && view.toCall > 0 && view.toCall >= ownSeat.stack);
   const exposedBySeat = useMemo(() => new Map(view?.exposedHands.map((hand) => [hand.seatNumber, hand])), [view]);
+  const ownExposedCardIndexes = useMemo(() => {
+    const exposedHand = view?.exposedHands.find((hand) => hand.playerId === view.playerId);
+    return new Set(exposedHand ? exposedCards(exposedHand).map((entry) => entry.cardIndex) : []);
+  }, [view]);
+  const ownHoleCards = view?.holeCards.length === 2 ? view.holeCards : undefined;
   const showdownPotSignature = view?.showdown?.pots.map((pot) => `${pot.amount}:${pot.payouts.map((payout) => `${payout.seatNumber}-${payout.amount}`).join(',')}`).join('|') ?? '';
   const safeActivePotIndex = Math.min(activePotIndex, Math.max(0, (view?.showdown?.pots.length ?? 1) - 1));
   const activeShowdownPot = view?.showdown?.pots[safeActivePotIndex];
@@ -419,8 +435,8 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
     view?.street === 'showdown'
     && !view.finalSummaryVisible
     && ownSeat
-    && view.holeCards.length === 2
-    && !view.exposedHands.some((hand) => hand.playerId === view.playerId),
+    && ownHoleCards
+    && ownExposedCardIndexes.size < 2,
   );
   const isCurrentHost = Boolean(view && (view.hostPlayerId ? view.hostPlayerId === view.playerId : isHost));
 
@@ -786,21 +802,22 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
     }
   }
 
-  async function revealHand() {
-    if (view?.street !== 'showdown' || revealingHand) return;
-    setRevealingHand(true);
+  async function revealCard(cardIndex: 0 | 1) {
+    if (view?.street !== 'showdown' || revealingCardIndex !== undefined || ownExposedCardIndexes.has(cardIndex)) return;
+    setRevealingCardIndex(cardIndex);
     try {
       const response = await globalThis.fetch(`${SERVER_URL}/rooms/${encodeURIComponent(joinId)}/game/reveal`, {
         method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ cardIndex }),
       });
       const next = await response.json();
       if (!response.ok || !isPlayerView(next)) throw new Error('Showdown reveal unavailable');
       setView(next);
-      setStatus('הקלפים שלכם נחשפו לשולחן.');
+      setStatus('הקלף שבחרתם נחשף לשולחן.');
     } catch {
-      setStatus('לא הצלחנו לחשוף את הקלפים. נסו שוב.');
+      setStatus('לא הצלחנו לחשוף את הקלף. נסו שוב.');
     } finally {
-      setRevealingHand(false);
+      setRevealingCardIndex(undefined);
     }
   }
 
@@ -839,15 +856,15 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
         <div className="table-round"><span>שלב במשחק</span><strong>{streetNames[view.street]}</strong></div>
         <div className="table-header-pot"><span>{view.showdown ? 'קופה שחולקה' : 'קופה נוכחית'}</span><strong><i aria-hidden="true" />{displayedPot.toLocaleString('he-IL')}</strong></div>
       </header>
-      {turnMessage ? <p className={`turn-banner${isTurn ? ' turn-banner-active' : ''}`} role="status" aria-live="polite"><span aria-hidden="true" />{turnMessage}</p> : null}
+      {activeShowdownPot ? <section className="pot-award-card" key={safeActivePotIndex} aria-live="polite" aria-label={`${showdownPotLabel(safeActivePotIndex)} חולקה`}>
+        <header><span>{showdownPotLabel(safeActivePotIndex)} · {safeActivePotIndex + 1} מתוך {view.showdown!.pots.length}</span><strong><i aria-hidden="true" />{activeShowdownPot.amount.toLocaleString('he-IL')}</strong></header>
+        <p>{activePotPayouts.map((payout) => <span key={payout.seatNumber}><b>{payout.playerName}</b> זוכה ב־{payout.amount.toLocaleString('he-IL')} צ׳יפים</span>)}</p>
+        <small>זכאים לקופה: {activePotEligibleNames.join(' · ')}</small>
+        {view.showdown!.pots.length > 1 ? <nav aria-label="מעבר בין קופות">{view.showdown!.pots.map((pot, index) => <button type="button" className={index === safeActivePotIndex ? 'is-active' : ''} aria-label={`הצגת ${showdownPotLabel(index)}, ${pot.amount.toLocaleString('he-IL')} צ׳יפים`} aria-pressed={index === safeActivePotIndex} onClick={() => setActivePotIndex(index)} key={`${pot.amount}-${index}`}>{index + 1}</button>)}</nav> : null}
+      </section> : turnMessage ? <p className={`turn-banner${isTurn ? ' turn-banner-active' : ''}`} role="status" aria-live="polite"><span aria-hidden="true" />{turnMessage}</p> : null}
       <section className="poker-table" aria-label="שולחן טקסס הולדם">
         <div className="table-felt">
-          {activeShowdownPot ? <section className="pot-award-card" key={safeActivePotIndex} aria-live="polite" aria-label={`${showdownPotLabel(safeActivePotIndex)} חולקה`}>
-            <header><span>{showdownPotLabel(safeActivePotIndex)} · {safeActivePotIndex + 1} מתוך {view.showdown!.pots.length}</span><strong><i aria-hidden="true" />{activeShowdownPot.amount.toLocaleString('he-IL')}</strong></header>
-            <p>{activePotPayouts.map((payout) => <span key={payout.seatNumber}><b>{payout.playerName}</b> זוכה ב־{payout.amount.toLocaleString('he-IL')} צ׳יפים</span>)}</p>
-            <small>זכאים לקופה: {activePotEligibleNames.join(' · ')}</small>
-            {view.showdown!.pots.length > 1 ? <nav aria-label="מעבר בין קופות">{view.showdown!.pots.map((pot, index) => <button type="button" className={index === safeActivePotIndex ? 'is-active' : ''} aria-label={`הצגת ${showdownPotLabel(index)}, ${pot.amount.toLocaleString('he-IL')} צ׳יפים`} aria-pressed={index === safeActivePotIndex} onClick={() => setActivePotIndex(index)} key={`${pot.amount}-${index}`}>{index + 1}</button>)}</nav> : null}
-          </section> : <div className="table-pot"><span><i aria-hidden="true" /> קופה</span><strong>{displayedPot.toLocaleString('he-IL')}</strong></div>}
+          <div className="table-pot"><span><i aria-hidden="true" /> {view.showdown ? 'סך הקופות' : 'קופה'}</span><strong>{displayedPot.toLocaleString('he-IL')}</strong></div>
           <div className="community-cards" aria-label="קלפי קהילה">
             {Array.from({ length: 5 }, (_, index) => <PlayingCard key={index} card={view.communityCards[index]} placeholder={!view.communityCards[index]} highlighted={Boolean(view.communityCards[index] && winningCardKeys.has(cardKey(view.communityCards[index])))} />)}
           </div>
@@ -876,7 +893,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
                   {uncalledReturnBySeat.has(seat.seatNumber) ? <em>הוחזרו {uncalledReturnBySeat.get(seat.seatNumber)!.toLocaleString('he-IL')} צ׳יפים שלא הושוו</em> : null}
                 </div>
                 {presentedAction && !seat.isSittingOut ? <span className={`seat-action seat-action-${presentedAction.tone}`} aria-label={`${seat.playerName}: ${presentedAction.label}`}><i aria-hidden="true">{presentedAction.icon}</i><b>{presentedAction.label}</b></span> : null}
-                {exposed ? <div className="seat-revealed-cards" aria-label={`הקלפים של ${seat.playerName}`}><PlayingCard card={exposed.holeCards[0]} highlighted={winningCardKeys.has(cardKey(exposed.holeCards[0]))} /><PlayingCard card={exposed.holeCards[1]} highlighted={winningCardKeys.has(cardKey(exposed.holeCards[1]))} /></div> : null}
+                {exposed ? <div className="seat-revealed-cards" aria-label={`הקלפים שנחשפו של ${seat.playerName}`}>{exposedCards(exposed).map(({ cardIndex, card }) => <PlayingCard key={cardIndex} card={card} highlighted={winningCardKeys.has(cardKey(card))} />)}</div> : null}
               </article>;
             })}
           </div>
@@ -917,7 +934,11 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
           {isCurrentHost ? <button type="button" disabled={advancingRunout} onClick={() => void advanceAllInRunout()}>{advancingRunout ? 'חושפים…' : `חשיפת ${streetNames[view.allInRunout.nextStreet]}`}</button> : <small>ממתינים למארח.</small>}
         </div> : null}
         {view.showdown && (!view.gameCompleted || !view.finalSummaryVisible) ? <div className="between-hands-controls" aria-label="פעולות בין ידיים">
-          {canRevealAtShowdown ? <button type="button" className="reveal-hand-button" disabled={revealingHand} onClick={() => void revealHand()}>{revealingHand ? 'חושפים…' : 'לחשוף את היד שלי'}</button> : null}
+          {canRevealAtShowdown && ownHoleCards ? <div className="reveal-card-picker"><span>בחרו קלף לחשיפה</span><div>{ownHoleCards.map((card, index) => {
+            const cardIndex = index as 0 | 1;
+            const alreadyExposed = ownExposedCardIndexes.has(cardIndex);
+            return <button type="button" key={cardIndex} disabled={alreadyExposed || revealingCardIndex !== undefined} aria-label={alreadyExposed ? `קלף ${index + 1} כבר חשוף` : `חשיפת קלף ${index + 1}`} onClick={() => void revealCard(cardIndex)}><PlayingCard card={card} /><small>{alreadyExposed ? 'נחשף' : revealingCardIndex === cardIndex ? 'חושפים…' : 'חשיפה'}</small></button>;
+          })}</div></div> : null}
           {view.gameCompleted
             ? isCurrentHost ? <div className="final-hand-decisions"><button type="button" disabled={revealingSummary || continuingHand} onClick={() => void revealFinalSummary()}>{revealingSummary ? 'מציגים…' : 'הצגת הסיכום'}</button><button type="button" disabled={revealingSummary || continuingHand} onClick={() => setContinueDialogOpen(true)}>עוד יד</button></div> : <small>היד האחרונה הסתיימה. ממתינים להחלטת המארח.</small>
             : isCurrentHost ? <button type="button" className="next-hand-button" disabled={startingNextHand || bustedPlayers.length > 0} onClick={() => void startNextHand()}>{startingNextHand ? 'מחלקים…' : bustedPlayers.length ? 'קודם מחליטים לגבי שחקנים שהתרוקנו' : management?.nextHandIsFinal ? 'התחלת היד האחרונה' : 'היד הבאה'}</button> : <small>המארח יכול להתחיל את היד הבאה.</small>}

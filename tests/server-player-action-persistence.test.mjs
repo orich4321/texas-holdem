@@ -195,7 +195,7 @@ test('the host persists one all-in board street without exposing cards in the ev
   assert.equal(persisted.hand.communityCards.length, 3);
 });
 
-test('a voluntary showdown reveal is signed into the next snapshot without accepting client cards', async () => {
+test('a voluntary single-card showdown reveal is signed into the next snapshot without accepting client cards', async () => {
   const allInPreflop = applyPreflopCall(
     applyPreflopAllIn(hydrateSignedPrivateHandSnapshot(initial, { roomId: room.id, sequence: 0 }, keyring).hand, 1),
     2,
@@ -205,15 +205,15 @@ test('a voluntary showdown reveal is signed into the next snapshot without accep
   const db = createDb({ latest: { sequence: 0, state: showdownSnapshot } });
   const repository = new RoomRepository(db, undefined, undefined, undefined, keyring);
 
-  const result = await repository.revealShowdownHandAtomically({ roomId: room.id, playerId: 'player-1' });
+  const result = await repository.revealShowdownCardAtomically({ roomId: room.id, playerId: 'player-1', cardIndex: 0 });
 
   assert.equal(result.sequence, 1);
   assert.deepEqual(db.calls.find(([name]) => name === 'gameEvent.create')[1].data, {
-    roomId: room.id, sequence: 1, type: 'SHOWDOWN_HAND_REVEALED', payload: { playerId: 'player-1' },
+    roomId: room.id, sequence: 1, type: 'SHOWDOWN_CARD_REVEALED', payload: { playerId: 'player-1', cardIndex: 0 },
   });
   assert.equal(JSON.stringify(db.calls.find(([name]) => name === 'gameEvent.create')[1].data).includes('holeCards'), false);
   const persisted = hydrateSignedPrivateHandSnapshot(db.calls.find(([name]) => name === 'gameSnapshot.create')[1].data.state, { roomId: room.id, sequence: 1 }, keyring);
-  assert.deepEqual(persisted.hand.revealedSeatNumbers, [2]);
+  assert.deepEqual(persisted.hand.revealedHoleCards, [{ seatNumber: 2, cardIndexes: [0] }]);
 });
 
 test('a folded player can reveal their server-authoritative cards after an uncontested finish', async () => {
@@ -223,11 +223,11 @@ test('a folded player can reveal their server-authoritative cards after an uncon
   const db = createDb({ latest: { sequence: 2, state: foldedSnapshot } });
   const repository = new RoomRepository(db, undefined, undefined, undefined, keyring);
 
-  const result = await repository.revealShowdownHandAtomically({ roomId: room.id, playerId: 'player-1' });
+  const result = await repository.revealShowdownCardAtomically({ roomId: room.id, playerId: 'player-1', cardIndex: 1 });
 
   assert.equal(result.sequence, 3);
   assert.equal(result.view.exposedHands.find((hand) => hand.playerId === 'player-1')?.reason, 'voluntary');
-  assert.deepEqual(result.views.find((view) => view.playerId === 'host-id')?.exposedHands.find((hand) => hand.playerId === 'player-1')?.holeCards, result.view.holeCards);
+  assert.deepEqual(result.views.find((view) => view.playerId === 'host-id')?.exposedHands.find((hand) => hand.playerId === 'player-1')?.cards, [{ cardIndex: 1, card: result.view.holeCards[1] }]);
   const persisted = hydrateSignedPrivateHandSnapshot(db.calls.find(([name]) => name === 'gameSnapshot.create')[1].data.state, { roomId: room.id, sequence: 3 }, keyring);
-  assert.deepEqual(persisted.hand.revealedSeatNumbers, [2]);
+  assert.deepEqual(persisted.hand.revealedHoleCards, [{ seatNumber: 2, cardIndexes: [1] }]);
 });

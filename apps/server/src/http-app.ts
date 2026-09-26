@@ -584,6 +584,13 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
 
   routes.post('/rooms/:joinId/game/reveal', async (request, response) => {
     try {
+      const cardIndex = request.body && typeof request.body === 'object' && !Array.isArray(request.body)
+        ? (request.body as { cardIndex?: unknown }).cardIndex
+        : undefined;
+      if (cardIndex !== 0 && cardIndex !== 1) {
+        response.status(400).json({ error: { code: 'INVALID_SHOWDOWN_CARD' } });
+        return;
+      }
       const player = await roomRepository.findPlayerByRoomJoinIdAndAccessToken(
         request.params.joinId,
         parseCookieHeader(request.headers.cookie).poker_player_token,
@@ -592,7 +599,7 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
         response.status(401).json({ error: { code: 'UNAUTHORIZED' } });
         return;
       }
-      const result = await roomRepository.revealShowdownHandAtomically({ roomId: player.roomId, playerId: player.id });
+      const result = await roomRepository.revealShowdownCardAtomically({ roomId: player.roomId, playerId: player.id, cardIndex });
       response.status(201).json(result.view);
     } catch (error) {
       console.error('Showdown reveal failed', error);

@@ -30,7 +30,7 @@ import {
   getRiverLegalActions,
   getTurnLegalActions,
   runOutAllInToShowdown,
-  revealShowdownSeat,
+  revealShowdownCard as revealAuthoritativeShowdownCard,
   settleShowdown,
   type Card,
   type ShowdownPot,
@@ -144,7 +144,9 @@ export interface ServerPlayerView {
     seatNumber: number;
     playerId: string;
     playerName: string;
-    holeCards: readonly [Card, Card];
+    cards: readonly Readonly<{ cardIndex: 0 | 1; card: Card }>[];
+    /** Retained for rolling-deploy compatibility when both cards are public. */
+    holeCards?: readonly [Card, Card];
     reason: 'all-in' | 'winner' | 'voluntary';
   }[];
   allInRunout?: Readonly<{
@@ -274,19 +276,26 @@ export class ServerGameLifecycle {
         ? showdown.pots.flatMap((pot) => pot.winnerSeatNumbers)
         : [],
     );
-    const voluntarilyRevealed = new Set(hand.revealedSeatNumbers);
     const exposedHands = Object.freeze(hand.seats.flatMap((seat) => {
       if (!seat.holeCards) return [];
+      const voluntaryReveal = hand.revealedHoleCards.find((reveal) => reveal.seatNumber === seat.seatNumber);
       let reason: 'all-in' | 'winner' | 'voluntary' | undefined;
-      if (voluntarilyRevealed.has(seat.seatNumber)) reason = 'voluntary';
-      else if (!seat.isFolded && (allInRunout || allInShowdown)) reason = 'all-in';
+      let cardIndexes: readonly (0 | 1)[] = [];
+      if (!seat.isFolded && (allInRunout || allInShowdown)) reason = 'all-in';
       else if (!seat.isFolded && winnerSeatNumbers.has(seat.seatNumber)) reason = 'winner';
+      else if (voluntaryReveal) {
+        reason = 'voluntary';
+        cardIndexes = voluntaryReveal.cardIndexes;
+      }
       if (!reason) return [];
+      if (cardIndexes.length === 0) cardIndexes = [0, 1];
+      const cards = Object.freeze(cardIndexes.map((cardIndex) => Object.freeze({ cardIndex, card: Object.freeze({ ...seat.holeCards![cardIndex] }) })));
       return [Object.freeze({
         seatNumber: seat.seatNumber,
         playerId: seat.playerId,
         playerName: this.namesByPlayerId.get(seat.playerId)!,
-        holeCards: Object.freeze(seat.holeCards.map((card) => Object.freeze({ ...card }))) as unknown as readonly [Card, Card],
+        cards,
+        ...(cards.length === 2 ? { holeCards: Object.freeze(seat.holeCards.map((card) => Object.freeze({ ...card }))) as unknown as readonly [Card, Card] } : {}),
         reason,
       })];
     }));
@@ -375,11 +384,11 @@ export class ServerGameLifecycle {
   }
 
   /** Any player dealt into the completed hand may voluntarily make their own cards public. */
-  revealShowdownHand(playerId: string): ServerPlayerView {
+  revealShowdownCard(playerId: string, cardIndex: 0 | 1): ServerPlayerView {
     const hand = this.requireHand();
     const seat = hand.seats.find((candidate) => candidate.playerId === playerId);
     if (!seat) throw new Error('Player is not seated in this game');
-    this.hand = revealShowdownSeat(hand, seat.seatNumber);
+    this.hand = revealAuthoritativeShowdownCard(hand, seat.seatNumber, cardIndex);
     return this.viewFor(playerId);
   }
 

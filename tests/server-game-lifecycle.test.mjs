@@ -104,8 +104,12 @@ test('a street-closing action advances before its view is returned through flop,
   assert.ok(showdown.exposedHands.some((hand) => hand.reason === 'winner'), 'a contested showdown reveals each winning hand');
   const loser = seats.find((seat) => !showdown.showdown.winners.some((winner) => winner.playerId === seat.playerId));
   assert.ok(loser, 'the showdown has a non-winning participant who may choose to show');
-  game.revealShowdownHand(loser.playerId);
-  assert.equal(game.viewFor(seats[0].playerId).exposedHands.find((hand) => hand.playerId === loser.playerId)?.reason, 'voluntary');
+  game.revealShowdownCard(loser.playerId, 0);
+  const singleCardReveal = game.viewFor(seats[0].playerId).exposedHands.find((hand) => hand.playerId === loser.playerId);
+  assert.equal(singleCardReveal?.reason, 'voluntary');
+  assert.deepEqual(singleCardReveal?.cards.map(({ cardIndex }) => cardIndex), [0], 'a player may reveal exactly one selected card');
+  game.revealShowdownCard(loser.playerId, 1);
+  assert.deepEqual(game.viewFor(seats[0].playerId).exposedHands.find((hand) => hand.playerId === loser.playerId)?.cards.map(({ cardIndex }) => cardIndex), [0, 1]);
   assert.equal(showdown.seats.reduce((total, seat) => total + seat.stack, 0), 300, 'settled stacks return every committed chip to the table');
 });
 
@@ -280,13 +284,13 @@ test('the final fold immediately ends the hand and awards the full pot without d
     { playerId: 'ada', stack: 110 },
     { playerId: 'ben', stack: 90 },
   ]);
-  game.revealShowdownHand('ben');
-  assert.equal(game.viewFor('ada').exposedHands.find((hand) => hand.playerId === 'ben')?.reason, 'voluntary', 'a folded player may show after the hand');
-  game.revealShowdownHand('ada');
+  game.revealShowdownCard('ben', 0);
+  assert.deepEqual(game.viewFor('ada').exposedHands.find((hand) => hand.playerId === 'ben')?.cards.map(({ cardIndex }) => cardIndex), [0], 'a folded player may show one selected card after the hand');
+  game.revealShowdownCard('ada', 1);
   assert.deepEqual(game.viewFor('ben').exposedHands.map((hand) => [hand.playerId, hand.reason]), [
     ['ada', 'voluntary'],
     ['ben', 'voluntary'],
-  ], 'the uncontested winner may also show and every player sees both hands');
+  ], 'the uncontested winner may also show and every player sees both selected cards');
 });
 
 test('a verified recovered hand resumes without a fresh deal and cannot be started again', () => {

@@ -148,9 +148,10 @@ export type HostManagementView = Readonly<{
   }>[];
 }>;
 
-export type RevealShowdownHandInput = Readonly<{
+export type RevealShowdownCardInput = Readonly<{
   roomId: string;
   playerId: string;
+  cardIndex: 0 | 1;
 }>;
 
 function isBoundInitialPrivateSnapshot(snapshot: SignedPrivateHandSnapshot, roomId: string): boolean {
@@ -751,7 +752,7 @@ export class RoomRepository {
   }
 
   /** Persists a player's voluntary showdown reveal without trusting client cards. */
-  async revealShowdownHandAtomically({ roomId, playerId }: RevealShowdownHandInput) {
+  async revealShowdownCardAtomically({ roomId, playerId, cardIndex }: RevealShowdownCardInput) {
     const activeKey = this.privateSnapshotKeyring.entries().next().value as [string, PrivateSnapshotSigningKey] | undefined;
     if (!activeKey) throw new Error('Showdown reveal is unavailable');
     const [keyId, key] = activeKey;
@@ -775,10 +776,10 @@ export class RoomRepository {
         }),
         dealerSeat: recovery.hand.dealerSeat, smallBlind: recovery.hand.smallBlindAmount, bigBlind: recovery.hand.bigBlindAmount,
       }, recovery);
-      const view = lifecycle.revealShowdownHand(playerId);
+      const view = lifecycle.revealShowdownCard(playerId, cardIndex);
       const sequence = latest.sequence + 1;
       const snapshot = signPrivateHandSnapshot(lifecycle.handForDurableSnapshot(), { roomId, sequence, keyId }, key);
-      await tx.gameEvent.create({ data: { roomId, sequence, type: 'SHOWDOWN_HAND_REVEALED', payload: { playerId } } });
+      await tx.gameEvent.create({ data: { roomId, sequence, type: 'SHOWDOWN_CARD_REVEALED', payload: { playerId, cardIndex } } });
       await tx.gameSnapshot.create({ data: { roomId, sequence, state: snapshot as unknown as Prisma.InputJsonValue } });
       return {
         sequence,
