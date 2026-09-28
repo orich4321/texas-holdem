@@ -150,6 +150,38 @@ test('the authenticated owner alone can schedule a final hand, reveal its summar
   ]);
 });
 
+test('rabbit runout returns the updated host view immediately and turn tools use the authenticated player', async () => {
+  const calls = [];
+  const updatedView = { playerId: 'host-id', street: 'showdown', communityCards: [{ rank: 'A', suit: 'spades' }] };
+  const repository = {
+    async findPlayerByRoomJoinIdAndAccessToken(requestedJoinId, token) {
+      if (requestedJoinId !== joinId || token !== hostToken) return null;
+      return { id: 'host-id', roomId: room.id };
+    },
+    async findRoomByJoinId() { return room; },
+    async advanceRabbitRunoutForHostAtomically(input) { calls.push(['rabbit', input]); return { views: [updatedView] }; },
+    async useTimeCardAtomically(roomId, playerId) { calls.push(['card', { roomId, playerId }]); return { ...updatedView, timeCardsRemaining: 2 }; },
+    async expireTurnForParticipant(roomId, playerId) { calls.push(['expire', { roomId, playerId }]); return null; },
+  };
+  await withServer(repository, async (baseUrl) => {
+    const headers = { cookie: `poker_player_token=${hostToken}` };
+    const rabbit = await globalThis.fetch(`${baseUrl}/rooms/${joinId}/game/runout/uncontested`, { method: 'POST', headers });
+    assert.equal(rabbit.status, 201);
+    assert.deepEqual(await rabbit.json(), updatedView);
+    const card = await globalThis.fetch(`${baseUrl}/rooms/${joinId}/game/turn/time-card`, { method: 'POST', headers });
+    assert.equal(card.status, 201);
+    assert.equal((await card.json()).timeCardsRemaining, 2);
+    const expiry = await globalThis.fetch(`${baseUrl}/rooms/${joinId}/game/turn/expire`, { method: 'POST', headers });
+    assert.equal(expiry.status, 200);
+    assert.deepEqual(await expiry.json(), { expired: false });
+  });
+  assert.deepEqual(calls, [
+    ['rabbit', { joinId, hostPlayerId: 'host-id' }],
+    ['card', { roomId: room.id, playerId: 'host-id' }],
+    ['expire', { roomId: room.id, playerId: 'host-id' }],
+  ]);
+});
+
 test('only the host can continue a completed game and must explicitly choose whether the next hand is final', async () => {
   const calls = [];
   const repository = {

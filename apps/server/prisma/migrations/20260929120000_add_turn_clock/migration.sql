@@ -1,0 +1,2 @@
+ALTER TABLE "Room" ADD COLUMN "turnDeadlineAt" TIMESTAMP(3);
+ALTER TABLE "Player" ADD COLUMN "timeCardsRemaining" INTEGER NOT NULL DEFAULT 3;

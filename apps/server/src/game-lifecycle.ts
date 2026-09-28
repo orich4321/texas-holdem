@@ -115,6 +115,10 @@ export interface ServerPlayerView {
   lastAction?: PlayerActionNotification;
   /** Stable start time of the room's first hand, added by persistence. */
   gameStartedAt?: string;
+  /** Server-authoritative deadline for the current actor. */
+  turnDeadlineAt?: string;
+  /** Time cards owned by this authenticated player for the whole game. */
+  timeCardsRemaining?: number;
   playerId: string;
   street: StartedHand['street'];
   dealerSeat: number;

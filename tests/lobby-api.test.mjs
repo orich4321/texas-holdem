@@ -99,7 +99,11 @@ test('mobile table UI keeps the player anchored, reconnects safely, and exposes 
   assert.match(styles, /\.community-cards\s*\{[^}]*z-index:\s*7/s);
   assert.match(styles, /\.seat-action-fold\s*\{[^}]*#d77f79/s);
   assert.match(styles, /\.seat-action-call, \.seat-action-bet\s*\{[^}]*#78a7c2/s);
-  assert.match(styles, /\.table-seat:nth-child\(3\)\s*\{\s*top:\s*61%/);
+  assert.match(table, /function seatPosition\(index: number, count: number\)/);
+  assert.match(table, /index \* 360/);
+  assert.match(table, /style=\{seatPosition\(seatIndex, orderedSeats\.length\)\}/);
+  assert.match(styles, /\.table-seat\s*\{[^}]*top:\s*var\(--seat-y\);[^}]*left:\s*var\(--seat-x\)/s);
+  assert.match(styles, /top:\s*var\(--seat-mobile-y\);\s*left:\s*var\(--seat-mobile-x\)/);
   assert.match(styles, /\.table-seat\s*\{[^}]*width:\s*clamp\(104px,[^}]*min-height:\s*clamp\(60px/s);
   assert.match(styles, /\.table-seat-avatar\s*\{[^}]*width:\s*clamp\(34px,[^}]*background-size:\s*cover/s);
   assert.match(table, /className="seat-rebuy-actions"/);

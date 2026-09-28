@@ -11,6 +11,7 @@ const keyId = 'test-current';
 const keyring = new Map([[keyId, key]]);
 const room = {
   id: 'room-db-id', joinId: '0123456789abcdef', hostPlayerId: 'host-id', status: 'IN_PROGRESS',
+  finalSummaryVisible: true,
   players: [
     { id: 'host-id', displayName: 'אורי', avatarDataUrl: null, currentStack: 100, isSittingOut: false, createdAt: new Date('2026-01-01') },
     { id: 'player-1', displayName: 'נועה', avatarDataUrl: null, currentStack: 100, isSittingOut: false, createdAt: new Date('2026-01-02') },
@@ -30,6 +31,7 @@ function createDb({ latest = { sequence: 0, state: initial }, currentHandStart =
     room: {
       findUnique: async (args) => { calls.push(['room.findUnique', args]); return room; },
       updateMany: async (args) => { calls.push(['room.updateMany', args]); return { count: 1 }; },
+      update: async (args) => { calls.push(['room.update', args]); return args.data; },
     },
     gameSnapshot: {
       findFirst: async (args) => { calls.push(['gameSnapshot.findFirst', args]); return latest; },
@@ -103,7 +105,7 @@ test('accepted authoritative action persists a minimal event and next signed sna
     isFolded: false,
     isSittingOut: true,
   });
-  assert.deepEqual(db.calls.map(([name]) => name), ['room.findUnique', 'room.updateMany', 'gameSnapshot.findFirst', 'gameEvent.create', 'gameSnapshot.create']);
+  assert.deepEqual(db.calls.map(([name]) => name), ['room.findUnique', 'room.updateMany', 'gameSnapshot.findFirst', 'gameEvent.create', 'gameSnapshot.create', 'room.update']);
   assert.deepEqual(db.calls[3][1].data, { roomId: room.id, sequence: 1, type: 'PLAYER_ACTION', payload: { actorPlayerId: 'host-id', action: { type: 'call' }, amount: 5 } });
   const signed = db.calls[4][1].data.state;
   const recovered = hydrateSignedPrivateHandSnapshot(signed, { roomId: room.id, sequence: 1 }, keyring);

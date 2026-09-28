@@ -369,6 +369,43 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
     }
   });
 
+  routes.post('/rooms/:joinId/game/turn/time-card', async (request, response) => {
+    try {
+      const player = await roomRepository.findPlayerByRoomJoinIdAndAccessToken(
+        request.params.joinId,
+        parseCookieHeader(request.headers.cookie).poker_player_token,
+      );
+      if (!player) {
+        response.status(401).json({ error: { code: 'UNAUTHORIZED' } });
+        return;
+      }
+      const view = await roomRepository.useTimeCardAtomically(player.roomId, player.id);
+      if (!view) throw new Error('Time card is unavailable');
+      response.status(201).json(view);
+    } catch (error) {
+      console.error('Time card failed', error);
+      response.status(409).json({ error: { code: 'TIME_CARD_UNAVAILABLE' } });
+    }
+  });
+
+  routes.post('/rooms/:joinId/game/turn/expire', async (request, response) => {
+    try {
+      const player = await roomRepository.findPlayerByRoomJoinIdAndAccessToken(
+        request.params.joinId,
+        parseCookieHeader(request.headers.cookie).poker_player_token,
+      );
+      if (!player) {
+        response.status(401).json({ error: { code: 'UNAUTHORIZED' } });
+        return;
+      }
+      const result = await roomRepository.expireTurnForParticipant(player.roomId, player.id);
+      response.status(result ? 201 : 200).json(result?.view ?? { expired: false });
+    } catch (error) {
+      console.error('Turn expiry failed', error);
+      response.status(409).json({ error: { code: 'TURN_EXPIRY_UNAVAILABLE' } });
+    }
+  });
+
   routes.post('/rooms/:joinId/game/next-hand', async (request, response) => {
     try {
       const player = await findAuthenticatedHost(request.params.joinId, request.headers.cookie);
@@ -589,8 +626,10 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
         response.status(403).json({ error: { code: 'HOST_FORBIDDEN' } });
         return;
       }
-      await roomRepository.advanceRabbitRunoutForHostAtomically({ joinId: request.params.joinId, hostPlayerId: player.id });
-      response.status(201).json({ roomId: request.params.joinId, status: 'IN_PROGRESS' });
+      const result = await roomRepository.advanceRabbitRunoutForHostAtomically({ joinId: request.params.joinId, hostPlayerId: player.id });
+      const view = result.views.find((candidate) => candidate.playerId === player.id);
+      if (!view) throw new Error('Uncontested board is unavailable');
+      response.status(201).json(view);
     } catch (error) {
       console.error('Uncontested board advance failed', error);
       response.status(409).json({ error: { code: 'UNCONTESTED_RUNOUT_UNAVAILABLE' } });

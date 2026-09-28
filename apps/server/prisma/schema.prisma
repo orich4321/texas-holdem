@@ -23,6 +23,7 @@ model Room {
   maxPlayers   Int        @default(9)
   nextHandIsFinal Boolean @default(false)
   finalSummaryVisible Boolean @default(true)
+  turnDeadlineAt DateTime?
   hostPlayerId String?    @db.Uuid
   hostPlayer   Player?    @relation("RoomHost", fields: [id, hostPlayerId], references: [roomId, id], onDelete: Restrict)
   players      Player[]   @relation("RoomPlayers")
@@ -48,6 +49,7 @@ model Player {
   leaveAfterHand Boolean @default(false)
   isSittingOut Boolean @default(false)
   rebuyDecisionPending Boolean @default(false)
+  timeCardsRemaining Int @default(3)
   room            Room     @relation("RoomPlayers", fields: [roomId], references: [id], onDelete: Cascade)
   hostedRooms  Room[]   @relation("RoomHost")
   receivedChipAdjustments ChipAdjustment[] @relation("ChipRecipient")

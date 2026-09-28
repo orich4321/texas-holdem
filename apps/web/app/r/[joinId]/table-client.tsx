@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { io } from 'socket.io-client';
 import { AppBrand } from '../../ui';
 import { parsePositiveInteger } from '../../numeric-input';
@@ -57,6 +57,8 @@ type PlayerView = {
   isSittingOut?: boolean;
   lastAction?: PlayerActionNotification;
   gameStartedAt?: string;
+  turnDeadlineAt?: string;
+  timeCardsRemaining?: number;
   playerId: string;
   street: 'preflop' | 'flop' | 'turn' | 'river' | 'showdown';
   dealerSeat: number;
@@ -201,6 +203,8 @@ function isPlayerView(value: unknown): value is PlayerView {
     && (view.isSittingOut === undefined || typeof view.isSittingOut === 'boolean')
     && (view.lastAction === undefined || isPlayerActionNotification(view.lastAction))
     && (view.gameStartedAt === undefined || (typeof view.gameStartedAt === 'string' && Number.isFinite(Date.parse(view.gameStartedAt))))
+    && (view.turnDeadlineAt === undefined || (typeof view.turnDeadlineAt === 'string' && Number.isFinite(Date.parse(view.turnDeadlineAt))))
+    && (view.timeCardsRemaining === undefined || (Number.isSafeInteger(view.timeCardsRemaining) && (view.timeCardsRemaining as number) >= 0))
     && typeof view.street === 'string'
     && typeof view.dealerSeat === 'number'
     && typeof view.smallBlindSeat === 'number'
@@ -230,6 +234,16 @@ function showdownPotLabel(index: number) {
   return index === 0 ? 'קופה ראשית' : `קופת צד ${index}`;
 }
 
+function seatPosition(index: number, count: number): CSSProperties {
+  const angle = (90 + (index * 360) / Math.max(1, count)) * Math.PI / 180;
+  return {
+    '--seat-x': `${50 + Math.cos(angle) * 43}%`,
+    '--seat-y': `${50 + Math.sin(angle) * 42}%`,
+    '--seat-mobile-x': `${50 + Math.cos(angle) * 40}%`,
+    '--seat-mobile-y': `${50 + Math.sin(angle) * 42}%`,
+  } as CSSProperties;
+}
+
 function PlayingCard({ card, hidden = false, placeholder = false, highlighted = false }: { card?: Card; hidden?: boolean; placeholder?: boolean; highlighted?: boolean }) {
   if (placeholder) return <span className="playing-card playing-card-slot" aria-hidden="true" />;
   if (hidden || !card) return <span className="playing-card playing-card-back" aria-label="קלף סגור">♠</span>;
@@ -254,6 +268,8 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   const [waitingForNextHand, setWaitingForNextHand] = useState(false);
   const [seatActions, setSeatActions] = useState<ReadonlyMap<string, PlayerActionNotification>>(() => new Map());
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [turnSeconds, setTurnSeconds] = useState(60);
+  const [usingTimeCard, setUsingTimeCard] = useState(false);
   const [activePotIndex, setActivePotIndex] = useState(0);
   const [finalSummary, setFinalSummary] = useState<FinalSummary>();
   const [downloadingSummary, setDownloadingSummary] = useState(false);
@@ -276,6 +292,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   const actionStreamInitializedRef = useRef(false);
   const seenActionSequenceRef = useRef(-1);
   const previousStreetRef = useRef<PlayerView['street'] | undefined>(undefined);
+  const expiryRequestRef = useRef<string | undefined>(undefined);
 
   useEffect(() => {
     let active = true;
@@ -409,6 +426,33 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   }, [view]);
   const isTurn = Boolean(view && ownSeat && view.currentActorSeat === ownSeat.seatNumber && view.street !== 'showdown' && !view.allInRunout);
   const callIsAllIn = Boolean(isTurn && ownSeat && view && view.toCall > 0 && view.toCall >= ownSeat.stack);
+
+  useEffect(() => {
+    const deadline = view?.turnDeadlineAt ? Date.parse(view.turnDeadlineAt) : Number.NaN;
+    if (!view || !Number.isFinite(deadline) || view.street === 'showdown' || view.allInRunout) {
+      setTurnSeconds(0);
+      return;
+    }
+    const expiryKey = `${view.sequence ?? -1}:${view.turnDeadlineAt}`;
+    const update = () => {
+      const seconds = Math.max(0, Math.ceil((deadline - Date.now()) / 1_000));
+      setTurnSeconds(seconds);
+      if (seconds !== 0 || expiryRequestRef.current === expiryKey) return;
+      expiryRequestRef.current = expiryKey;
+      void globalThis.fetch(`${SERVER_URL}/rooms/${encodeURIComponent(joinId)}/game/turn/expire`, {
+        method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json' },
+      }).then(async (response) => {
+        const next = await response.json();
+        if (response.ok && isPlayerView(next)) {
+          latestSequenceRef.current = Math.max(latestSequenceRef.current, next.sequence ?? 0);
+          setView((current) => ({ ...next, gameStartedAt: next.gameStartedAt ?? current?.gameStartedAt }));
+        }
+      }).catch(() => undefined);
+    };
+    update();
+    const timer = globalThis.setInterval(update, 250);
+    return () => globalThis.clearInterval(timer);
+  }, [joinId, view?.sequence, view?.turnDeadlineAt, view?.street, view?.allInRunout?.nextStreet]);
   const exposedBySeat = useMemo(() => new Map(view?.exposedHands.map((hand) => [hand.seatNumber, hand])), [view]);
   const ownExposedCardIndexes = useMemo(() => {
     const exposedHand = view?.exposedHands.find((hand) => hand.playerId === view.playerId);
@@ -809,12 +853,33 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
       const response = await globalThis.fetch(`${SERVER_URL}/rooms/${encodeURIComponent(joinId)}/game/runout/uncontested`, {
         method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json' },
       });
-      if (!response.ok) throw new Error('Uncontested board unavailable');
+      const next = await response.json();
+      if (!response.ok || !isPlayerView(next)) throw new Error('Uncontested board unavailable');
+      latestSequenceRef.current = Math.max(latestSequenceRef.current, next.sequence ?? 0);
+      setView((current) => ({ ...next, gameStartedAt: next.gameStartedAt ?? current?.gameStartedAt }));
       setStatus(`נחשף ${streetNames[view.rabbitRunout.nextStreet]}…`);
     } catch {
       setStatus('לא הצלחנו לחשוף את המשך הלוח. נסו שוב.');
     } finally {
       setAdvancingRabbitRunout(false);
+    }
+  }
+
+  async function useTimeCard() {
+    if (!isTurn || usingTimeCard || (view?.timeCardsRemaining ?? 0) < 1) return;
+    setUsingTimeCard(true);
+    try {
+      const response = await globalThis.fetch(`${SERVER_URL}/rooms/${encodeURIComponent(joinId)}/game/turn/time-card`, {
+        method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json' },
+      });
+      const next = await response.json();
+      if (!response.ok || !isPlayerView(next)) throw new Error('Time card unavailable');
+      setView((current) => ({ ...next, gameStartedAt: next.gameStartedAt ?? current?.gameStartedAt }));
+      setStatus('כרטיס הזמן הופעל · נוספה דקה לתור.');
+    } catch {
+      setStatus('לא הצלחנו להפעיל את כרטיס הזמן.');
+    } finally {
+      setUsingTimeCard(false);
     }
   }
 
@@ -864,6 +929,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
           void loadManagement();
         }}><span aria-hidden="true">⚙</span> ניהול שולחן</button> : null}
         <div className="table-timer"><span>זמן משחק</span><strong dir="ltr">{gameTime}</strong></div>
+        {view.street !== 'showdown' && !view.allInRunout ? <div className={`turn-clock${turnSeconds <= 10 ? ' turn-clock-urgent' : ''}`} aria-label={`נותרו ${turnSeconds} שניות לתור`}><span>זמן לתור</span><strong dir="ltr">{Math.floor(turnSeconds / 60).toString().padStart(2, '0')}:{(turnSeconds % 60).toString().padStart(2, '0')}</strong>{isTurn ? <button type="button" disabled={usingTimeCard || (view.timeCardsRemaining ?? 0) < 1} onClick={() => void useTimeCard()}>+60 · {view.timeCardsRemaining ?? 0}</button> : null}</div> : null}
         <div className="table-round"><span>שלב במשחק</span><strong>{streetNames[view.street]}</strong></div>
         <div className="table-header-pot"><span>{view.showdown ? 'קופה שחולקה' : 'קופה נוכחית'}</span><strong><i aria-hidden="true" />{displayedPot.toLocaleString('he-IL')}</strong></div>
       </header>
@@ -880,7 +946,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
             {Array.from({ length: 5 }, (_, index) => <PlayingCard key={index} card={view.communityCards[index]} placeholder={!view.communityCards[index]} highlighted={Boolean(view.communityCards[index] && winningCardKeys.has(cardKey(view.communityCards[index])))} />)}
           </div>
           <div className="table-seats">
-            {orderedSeats.map((seat) => {
+            {orderedSeats.map((seat, seatIndex) => {
               const isYou = seat.playerId === view.playerId;
               const isActor = seat.seatNumber === view.currentActorSeat && view.street !== 'showdown' && !view.allInRunout;
               const exposed = exposedBySeat.get(seat.seatNumber);
@@ -889,7 +955,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
               const seatAction = seatActions.get(seat.playerId);
               const presentedAction = seatAction ? actionPresentation(seatAction) : undefined;
               const pendingRebuy = isCurrentHost ? bustedPlayers.find((player) => player.id === seat.playerId) : undefined;
-              return <article key={seat.playerId} className={`table-seat${isYou ? ' table-seat-self' : ''}${isActor ? ' table-seat-active' : ''}${isPotEligible ? ' table-seat-pot-eligible' : ''}${isWinner ? ' table-seat-winner' : ''}${seat.isFolded ? ' table-seat-folded' : ''}${seat.isSittingOut ? ' table-seat-sitting-out' : ''}`}>
+              return <article key={seat.playerId} style={seatPosition(seatIndex, orderedSeats.length)} className={`table-seat${isYou ? ' table-seat-self' : ''}${isActor ? ' table-seat-active' : ''}${isPotEligible ? ' table-seat-pot-eligible' : ''}${isWinner ? ' table-seat-winner' : ''}${seat.isFolded ? ' table-seat-folded' : ''}${seat.isSittingOut ? ' table-seat-sitting-out' : ''}`}>
                 <span className="seat-roles" aria-label={seat.isSittingOut ? `${seat.playerName} לא משתתף ביד` : `תפקידי ${seat.playerName}`}>
                   {seat.isSittingOut ? <i className="seat-role seat-role-out">OUT</i> : <>
                     {seat.seatNumber === view.dealerSeat ? <i className="seat-role dealer-button">D</i> : null}
@@ -918,7 +984,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
       <section className="player-panel" aria-label="היד שלכם">
         <div className="your-hand"><p><span aria-hidden="true">◆</span> {view.holeCards.length ? 'הקלפים שלכם' : 'מחוץ לשולחן'}</p><div className="hole-cards">{view.holeCards.length ? <><PlayingCard card={view.holeCards[0]} /><PlayingCard card={view.holeCards[1]} /></> : <small>ממתינים להחזרה ליד הבאה</small>}</div></div>
         <div className="your-stack"><span>הערימה שלכם</span><strong><i aria-hidden="true" />{ownSeat?.stack.toLocaleString('he-IL') ?? (view.isSittingOut ? '0' : '—')}</strong><small>צ׳יפים</small></div>
-        {status.includes('נכשל') || status.includes('לא זמינה') ? <p className="table-status" role="alert">{status}</p> : null}
+        {status.includes('נכשל') || status.includes('לא זמינה') || status.startsWith('לא הצלחנו') ? <p className="table-status" role="alert">{status}</p> : null}
         {isTurn ? <div className="action-bar" aria-label="פעולות בתור שלכם">
           <button type="button" className="action-fold" disabled={pending} onClick={() => void act({ type: 'fold' })}><span aria-hidden="true">✕</span> פרישה</button>
           <button type="button" className="action-primary" disabled={pending} onClick={() => void act(view.toCall === 0 ? { type: 'check' } : { type: 'call' })}><span aria-hidden="true">✓</span> {view.toCall === 0 ? 'צ׳ק' : callIsAllIn ? `אול אין · ${ownSeat!.stack.toLocaleString('he-IL')}` : `השוואה · ${view.toCall.toLocaleString('he-IL')}`}</button>
