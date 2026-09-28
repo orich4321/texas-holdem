@@ -582,6 +582,21 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
     }
   });
 
+  routes.post('/rooms/:joinId/game/runout/uncontested', async (request, response) => {
+    try {
+      const player = await findAuthenticatedHost(request.params.joinId, request.headers.cookie);
+      if (!player) {
+        response.status(403).json({ error: { code: 'HOST_FORBIDDEN' } });
+        return;
+      }
+      await roomRepository.advanceRabbitRunoutForHostAtomically({ joinId: request.params.joinId, hostPlayerId: player.id });
+      response.status(201).json({ roomId: request.params.joinId, status: 'IN_PROGRESS' });
+    } catch (error) {
+      console.error('Uncontested board advance failed', error);
+      response.status(409).json({ error: { code: 'UNCONTESTED_RUNOUT_UNAVAILABLE' } });
+    }
+  });
+
   routes.post('/rooms/:joinId/game/reveal', async (request, response) => {
     try {
       const cardIndex = request.body && typeof request.body === 'object' && !Array.isArray(request.body)

@@ -127,6 +127,11 @@ export type AdvanceAllInRunoutForHostInput = Readonly<{
   hostPlayerId: string;
 }>;
 
+export type AdvanceRabbitRunoutForHostInput = Readonly<{
+  joinId: string;
+  hostPlayerId: string;
+}>;
+
 export type RemovePlayerForHostInput = Readonly<{
   joinId: string;
   hostPlayerId: string;
@@ -220,7 +225,7 @@ export class RoomRepository {
     private readonly privateSnapshotKeyring: ReadonlyMap<string, PrivateSnapshotSigningKey> = new Map(),
   ) {}
 
-  private decorateView(view: ServerPlayerView, sequence: number, hostPlayerId: string, gameCompleted = false, finalSummaryVisible = false, lastAction?: PlayerActionNotification, roomPlayers?: readonly RoomViewPlayer[]): ServerPlayerView {
+  private decorateView(view: ServerPlayerView, sequence: number, hostPlayerId: string, gameCompleted = false, finalSummaryVisible = false, lastAction?: PlayerActionNotification, roomPlayers?: readonly RoomViewPlayer[], gameStartedAt?: string): ServerPlayerView {
     const activeSeats = new Map(view.seats.map((seat) => [seat.playerId, seat]));
     const seats = roomPlayers
       ? roomPlayers.map((player, index) => {
@@ -239,7 +244,7 @@ export class RoomRepository {
           });
       })
       : view.seats;
-    return Object.freeze({ ...view, seats: Object.freeze(seats), sequence, hostPlayerId, gameCompleted, finalSummaryVisible, ...(lastAction ? { lastAction } : {}) });
+    return Object.freeze({ ...view, seats: Object.freeze(seats), sequence, hostPlayerId, gameCompleted, finalSummaryVisible, ...(lastAction ? { lastAction } : {}), ...(gameStartedAt ? { gameStartedAt } : {}) });
   }
 
   private async createPlayerWithUniqueAccessToken(db: PlayerWriter, player: PlayerInput, roomId: string) {
@@ -492,7 +497,7 @@ export class RoomRepository {
     // The room projection and signed snapshot are independent reads. Running
     // them together removes a full database round trip from every live-state
     // refresh while each query still scopes itself to the participant.
-    const [room, latest] = await Promise.all([
+    const [room, latest, gameStarted] = await Promise.all([
       this.db.room.findFirst({
         where: { id: roomId, status: { in: ['IN_PROGRESS', 'COMPLETED'] }, players: { some: { id: playerId, leftAt: null } } },
         select: {
@@ -512,6 +517,11 @@ export class RoomRepository {
         },
       }),
       this.recoverLatestHandForPlayer(roomId, playerId),
+      this.db.gameEvent.findFirst({
+        where: { roomId, type: 'GAME_STARTED' },
+        orderBy: { createdAt: 'asc' },
+        select: { createdAt: true },
+      }),
     ]);
     if (!room || !latest) return null;
     const hand = latest.recovery.hand;
@@ -545,7 +555,7 @@ export class RoomRepository {
     const latestAction = room.events[0]?.sequence === latest.sequence
       ? actionNotificationFromEvent(room.events[0], room.players)
       : undefined;
-    return this.decorateView(safeView, latest.sequence, room.hostPlayerId, room.status === 'COMPLETED', room.status === 'COMPLETED' && room.finalSummaryVisible, latestAction, room.players);
+    return this.decorateView(safeView, latest.sequence, room.hostPlayerId, room.status === 'COMPLETED', room.status === 'COMPLETED' && room.finalSummaryVisible, latestAction, room.players, gameStarted?.createdAt.toISOString());
   }
 
   /** Applies an authenticated action to the latest verified state and commits its successor atomically. */
@@ -749,6 +759,46 @@ export class RoomRepository {
       await tx.gameEvent.create({ data: { roomId: room.id, sequence, type: 'ALL_IN_RUNOUT_ADVANCED', payload: { street: hand.street } } });
       await tx.gameSnapshot.create({ data: { roomId: room.id, sequence, state: snapshot as unknown as Prisma.InputJsonValue } });
       return { sequence, views: Object.freeze(hand.seats.map((seat) => this.decorateView(lifecycle.viewFor(seat.playerId), sequence, room.hostPlayerId!, gameCompleted, false, undefined, room.players))) };
+    });
+  }
+
+  /** Reveals one hypothetical board street after a hand won by folds. */
+  async advanceRabbitRunoutForHostAtomically({ joinId, hostPlayerId }: AdvanceRabbitRunoutForHostInput) {
+    const activeKey = this.privateSnapshotKeyring.entries().next().value as [string, PrivateSnapshotSigningKey] | undefined;
+    if (!activeKey) throw new Error('Uncontested board is unavailable');
+    const [keyId, key] = activeKey;
+    return this.db.$transaction(async (tx) => {
+      const room = await tx.room.findUnique({
+        where: { joinId },
+        select: { id: true, hostPlayerId: true, status: true, finalSummaryVisible: true, players: { where: { leftAt: null }, orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, avatarDataUrl: true, currentStack: true, isSittingOut: true, rebuyDecisionPending: true } } },
+      });
+      if (!room || room.hostPlayerId !== hostPlayerId || (room.status !== 'IN_PROGRESS' && room.status !== 'COMPLETED') || room.finalSummaryVisible) {
+        throw new Error('Uncontested board is unavailable');
+      }
+      const locked = await tx.room.updateMany({ where: { id: room.id, hostPlayerId, status: room.status, finalSummaryVisible: false }, data: { updatedAt: new Date() } });
+      if (locked.count !== 1) throw new Error('Uncontested board is unavailable');
+      const latest = await tx.gameSnapshot.findFirst({ where: { roomId: room.id }, orderBy: { sequence: 'desc' }, select: { sequence: true, state: true } });
+      if (!latest) throw new Error('Uncontested board is unavailable');
+      const recovery = hydrateSignedPrivateHandSnapshot(latest.state as unknown as SignedPrivateHandSnapshot, { roomId: room.id, sequence: latest.sequence }, this.privateSnapshotKeyring);
+      const playersById = new Map(room.players.map((player) => [player.id, player]));
+      const lifecycle = ServerGameLifecycle.fromVerifiedRecoveredHand({
+        seats: recovery.hand.seats.map((seat) => {
+          const player = playersById.get(seat.playerId);
+          if (!player) throw new Error('Uncontested board is unavailable');
+          return { seatNumber: seat.seatNumber, playerId: player.id, playerName: player.displayName, avatarDataUrl: player.avatarDataUrl ?? undefined, stack: player.currentStack };
+        }),
+        dealerSeat: recovery.hand.dealerSeat, smallBlind: recovery.hand.smallBlindAmount, bigBlind: recovery.hand.bigBlindAmount,
+      }, recovery);
+      lifecycle.advanceRabbitRunout();
+      const hand = lifecycle.handForDurableSnapshot();
+      const sequence = latest.sequence + 1;
+      const snapshot = signPrivateHandSnapshot(hand, { roomId: room.id, sequence, keyId }, key);
+      await tx.gameEvent.create({ data: { roomId: room.id, sequence, type: 'UNCONTESTED_RUNOUT_ADVANCED', payload: { communityCardCount: hand.communityCards.length } } });
+      await tx.gameSnapshot.create({ data: { roomId: room.id, sequence, state: snapshot as unknown as Prisma.InputJsonValue } });
+      return {
+        sequence,
+        views: Object.freeze(hand.seats.map((seat) => this.decorateView(lifecycle.viewFor(seat.playerId), sequence, room.hostPlayerId!, room.status === 'COMPLETED', false, undefined, room.players))),
+      };
     });
   }
 

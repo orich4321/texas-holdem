@@ -64,6 +64,7 @@ test('a second authenticated player cannot invoke host-only HTTP controls by cal
     async startGameForHostAtomically(input) { attempted.push(['start', input]); },
     async startNextHandForHostAtomically(input) { attempted.push(['next-hand', input]); },
     async advanceAllInRunoutForHostAtomically(input) { attempted.push(['runout', input]); },
+    async advanceRabbitRunoutForHostAtomically(input) { attempted.push(['rabbit-runout', input]); },
   };
 
   await withServer(repository, async (baseUrl) => {
@@ -74,6 +75,7 @@ test('a second authenticated player cannot invoke host-only HTTP controls by cal
       `/rooms/${joinId}/game/final-hand`,
       `/rooms/${joinId}/game/final-summary/reveal`,
       `/rooms/${joinId}/game/runout/next`,
+      `/rooms/${joinId}/game/runout/uncontested`,
       `/rooms/${joinId}/players/${targetPlayerId}/remove`,
       `/rooms/${joinId}/management/blinds`,
       `/rooms/${joinId}/management/players/${targetPlayerId}/removal`,

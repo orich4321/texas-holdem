@@ -103,14 +103,35 @@ test('a street-closing action advances before its view is returned through flop,
       .some((candidate) => candidate.rank === card.rank && candidate.suit === card.suit))));
   assert.ok(showdown.exposedHands.some((hand) => hand.reason === 'winner'), 'a contested showdown reveals each winning hand');
   const loser = seats.find((seat) => !showdown.showdown.winners.some((winner) => winner.playerId === seat.playerId));
-  assert.ok(loser, 'the showdown has a non-winning participant who may choose to show');
-  game.revealShowdownCard(loser.playerId, 0);
-  const singleCardReveal = game.viewFor(seats[0].playerId).exposedHands.find((hand) => hand.playerId === loser.playerId);
-  assert.equal(singleCardReveal?.reason, 'voluntary');
-  assert.deepEqual(singleCardReveal?.cards.map(({ cardIndex }) => cardIndex), [0], 'a player may reveal exactly one selected card');
-  game.revealShowdownCard(loser.playerId, 1);
-  assert.deepEqual(game.viewFor(seats[0].playerId).exposedHands.find((hand) => hand.playerId === loser.playerId)?.cards.map(({ cardIndex }) => cardIndex), [0, 1]);
+  assert.ok(loser, 'the showdown has a non-winning participant');
+  assert.equal(showdown.exposedHands.find((hand) => hand.playerId === loser.playerId)?.reason, 'showdown');
+  assert.deepEqual(showdown.exposedHands.find((hand) => hand.playerId === loser.playerId)?.cards.map(({ cardIndex }) => cardIndex), [0, 1], 'every non-folded showdown hand is public');
+  assert.equal(showdown.exposedHands.length, 3);
   assert.equal(showdown.seats.reduce((total, seat) => total + seat.stack, 0), 300, 'settled stacks return every committed chip to the table');
+});
+
+test('an uncontested winner can rabbit-hunt one board street at a time without changing the payout', () => {
+  const game = new ServerGameLifecycle({ seats, dealerSeat: 1, smallBlind: 5, bigBlind: 10 });
+  game.start();
+  game.applyAction(game.currentActorPlayerId(), { type: 'fold' });
+  const finished = game.applyAction(game.currentActorPlayerId(), { type: 'fold' });
+  assert.equal(finished.street, 'showdown');
+  assert.equal(finished.communityCards.length, 0);
+  assert.equal(finished.rabbitRunout?.nextStreet, 'flop');
+  const payout = finished.showdown;
+
+  game.advanceRabbitRunout();
+  assert.equal(game.viewFor('ada').communityCards.length, 3);
+  assert.equal(game.viewFor('ada').rabbitRunout?.nextStreet, 'turn');
+  game.advanceRabbitRunout();
+  assert.equal(game.viewFor('ada').communityCards.length, 4);
+  game.advanceRabbitRunout();
+  const river = game.viewFor('ada');
+  assert.equal(river.communityCards.length, 5);
+  assert.equal(river.rabbitRunout, undefined);
+  assert.deepEqual(river.showdown?.pots, payout?.pots);
+  assert.deepEqual(river.showdown?.winners.map(({ playerId, chipsWon }) => ({ playerId, chipsWon })), payout?.winners.map(({ playerId, chipsWon }) => ({ playerId, chipsWon })));
+  assert.throws(() => game.advanceRabbitRunout(), /not ready/i);
 });
 
 test('server lifecycle snapshots constructor input before callers can mutate it', () => {

@@ -23,6 +23,7 @@ import {
   advancePreflopToFlop,
   advanceRiverToShowdown,
   advanceTurnToRiver,
+  advanceUncontestedRunout,
   compareFiveCardHands,
   finishUncontestedHand,
   getFlopLegalActions,
@@ -113,6 +114,8 @@ export interface ServerPlayerView {
   isSittingOut?: boolean;
   /** Latest durable action, shared identically with every participant. */
   lastAction?: PlayerActionNotification;
+  /** Stable start time of the room's first hand, added by persistence. */
+  gameStartedAt?: string;
   playerId: string;
   street: StartedHand['street'];
   dealerSeat: number;
@@ -147,10 +150,13 @@ export interface ServerPlayerView {
     cards: readonly Readonly<{ cardIndex: 0 | 1; card: Card }>[];
     /** Retained for rolling-deploy compatibility when both cards are public. */
     holeCards?: readonly [Card, Card];
-    reason: 'all-in' | 'winner' | 'voluntary';
+    reason: 'all-in' | 'winner' | 'showdown' | 'voluntary';
   }[];
   allInRunout?: Readonly<{
     nextStreet: 'flop' | 'turn' | 'river' | 'showdown';
+  }>;
+  rabbitRunout?: Readonly<{
+    nextStreet: 'flop' | 'turn' | 'river';
   }>;
   showdown?: Readonly<{
     winners: readonly { seatNumber: number; playerId: string; playerName: string; chipsWon: number; winningCards?: readonly Card[] }[];
@@ -258,6 +264,7 @@ export class ServerGameLifecycle {
     const requestingSeat = hand.seats.find((seat) => seat.playerId === playerId);
     if (!requestingSeat?.holeCards) throw new Error('Player is not seated in this game');
     const allInRunout = this.allInRunoutNextStreet(hand);
+    const rabbitRunout = this.rabbitRunoutNextStreet(hand);
     const legalActions = hand.street === 'showdown' || allInRunout || hand.currentActorSeat !== requestingSeat.seatNumber
       ? undefined
       : this.legalActions(hand);
@@ -271,6 +278,9 @@ export class ServerGameLifecycle {
       && hand.communityCards.length === 5
       && contestingSeats.length >= 2
       && contestingSeats.every((seat) => seat.stack === 0);
+    const contestedShowdown = hand.street === 'showdown'
+      && hand.communityCards.length === 5
+      && contestingSeats.length >= 2;
     const winnerSeatNumbers = new Set(
       showdown && contestingSeats.length >= 2 && hand.communityCards.length === 5
         ? showdown.pots.flatMap((pot) => pot.winnerSeatNumbers)
@@ -279,10 +289,11 @@ export class ServerGameLifecycle {
     const exposedHands = Object.freeze(hand.seats.flatMap((seat) => {
       if (!seat.holeCards) return [];
       const voluntaryReveal = hand.revealedHoleCards.find((reveal) => reveal.seatNumber === seat.seatNumber);
-      let reason: 'all-in' | 'winner' | 'voluntary' | undefined;
+      let reason: 'all-in' | 'winner' | 'showdown' | 'voluntary' | undefined;
       let cardIndexes: readonly (0 | 1)[] = [];
       if (!seat.isFolded && (allInRunout || allInShowdown)) reason = 'all-in';
       else if (!seat.isFolded && winnerSeatNumbers.has(seat.seatNumber)) reason = 'winner';
+      else if (!seat.isFolded && contestedShowdown) reason = 'showdown';
       else if (voluntaryReveal) {
         reason = 'voluntary';
         cardIndexes = voluntaryReveal.cardIndexes;
@@ -331,6 +342,7 @@ export class ServerGameLifecycle {
       }))),
       exposedHands,
       ...(allInRunout ? { allInRunout: Object.freeze({ nextStreet: allInRunout }) } : {}),
+      ...(rabbitRunout ? { rabbitRunout: Object.freeze({ nextStreet: rabbitRunout }) } : {}),
       ...(showdown ? {
         showdown: Object.freeze({
           winners: Object.freeze(
@@ -381,6 +393,13 @@ export class ServerGameLifecycle {
         : hand.street === 'turn'
           ? advanceTurnToRiver(hand)
           : runOutAllInToShowdown(hand);
+  }
+
+  /** Host-only repository callers use this to reveal one hypothetical street after folds. */
+  advanceRabbitRunout(): void {
+    const hand = this.requireHand();
+    if (!this.rabbitRunoutNextStreet(hand)) throw new Error('An uncontested board is not ready to advance');
+    this.hand = advanceUncontestedRunout(hand);
   }
 
   /** Any player dealt into the completed hand may voluntarily make their own cards public. */
@@ -458,5 +477,13 @@ export class ServerGameLifecycle {
     if (hand.street === 'flop') return 'turn';
     if (hand.street === 'turn') return 'river';
     return 'showdown';
+  }
+
+  private rabbitRunoutNextStreet(hand: StartedHand): 'flop' | 'turn' | 'river' | undefined {
+    if (hand.street !== 'showdown' || hand.seats.filter((seat) => seat.holeCards && !seat.isFolded).length !== 1) return undefined;
+    if (hand.communityCards.length === 0) return 'flop';
+    if (hand.communityCards.length === 3) return 'turn';
+    if (hand.communityCards.length === 4) return 'river';
+    return undefined;
   }
 }

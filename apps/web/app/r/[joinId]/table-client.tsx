@@ -28,7 +28,6 @@ type PlayerActionNotification = {
   raiseKind?: 'bet' | 'raise';
   amount?: number;
 };
-type TimedActionNotification = PlayerActionNotification & { expiresAt: number };
 type Showdown = {
   winners: readonly { seatNumber: number; playerId: string; playerName: string; chipsWon: number; winningCards?: readonly Card[] }[];
   pots: readonly { amount: number; eligibleSeatNumbers: readonly number[]; winnerSeatNumbers: readonly number[]; payouts: readonly { seatNumber: number; amount: number }[] }[];
@@ -40,9 +39,10 @@ type ExposedHand = {
   playerName: string;
   cards?: readonly { cardIndex: 0 | 1; card: Card }[];
   holeCards?: readonly [Card, Card];
-  reason: 'all-in' | 'winner' | 'voluntary';
+  reason: 'all-in' | 'winner' | 'showdown' | 'voluntary';
 };
 type AllInRunout = { nextStreet: 'flop' | 'turn' | 'river' | 'showdown' };
+type RabbitRunout = { nextStreet: 'flop' | 'turn' | 'river' };
 type FinalSummary = {
   version: number;
   room: { joinId: string; initialStack: number; smallBlind: number; bigBlind: number };
@@ -56,6 +56,7 @@ type PlayerView = {
   finalSummaryVisible?: boolean;
   isSittingOut?: boolean;
   lastAction?: PlayerActionNotification;
+  gameStartedAt?: string;
   playerId: string;
   street: 'preflop' | 'flop' | 'turn' | 'river' | 'showdown';
   dealerSeat: number;
@@ -70,6 +71,7 @@ type PlayerView = {
   seats: readonly { seatNumber: number; playerId: string; playerName: string; avatarDataUrl?: string; stack: number; currentBet: number; isFolded: boolean; isSittingOut: boolean }[];
   exposedHands: readonly ExposedHand[];
   allInRunout?: AllInRunout;
+  rabbitRunout?: RabbitRunout;
   showdown?: Showdown;
 };
 type ManagementView = {
@@ -101,7 +103,7 @@ function isExposedHand(value: unknown): value is ExposedHand {
   return typeof hand.seatNumber === 'number'
     && typeof hand.playerId === 'string'
     && typeof hand.playerName === 'string'
-    && (hand.reason === 'all-in' || hand.reason === 'winner' || hand.reason === 'voluntary')
+    && (hand.reason === 'all-in' || hand.reason === 'winner' || hand.reason === 'showdown' || hand.reason === 'voluntary')
     && (cards || legacyHand);
 }
 
@@ -112,6 +114,11 @@ function exposedCards(hand: ExposedHand): readonly { cardIndex: 0 | 1; card: Car
 function isAllInRunout(value: unknown): value is AllInRunout {
   return value !== null && typeof value === 'object'
     && ['flop', 'turn', 'river', 'showdown'].includes((value as Record<string, unknown>).nextStreet as string);
+}
+
+function isRabbitRunout(value: unknown): value is RabbitRunout {
+  return value !== null && typeof value === 'object'
+    && ['flop', 'turn', 'river'].includes((value as Record<string, unknown>).nextStreet as string);
 }
 
 function isShowdown(value: unknown): value is Showdown {
@@ -158,16 +165,6 @@ function isPlayerActionNotification(value: unknown): value is PlayerActionNotifi
     && isPlayerAction(notice.action);
 }
 
-function actionNoticeText(notice: PlayerActionNotification): string {
-  const amount = notice.amount?.toLocaleString('he-IL');
-  const action = notice.action;
-  if (action.type === 'check') return 'צ׳ק';
-  if (action.type === 'fold') return 'פרישה מהיד';
-  if (action.type === 'call') return amount ? `השוואה · ${amount}` : 'השוואה';
-  if (action.type === 'all-in') return amount ? `אול אין · ${amount}` : 'אול אין';
-  return `${notice.raiseKind === 'bet' ? 'הימור' : 'העלאה'} ל־${(notice.amount ?? action.raiseTo).toLocaleString('he-IL')}`;
-}
-
 function actionPresentation(notice: PlayerActionNotification) {
   const amount = notice.amount?.toLocaleString('he-IL');
   if (notice.action.type === 'check') return { icon: '✓', label: 'צ׳ק', tone: 'check' };
@@ -203,6 +200,7 @@ function isPlayerView(value: unknown): value is PlayerView {
     && (view.finalSummaryVisible === undefined || typeof view.finalSummaryVisible === 'boolean')
     && (view.isSittingOut === undefined || typeof view.isSittingOut === 'boolean')
     && (view.lastAction === undefined || isPlayerActionNotification(view.lastAction))
+    && (view.gameStartedAt === undefined || (typeof view.gameStartedAt === 'string' && Number.isFinite(Date.parse(view.gameStartedAt))))
     && typeof view.street === 'string'
     && typeof view.dealerSeat === 'number'
     && typeof view.smallBlindSeat === 'number'
@@ -220,6 +218,7 @@ function isPlayerView(value: unknown): value is PlayerView {
     && (view.raise === undefined || (view.raise !== null && typeof view.raise === 'object'
       && ['minRaiseTo', 'maxRaiseTo', 'minimumIncrement'].every((key) => typeof (view.raise as Record<string, unknown>)[key] === 'number')))
     && (view.allInRunout === undefined || isAllInRunout(view.allInRunout))
+    && (view.rabbitRunout === undefined || isRabbitRunout(view.rabbitRunout))
     && (view.showdown === undefined || isShowdown(view.showdown));
 }
 
@@ -249,11 +248,12 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   const [continueDialogOpen, setContinueDialogOpen] = useState(false);
   const [continuingHand, setContinuingHand] = useState(false);
   const [advancingRunout, setAdvancingRunout] = useState(false);
+  const [advancingRabbitRunout, setAdvancingRabbitRunout] = useState(false);
   const [revealingCardIndex, setRevealingCardIndex] = useState<0 | 1>();
   const [showRaiseControls, setShowRaiseControls] = useState(false);
   const [waitingForNextHand, setWaitingForNextHand] = useState(false);
-  const [actionNotices, setActionNotices] = useState<readonly TimedActionNotification[]>([]);
   const [seatActions, setSeatActions] = useState<ReadonlyMap<string, PlayerActionNotification>>(() => new Map());
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [activePotIndex, setActivePotIndex] = useState(0);
   const [finalSummary, setFinalSummary] = useState<FinalSummary>();
   const [downloadingSummary, setDownloadingSummary] = useState(false);
@@ -295,7 +295,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
         if ((next.sequence ?? 0) < latestSequenceRef.current) return;
         latestSequenceRef.current = next.sequence ?? latestSequenceRef.current;
         setWaitingForNextHand(false);
-        setView(next);
+        setView((current) => ({ ...next, gameStartedAt: next.gameStartedAt ?? current?.gameStartedAt }));
         setStatus(next.street === 'showdown' ? 'היד הסתיימה' : 'מחוברים לשולחן');
       } catch {
         if (active) setStatus('החיבור נותק זמנית — מתחברים מחדש…');
@@ -325,7 +325,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
       if (!active || !isPlayerView(next)) return;
       if ((next.sequence ?? 0) < latestSequenceRef.current) return;
       latestSequenceRef.current = next.sequence ?? latestSequenceRef.current;
-      setView(next);
+      setView((current) => ({ ...next, gameStartedAt: next.gameStartedAt ?? current?.gameStartedAt }));
       setStatus(next.street === 'showdown' ? 'היד הסתיימה' : 'מחוברים לשולחן');
     });
     socket.on('game:error', () => { void refresh(); });
@@ -372,20 +372,11 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
     }
     if (!view.lastAction || view.lastAction.sequence <= seenActionSequenceRef.current) {
       seenActionSequenceRef.current = Math.max(seenActionSequenceRef.current, viewSequence);
-      if (streetChanged) {
-        const now = Date.now();
-        setActionNotices((current) => current[0] ? [{ ...current[0], expiresAt: now + 5_000 }] : []);
-        setSeatActions(new Map());
-      }
+      if (streetChanged) setSeatActions(new Map());
       return;
     }
     seenActionSequenceRef.current = view.lastAction.sequence;
-    const receivedAt = Date.now();
     const notice = view.lastAction;
-    setActionNotices((current) => {
-      const active = current.filter((entry) => entry.expiresAt > receivedAt && entry.sequence !== notice.sequence);
-      return [{ ...notice, expiresAt: receivedAt + (streetChanged ? 5_000 : 10_000) }, ...(streetChanged ? [] : active)];
-    });
     if (streetChanged) {
       setSeatActions(new Map());
     } else {
@@ -394,20 +385,18 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   }, [view]);
 
   useEffect(() => {
-    if (actionNotices.length === 0) return;
-    const nextExpiry = Math.min(...actionNotices.map((notice) => notice.expiresAt));
-    const timer = globalThis.setTimeout(() => {
-      const now = Date.now();
-      setActionNotices((current) => current.filter((notice) => notice.expiresAt > now));
-    }, Math.max(0, nextExpiry - Date.now()) + 20);
-    return () => globalThis.clearTimeout(timer);
-  }, [actionNotices]);
-
-  useEffect(() => {
     if (view?.street !== 'showdown') return;
-    setActionNotices([]);
     setSeatActions(new Map());
   }, [view?.street]);
+
+  useEffect(() => {
+    if (!view?.gameStartedAt) return;
+    const startedAt = Date.parse(view.gameStartedAt);
+    const update = () => setElapsedSeconds(Math.max(0, Math.floor((Date.now() - startedAt) / 1_000)));
+    update();
+    const timer = globalThis.setInterval(update, 1_000);
+    return () => globalThis.clearInterval(timer);
+  }, [view?.gameStartedAt]);
 
   const ownSeat = useMemo(() => view?.seats.find((seat) => seat.playerId === view.playerId), [view]);
   const bustedPlayers = management?.players.filter((player) => player.rebuyDecisionPending) ?? [];
@@ -447,6 +436,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
     && ownExposedCardIndexes.size < 2,
   );
   const isCurrentHost = Boolean(view && (view.hostPlayerId ? view.hostPlayerId === view.playerId : isHost));
+  const gameTime = `${Math.floor(elapsedSeconds / 3_600).toString().padStart(2, '0')}:${Math.floor((elapsedSeconds % 3_600) / 60).toString().padStart(2, '0')}:${(elapsedSeconds % 60).toString().padStart(2, '0')}`;
 
   useEffect(() => {
     setActivePotIndex(0);
@@ -541,7 +531,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
         });
         if (acknowledged) {
           latestSequenceRef.current = Math.max(latestSequenceRef.current, acknowledged.sequence ?? 0);
-          setView(acknowledged);
+          setView((current) => ({ ...acknowledged, gameStartedAt: acknowledged.gameStartedAt ?? current?.gameStartedAt }));
           setStatus(acknowledged.street === 'showdown' ? 'היד הסתיימה' : 'מחוברים לשולחן');
           return;
         }
@@ -565,7 +555,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
       }
       if (!accepted || !isPlayerView(next)) throw new Error('Action unavailable');
       latestSequenceRef.current = Math.max(latestSequenceRef.current, next.sequence ?? 0);
-      setView(next);
+      setView((current) => ({ ...next, gameStartedAt: next.gameStartedAt ?? current?.gameStartedAt }));
       setStatus(next.street === 'showdown' ? 'היד הסתיימה' : 'מחוברים לשולחן');
     } catch {
       try {
@@ -573,7 +563,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
         const recovered = await response.json();
         if (response.ok && isPlayerView(recovered) && (recovered.sequence ?? -1) > submittedSequence) {
           latestSequenceRef.current = Math.max(latestSequenceRef.current, recovered.sequence ?? 0);
-          setView(recovered);
+          setView((current) => ({ ...recovered, gameStartedAt: recovered.gameStartedAt ?? current?.gameStartedAt }));
           setStatus(recovered.street === 'showdown' ? 'היד הסתיימה' : 'מחוברים לשולחן');
         } else {
           setStatus('הפעולה לא זמינה כרגע. נסו שוב.');
@@ -812,6 +802,22 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
     }
   }
 
+  async function advanceRabbitRunout() {
+    if (!isCurrentHost || !view?.rabbitRunout || advancingRabbitRunout) return;
+    setAdvancingRabbitRunout(true);
+    try {
+      const response = await globalThis.fetch(`${SERVER_URL}/rooms/${encodeURIComponent(joinId)}/game/runout/uncontested`, {
+        method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json' },
+      });
+      if (!response.ok) throw new Error('Uncontested board unavailable');
+      setStatus(`נחשף ${streetNames[view.rabbitRunout.nextStreet]}…`);
+    } catch {
+      setStatus('לא הצלחנו לחשוף את המשך הלוח. נסו שוב.');
+    } finally {
+      setAdvancingRabbitRunout(false);
+    }
+  }
+
   async function revealCard(cardIndex: 0 | 1) {
     if (view?.street !== 'showdown' || revealingCardIndex !== undefined || ownExposedCardIndexes.has(cardIndex)) return;
     setRevealingCardIndex(cardIndex);
@@ -822,7 +828,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
       });
       const next = await response.json();
       if (!response.ok || !isPlayerView(next)) throw new Error('Showdown reveal unavailable');
-      setView(next);
+      setView((current) => ({ ...next, gameStartedAt: next.gameStartedAt ?? current?.gameStartedAt }));
       setStatus('הקלף שבחרתם נחשף לשולחן.');
     } catch {
       setStatus('לא הצלחנו לחשוף את הקלף. נסו שוב.');
@@ -851,18 +857,13 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
 
   return (
     <main className="table-shell" dir="rtl">
-      {actionNotices.length ? <div className="action-notifications" role="status" aria-live="polite" aria-label="פעולות אחרונות">
-        {actionNotices.map((notice) => <aside className="action-notification" key={notice.sequence}>
-          <ProfileImage className="action-notification-avatar" dataUrl={notice.avatarDataUrl} fallback={notice.actorPlayerName.slice(0, 1)} />
-          <span><strong>{notice.actorPlayerName}</strong><small>{actionNoticeText(notice)}</small></span>
-        </aside>)}
-      </div> : null}
       <header className="table-header">
         <a href={`/r/${joinId}`} aria-label="חזרה ללובי"><AppBrand compact /></a>
         {isCurrentHost ? <button type="button" className="table-management-button" aria-expanded={managementOpen} onClick={() => {
           setManagementOpen(true);
           void loadManagement();
         }}><span aria-hidden="true">⚙</span> ניהול שולחן</button> : null}
+        <div className="table-timer"><span>זמן משחק</span><strong dir="ltr">{gameTime}</strong></div>
         <div className="table-round"><span>שלב במשחק</span><strong>{streetNames[view.street]}</strong></div>
         <div className="table-header-pot"><span>{view.showdown ? 'קופה שחולקה' : 'קופה נוכחית'}</span><strong><i aria-hidden="true" />{displayedPot.toLocaleString('he-IL')}</strong></div>
       </header>
@@ -947,6 +948,10 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
         {view.allInRunout ? <div className="all-in-runout-panel" role="status">
           <div><span aria-hidden="true">⚡</span><p><strong>כולם באול אין</strong><small>הקלפים של המשתתפים פתוחים. המארח חושף את {streetNames[view.allInRunout.nextStreet]}.</small></p></div>
           {isCurrentHost ? <button type="button" disabled={advancingRunout} onClick={() => void advanceAllInRunout()}>{advancingRunout ? 'חושפים…' : `חשיפת ${streetNames[view.allInRunout.nextStreet]}`}</button> : <small>ממתינים למארח.</small>}
+        </div> : null}
+        {view.rabbitRunout ? <div className="all-in-runout-panel rabbit-runout-panel" role="status">
+          <div><span aria-hidden="true">♠</span><p><strong>רוצים לראות מה היה יוצא?</strong><small>היד כבר הוכרעה. פתיחת הלוח לא תשנה את הזוכה או את הקופה.</small></p></div>
+          {isCurrentHost ? <button type="button" disabled={advancingRabbitRunout} onClick={() => void advanceRabbitRunout()}>{advancingRabbitRunout ? 'חושפים…' : `חשיפת ${streetNames[view.rabbitRunout.nextStreet]}`}</button> : <small>המארח יכול לחשוף את המשך הלוח.</small>}
         </div> : null}
         {view.showdown && (!view.gameCompleted || !view.finalSummaryVisible) ? <div className="between-hands-controls" aria-label="פעולות בין ידיים">
           {canRevealAtShowdown && ownHoleCards ? <div className="reveal-card-picker"><span>בחרו קלף לחשיפה</span><div>{ownHoleCards.map((card, index) => {

@@ -2,11 +2,14 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
 import {
+  advanceUncontestedRunout,
   advancePreflopToFlop,
   applyFlopAllIn,
   applyFlopCall,
   applyPreflopCall,
   applyPreflopCheck,
+  applyPreflopFold,
+  finishUncontestedHand,
   runOutAllInToShowdown,
   startHand,
 } from '../packages/poker-core/src/index.ts';
@@ -103,4 +106,32 @@ test('runout permits a settled unequal all-in commitment for later side-pot sett
   ].map((card) => `${card.rank}-${card.suit}`)).size, 52);
   assert.deepEqual(settled.communityCards, sourceBoard);
   assert.deepEqual(settled.remainingDeck, sourceDeck);
+});
+
+test('an uncontested rabbit runout reveals flop, turn, and river separately from the private deck', () => {
+  const preflop = startHand({
+    seats: [
+      { seatNumber: 1, playerId: 'ada', stack: 100 },
+      { seatNumber: 2, playerId: 'ben', stack: 100 },
+    ],
+    dealerSeat: 1,
+    smallBlind: 5,
+    bigBlind: 10,
+    randomInt: unshuffledRandomInt,
+  });
+  const wonByFolds = finishUncontestedHand(applyPreflopFold(preflop, 1));
+  const flop = advanceUncontestedRunout(wonByFolds);
+  const turn = advanceUncontestedRunout(flop);
+  const river = advanceUncontestedRunout(turn);
+
+  assert.equal(flop.street, 'showdown');
+  assert.equal(flop.communityCards.length, 3);
+  assert.equal(flop.burnedCards.length, 1);
+  assert.equal(turn.communityCards.length, 4);
+  assert.equal(turn.burnedCards.length, 2);
+  assert.equal(river.communityCards.length, 5);
+  assert.equal(river.burnedCards.length, 3);
+  assert.equal(river.pot, wonByFolds.pot);
+  assert.deepEqual(river.seats.map((seat) => seat.totalCommitted), wonByFolds.seats.map((seat) => seat.totalCommitted));
+  assert.throws(() => advanceUncontestedRunout(river), /complete|inconsistent/i);
 });

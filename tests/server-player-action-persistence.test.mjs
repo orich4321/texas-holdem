@@ -68,10 +68,12 @@ test('a busted seat stays visually active while the host reviews the hand, then 
   const repository = new RoomRepository({
     room: { findFirst: async () => ({ status: 'IN_PROGRESS', hostPlayerId: room.hostPlayerId, finalSummaryVisible: false, players: players.map((player) => ({ ...player, rebuyDecisionPending: player.id === 'player-1' && decisionPending })), events: [] }) },
     gameSnapshot: { findFirst: async () => ({ sequence: 4, state: snapshot }) },
+    gameEvent: { findFirst: async () => ({ createdAt: new Date('2026-01-01T12:00:00.000Z') }) },
   }, undefined, undefined, undefined, keyring);
 
   const pendingView = await repository.recoverLatestPlayerViewForPlayer(room.id, 'host-id');
   assert.equal(pendingView?.seats.find((seat) => seat.playerId === 'player-1')?.isSittingOut, false);
+  assert.equal(pendingView?.gameStartedAt, '2026-01-01T12:00:00.000Z');
   decisionPending = false;
   const declinedView = await repository.recoverLatestPlayerViewForPlayer(room.id, 'host-id');
   assert.equal(declinedView?.seats.find((seat) => seat.playerId === 'player-1')?.isSittingOut, true);
@@ -218,6 +220,26 @@ test('the host persists one all-in board street without exposing cards in the ev
   assert.equal(JSON.stringify(db.calls.find(([name]) => name === 'gameEvent.create')[1].data).includes('holeCards'), false);
   const persisted = hydrateSignedPrivateHandSnapshot(db.calls.find(([name]) => name === 'gameSnapshot.create')[1].data.state, { roomId: room.id, sequence: 1 }, keyring);
   assert.equal(persisted.hand.street, 'flop');
+  assert.equal(persisted.hand.communityCards.length, 3);
+});
+
+test('the host persists one hypothetical board street after an uncontested hand without changing settlement', async () => {
+  const recoveredRaise = hydrateSignedPrivateHandSnapshot(raisedSnapshot, { roomId: room.id, sequence: 1 }, keyring).hand;
+  const foldedShowdown = finishUncontestedHand(applyPreflopFold(recoveredRaise, 2));
+  const foldedSnapshot = signPrivateHandSnapshot(foldedShowdown, { roomId: room.id, sequence: 2, keyId }, key);
+  const db = createDb({ latest: { sequence: 2, state: foldedSnapshot } });
+  const repository = new RoomRepository(db, undefined, undefined, undefined, keyring);
+
+  const result = await repository.advanceRabbitRunoutForHostAtomically({ joinId: room.joinId, hostPlayerId: 'host-id' });
+
+  assert.equal(result.sequence, 3);
+  assert.deepEqual(db.calls.find(([name]) => name === 'gameEvent.create')[1].data, {
+    roomId: room.id, sequence: 3, type: 'UNCONTESTED_RUNOUT_ADVANCED', payload: { communityCardCount: 3 },
+  });
+  assert.equal(db.calls.filter(([name]) => name === 'settlement.create').length, 0);
+  assert.equal(db.calls.filter(([name]) => name === 'player.update').length, 0);
+  const persisted = hydrateSignedPrivateHandSnapshot(db.calls.find(([name]) => name === 'gameSnapshot.create')[1].data.state, { roomId: room.id, sequence: 3 }, keyring);
+  assert.equal(persisted.hand.street, 'showdown');
   assert.equal(persisted.hand.communityCards.length, 3);
 });
 

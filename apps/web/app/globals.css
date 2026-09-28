@@ -163,20 +163,15 @@ button:disabled { cursor: wait; opacity: 0.55; }
 
 /* Table */
 .table-shell { position: relative; isolation: isolate; display: grid; grid-template-rows: auto auto minmax(0,1fr) auto; width: 100%; height: 100svh; height: 100dvh; padding: max(7px, env(safe-area-inset-top)) clamp(6px, 1.4vw, 18px) max(7px, env(safe-area-inset-bottom)); overflow-x: clip; background: radial-gradient(circle at 50% 48%, rgba(39,82,61,.16), transparent 42%); gap: clamp(5px, 1vh, 10px); }
-.action-notifications { position: fixed; z-index: 70; top: calc(env(safe-area-inset-top) + 62px); right: max(10px,env(safe-area-inset-right)); display: grid; align-content: start; width: min(290px,calc(100vw - 20px)); gap: 6px; pointer-events: none; }
-.action-notification { display: grid; grid-template-columns: 36px minmax(0,1fr); align-items: center; width: 100%; min-height: 47px; padding: 5px 8px; border: 1px solid rgba(168,134,78,.3); border-radius: 14px; color: var(--ink); background: linear-gradient(145deg,rgba(17,35,28,.97),rgba(6,17,13,.97)); box-shadow: 0 10px 28px rgba(0,0,0,.42); gap: 8px; animation: action-notification-in 180ms cubic-bezier(.2,.8,.2,1) both; backdrop-filter: blur(14px); }
-.action-notification-avatar { display: grid; width: 38px; height: 38px; overflow: hidden; border: 1px solid var(--gold-line); border-radius: 50%; color: var(--gold-light); background-position: center; background-size: cover; background-color: #14251e; place-items: center; font-size: .75rem; font-weight: 900; }
-.action-notification > span { display: grid; min-width: 0; gap: 2px; }
-.action-notification strong { overflow: hidden; font-size: .7rem; text-overflow: ellipsis; white-space: nowrap; }
-.action-notification small { color: var(--gold-light); font-size: .61rem; font-weight: 850; }
-.table-header { display: grid; grid-row: 1; grid-template-columns: 1fr auto auto auto; align-items: center; width: min(100%, 1180px); min-height: 47px; margin: 0 auto; padding: 5px 10px; border: 1px solid var(--line); border-radius: 15px; background: rgba(7,14,11,.8); box-shadow: 0 8px 28px rgba(0,0,0,.16); gap: clamp(8px,2.5vw,30px); backdrop-filter: blur(15px); }
-.table-header:not(:has(.table-management-button)) { grid-template-columns: 1fr auto auto; }
+.table-header { display: grid; grid-row: 1; grid-template-columns: 1fr auto auto auto auto; align-items: center; width: min(100%, 1180px); min-height: 47px; margin: 0 auto; padding: 5px 10px; border: 1px solid var(--line); border-radius: 15px; background: rgba(7,14,11,.8); box-shadow: 0 8px 28px rgba(0,0,0,.16); gap: clamp(8px,2.5vw,30px); backdrop-filter: blur(15px); }
+.table-header:not(:has(.table-management-button)) { grid-template-columns: 1fr auto auto auto; }
 .table-header a { width: fit-content; text-decoration: none; }
 .table-management-button { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 0 11px; border: 1px solid rgba(230,189,105,.25); border-radius: 10px; color: #f4dfaa; background: rgba(111,77,20,.18); cursor: pointer; gap: 6px; font-size: .61rem; font-weight: 900; white-space: nowrap; }
 .table-management-button span { font-size: .78rem; }
 .table-header > div { display: grid; min-width: 74px; text-align: center; }
 .table-header > div > span { color: var(--muted); font-size: .52rem; }
 .table-header > div strong { color: var(--gold-light); font-size: .72rem; font-variant-numeric: tabular-nums; }
+.table-timer strong { letter-spacing: .045em; }
 .table-header-pot strong { display: flex; align-items: center; justify-content: center; gap: 5px; }
 .table-header-pot i, .table-pot i, .your-stack i, .table-seat small i { display: inline-block; width: 9px; height: 9px; border: 2px dashed rgba(255,255,255,.58); border-radius: 50%; background: #bc3f48; box-shadow: 0 0 0 2px #79252d; }
 .turn-banner { display: flex; grid-row: 2; align-items: center; justify-content: center; width: min(100%, 720px); min-height: 31px; margin: 0 auto; padding: 4px 13px; border: 1px solid var(--line); border-radius: 999px; color: #bdc7c1; background: rgba(255,255,255,.025); gap: 8px; font-size: clamp(.62rem, 1.2vw, .74rem); font-weight: 750; text-align: center; }
@@ -412,7 +407,6 @@ button:disabled { cursor: wait; opacity: 0.55; }
 @keyframes fade-in { from { opacity: 0; } }
 @keyframes breathe { 50% { opacity: .25; } }
 @keyframes raise-panel-in { from { opacity: 0; transform: translateY(8px) scale(.985); } }
-@keyframes action-notification-in { from { opacity: 0; transform: translateY(-18px); } to { opacity: 1; transform: none; } }
 @keyframes pot-award-in { from { opacity: 0; transform: translateY(-7px) scale(.97); } to { opacity: 1; transform: translateY(0); } }
 @keyframes winner-seat-glow { 50% { border-color: #fff0b8; box-shadow: 0 0 0 5px rgba(230,189,105,.14), 0 0 34px rgba(230,189,105,.9), 0 10px 26px rgba(0,0,0,.42); } }
 @keyframes winner-ring { from { opacity: .9; transform: scale(.94); } to { opacity: 0; transform: scale(1.12); } }
@@ -484,9 +478,6 @@ button:disabled { cursor: wait; opacity: 0.55; }
   .pot-award-card nav button { width: 20px; height: 17px; }
   .community-cards { top: 50%; gap: 3px; }
   .community-cards .playing-card { width: clamp(31px,9.6vw,43px); }
-  .action-notifications { top: calc(env(safe-area-inset-top) + 52px); right: max(7px,env(safe-area-inset-right)); width: min(270px,calc(100vw - 14px)); gap: 4px; }
-  .action-notification { grid-template-columns: 31px minmax(0,1fr); min-height: 41px; padding: 4px 7px; border-radius: 12px; }
-  .action-notification-avatar { width: 31px; height: 31px; }
   .seat-action { bottom: -11px; min-height: 22px; padding: 2px 6px; gap: 3px; }
   .seat-action i { width: 15px; height: 15px; flex-basis: 15px; font-size: .53rem; }
   .seat-action b { font-size: .45rem; }
@@ -531,8 +522,8 @@ button:disabled { cursor: wait; opacity: 0.55; }
   .lobby-topbar .app-brand > span:last-child { display: none; }
   .lobby-share > div span { display: none; }
   .table-header > .table-round { display: none; }
-  .table-header { grid-template-columns: 1fr auto auto; }
-  .table-header:not(:has(.table-management-button)) { grid-template-columns: 1fr auto; }
+  .table-header { grid-template-columns: 1fr auto auto auto; }
+  .table-header:not(:has(.table-management-button)) { grid-template-columns: 1fr auto auto; }
   .table-management-button { min-height: 34px; padding-inline: 7px; font-size: .54rem; }
   .table-seat { width: 82px; }
   .community-cards .playing-card { width: 30px; }

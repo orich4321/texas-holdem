@@ -1174,6 +1174,46 @@ export function finishUncontestedHand(hand: StartedHand): StartedHand {
 }
 
 /**
+ * Reveals exactly one remaining board street after an uncontested hand. This
+ * is a "rabbit hunt" only: the already-settled winner, commitments, and stacks
+ * are left untouched and the server-private deck remains authoritative.
+ */
+export function advanceUncontestedRunout(hand: StartedHand): StartedHand {
+  if (!authoritativeHands.has(hand) || hand.street !== 'showdown') {
+    throw new Error('An uncontested runout requires an authoritative completed hand');
+  }
+  const contestingSeats = hand.seats.filter((seat) => seat?.holeCards && !seat.isFolded);
+  if (contestingSeats.length !== 1 || hand.pendingActorSeats.length !== 0) {
+    throw new Error('An uncontested runout requires exactly one remaining player');
+  }
+  const expectedBurns = hand.communityCards.length === 0 ? 0 : hand.communityCards.length === 3 ? 1 : hand.communityCards.length === 4 ? 2 : -1;
+  if (expectedBurns < 0 || hand.burnedCards.length !== expectedBurns) {
+    throw new Error('The uncontested board is already complete or inconsistent');
+  }
+  const dealtCards = hand.seats.filter((seat) => seat?.holeCards).flatMap((seat) => seat.holeCards!);
+  const allCards = [...dealtCards, ...hand.communityCards, ...hand.burnedCards, ...hand.remainingDeck];
+  if (allCards.length !== 52 || new Set(allCards.map((card) => `${card?.rank}-${card?.suit}`)).size !== 52 || allCards.some((card) => !card || !rankValues.has(card.rank) || !suits.includes(card.suit))) {
+    throw new Error('An uncontested runout requires 52 distinct valid private cards');
+  }
+  const cardsToDeal = hand.communityCards.length === 0 ? 3 : 1;
+  if (hand.remainingDeck.length < cardsToDeal + 1) throw new Error('The private deck cannot reveal another street');
+  const [burn, ...afterBurn] = hand.remainingDeck;
+  const communityCards = [...hand.communityCards, ...afterBurn.slice(0, cardsToDeal)];
+  const remainingDeck = afterBurn.slice(cardsToDeal);
+  return attachPrivateHandState({
+    ...hand,
+    seats: hand.seats.map((seat) => ({
+      ...seat,
+      holeCards: seat.holeCards && [cloneCard(seat.holeCards[0]), cloneCard(seat.holeCards[1])] as [Card, Card],
+    })),
+  }, {
+    street: 'showdown', communityCards, remainingDeck, burnedCards: [...hand.burnedCards, burn],
+    smallBlindAmount: hand.smallBlindAmount, bigBlindAmount: hand.bigBlindAmount,
+    streetPot: hand.streetPot, pendingActorSeats: [], raiseLockedSeats: [], revealedHoleCards: hand.revealedHoleCards,
+  });
+}
+
+/**
  * Records a voluntary showdown reveal without ever allowing a caller to
  * supply cards. The authoritative hand remains the only source of them.
  */
