@@ -16,6 +16,7 @@ export interface SessionIo {
 
 interface GameSocketRepository extends SocketSessionRepository {
   recoverLatestPlayerViewForPlayer(roomId: string, playerId: string): Promise<ServerPlayerView | null>;
+  drainPreActionsForRoom?(roomId: string): Promise<void>;
   persistPlayerActionAtomically(input: { roomId: string; playerId: string; action: PlayerAction }): Promise<{
     sequence: number;
     views: readonly ServerPlayerView[];
@@ -72,7 +73,12 @@ export function attachSocketSessionTransport(io: SessionIo, repository: GameSock
         action: action as PlayerAction,
         ...(typeof envelope.clientActionId === 'string' ? { clientActionId: envelope.clientActionId } : {}),
       })
-        .then(({ views }) => {
+        .then(async ({ views }) => {
+          try {
+            await repository.drainPreActionsForRoom?.(session.roomId);
+          } catch {
+            // The accepted action remains durable; the next state read retries.
+          }
           for (const view of views) {
             for (const recipient of socketsByRoom.get(session.roomId) ?? []) {
               if (recipient.data.session?.playerId === view.playerId) recipient.emit('game:state', view);

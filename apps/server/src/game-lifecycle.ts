@@ -114,6 +114,10 @@ export interface ServerPlayerView {
   isSittingOut?: boolean;
   /** Latest durable action, shared identically with every participant. */
   lastAction?: PlayerActionNotification;
+  /** Recent public actions let polling clients play each sound once. */
+  recentActions?: readonly PlayerActionNotification[];
+  /** Only the authenticated player receives their own queued choice. */
+  preAction?: Readonly<{ type: 'check-fold' | 'call'; quotedToCall?: number }>;
   /** Stable start time of the room's first hand, added by persistence. */
   gameStartedAt?: string;
   /** Server-authoritative deadline for the current actor. */
@@ -129,6 +133,8 @@ export interface ServerPlayerView {
   communityCards: readonly Card[];
   pot: number;
   toCall: number;
+  /** What this player would owe if their turn began at the current wager. */
+  waitingToCall: number;
   /** Present only for the active, authenticated player when a full raise is legal. */
   raise?: Readonly<{
     minRaiseTo: number;
@@ -326,6 +332,8 @@ export class ServerGameLifecycle {
       // The individual awarded pots remain available in `showdown.pots`.
       pot: showdown ? 0 : hand.pot,
       toCall,
+      waitingToCall: hand.street === 'showdown' || requestingSeat.isFolded || requestingSeat.stack === 0
+        ? 0 : Math.min(Math.max(0, hand.currentBet - requestingSeat.currentBet), requestingSeat.stack),
       ...(legalActions?.canRaise && legalActions.minRaiseTo !== null && legalActions.maxRaiseTo !== null ? {
         raise: Object.freeze({
           minRaiseTo: legalActions.minRaiseTo,

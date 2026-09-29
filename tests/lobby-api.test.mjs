@@ -2,11 +2,12 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { resolve } from 'node:path';
 import { readFile } from 'node:fs/promises';
+import { pathToFileURL } from 'node:url';
 
 const root = resolve(import.meta.dirname, '..');
 
 async function lobbyApi() {
-  return import(resolve(root, 'apps/web/app/lobby-api.ts'));
+  return import(pathToFileURL(resolve(root, 'apps/web/app/lobby-api.ts')).href);
 }
 
 test('lobby shell preserves vertical scrolling for a full nine-player mobile table', async () => {

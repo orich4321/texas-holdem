@@ -31,6 +31,7 @@ model Room {
   snapshots    GameSnapshot[]
   settlements  Settlement[]
   chipAdjustments ChipAdjustment[]
+  preActions   PreAction[]
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 
@@ -54,6 +55,7 @@ model Player {
   hostedRooms  Room[]   @relation("RoomHost")
   receivedChipAdjustments ChipAdjustment[] @relation("ChipRecipient")
   authorizedChipAdjustments ChipAdjustment[] @relation("ChipAuthorizer")
+  preAction PreAction?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -73,6 +75,23 @@ model GameEvent {
   createdAt DateTime @default(now())
 
   @@unique([roomId, sequence])
+}
+
+model PreAction {
+  id                 String   @id @default(uuid()) @db.Uuid
+  roomId             String   @db.Uuid
+  playerId           String   @db.Uuid
+  handStartSequence  Int
+  street             String
+  type               String
+  expectedCurrentBet Int?
+  quotedToCall       Int?
+  createdAt          DateTime @default(now())
+  room               Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  player             Player   @relation(fields: [roomId, playerId], references: [roomId, id], onDelete: Cascade)
+
+  @@unique([roomId, playerId])
+  @@index([roomId])
 }
 
 model ChipAdjustment {

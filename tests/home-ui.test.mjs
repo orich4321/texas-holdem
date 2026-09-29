@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 
 const root = resolve(import.meta.dirname, '..');
 
@@ -10,7 +11,7 @@ async function source(path) {
 }
 
 async function roomCreation() {
-  return import(resolve(root, 'apps/web/app/room-creation.ts'));
+  return import(pathToFileURL(resolve(root, 'apps/web/app/room-creation.ts')).href);
 }
 
 function rule(styles, selector) {

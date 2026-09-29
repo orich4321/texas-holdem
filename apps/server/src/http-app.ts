@@ -156,7 +156,7 @@ function createHttpCorsMiddleware(isOriginAllowed: OriginPolicy): RequestHandler
 
     response.setHeader('Access-Control-Allow-Origin', origin);
     response.setHeader('Access-Control-Allow-Credentials', 'true');
-    response.setHeader('Access-Control-Allow-Methods', 'GET, POST');
+    response.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT');
     response.setHeader('Access-Control-Allow-Headers', 'Content-Type');
     response.setHeader('Vary', 'Origin');
 
@@ -334,6 +334,7 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
         response.status(401).json({ error: { code: 'UNAUTHORIZED' } });
         return;
       }
+      await roomRepository.drainPreActionsForRoom(player.roomId);
       const view = await roomRepository.recoverLatestPlayerViewForPlayer(player.roomId, player.id);
       if (!view) {
         response.status(409).json({ error: { code: 'GAME_NOT_AVAILABLE' } });
@@ -343,6 +344,28 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
     } catch (error) {
       console.error('Game state lookup failed', error);
       response.status(500).json({ error: { code: 'INTERNAL_ERROR' } });
+    }
+  });
+
+  routes.put('/rooms/:joinId/game/pre-action', async (request, response) => {
+    const type = request.body?.type;
+    if (type !== null && type !== 'check-fold' && type !== 'call') {
+      response.status(400).json({ error: { code: 'INVALID_REQUEST' } });
+      return;
+    }
+    try {
+      const player = await roomRepository.findPlayerByRoomJoinIdAndAccessToken(
+        request.params.joinId, parseCookieHeader(request.headers.cookie).poker_player_token,
+      );
+      if (!player) {
+        response.status(401).json({ error: { code: 'UNAUTHORIZED' } });
+        return;
+      }
+      const choice = await roomRepository.setPreActionForPlayer(player.roomId, player.id, type);
+      response.json({ preAction: choice });
+    } catch (error) {
+      console.error('Pre-action selection failed', error);
+      response.status(409).json({ error: { code: 'PRE_ACTION_UNAVAILABLE' } });
     }
   });
 
@@ -362,7 +385,12 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
         return;
       }
       const result = await roomRepository.persistPlayerActionAtomically({ roomId: player.roomId, playerId: player.id, ...input });
-      response.status(201).json(result.view);
+      try {
+        await roomRepository.drainPreActionsForRoom(player.roomId);
+      } catch (error) {
+        console.error('Queued action processing failed', error);
+      }
+      response.status(201).json(await roomRepository.recoverLatestPlayerViewForPlayer(player.roomId, player.id) ?? result.view);
     } catch (error) {
       console.error('Game action failed', error);
       response.status(409).json({ error: { code: 'ACTION_UNAVAILABLE' } });
@@ -414,6 +442,7 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
         return;
       }
       await roomRepository.startNextHandForHostAtomically({ joinId: request.params.joinId, hostPlayerId: player.id });
+      await roomRepository.drainPreActionsForRoom(player.roomId);
       response.status(201).json({ roomId: request.params.joinId, status: 'IN_PROGRESS' });
     } catch (error) {
       console.error('Next hand failed', error);

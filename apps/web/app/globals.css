@@ -166,6 +166,9 @@ button:disabled { cursor: wait; opacity: 0.55; }
 .table-header { display: grid; grid-row: 1; grid-template-columns: 1fr repeat(5,auto); align-items: center; width: min(100%, 1180px); min-height: 47px; margin: 0 auto; padding: 5px 10px; border: 1px solid var(--line); border-radius: 15px; background: rgba(7,14,11,.8); box-shadow: 0 8px 28px rgba(0,0,0,.16); gap: clamp(8px,2.5vw,30px); backdrop-filter: blur(15px); }
 .table-header:not(:has(.table-management-button)) { grid-template-columns: 1fr repeat(4,auto); }
 .table-header a { width: fit-content; text-decoration: none; }
+.table-header .table-header-brand { display: flex; align-items: center; min-width: 0; gap: 6px; }
+.table-sound-toggle { display: grid; width: 31px; height: 31px; flex: 0 0 31px; place-items: center; border: 1px solid rgba(204,181,132,.38); border-radius: 9px; color: #e0cda8; background: rgba(46,51,41,.72); cursor: pointer; font-size: 1.1rem; }
+.table-sound-toggle[aria-pressed="false"] { color: #959c96; border-color: rgba(255,255,255,.13); background: rgba(255,255,255,.04); }
 .table-management-button { display: inline-flex; align-items: center; justify-content: center; min-height: 36px; padding: 0 11px; border: 1px solid rgba(230,189,105,.25); border-radius: 10px; color: #f4dfaa; background: rgba(111,77,20,.18); cursor: pointer; gap: 6px; font-size: .61rem; font-weight: 900; white-space: nowrap; }
 .table-management-button span { font-size: .78rem; }
 .table-header > div { display: grid; min-width: 74px; text-align: center; }
@@ -257,6 +260,11 @@ button:disabled { cursor: wait; opacity: 0.55; }
 .your-stack small { color: var(--muted); font-size: .5rem; }
 .table-status { grid-column: 1/-1; margin: 0; padding: 6px; border-radius: 9px; color: #ffd8d3; background: rgba(150,45,45,.2); font-size: .62rem; text-align: center; }
 .action-bar { position: static; display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); width: 100%; gap: 5px; }
+.pre-action-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; min-height: 40px; }
+.pre-action-bar > span, .pre-action-bar > small { color: var(--muted); font-size: .62rem; white-space: nowrap; }
+.pre-action-bar button { min-height: 36px; padding: 0 11px; border: 1px solid rgba(196,180,141,.28); border-radius: 10px; color: #d9ded8; background: rgba(255,255,255,.05); cursor: pointer; font-size: .69rem; font-weight: 800; }
+.pre-action-bar button.is-selected { border-color: #baa16c; color: #f3e1bc; background: rgba(125,97,47,.3); box-shadow: inset 0 0 0 1px rgba(186,161,108,.25); }
+.pre-action-bar button:disabled { opacity: .55; cursor: wait; }
 .action-bar button { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 7px; border: 1px solid rgba(255,255,255,.15); border-radius: 12px; color: #edf6f1; background: rgba(255,255,255,.06); cursor: pointer; gap: 6px; font-size: clamp(.63rem,1.4vw,.75rem); font-weight: 900; white-space: nowrap; transition: transform 130ms ease, filter 130ms ease, box-shadow 130ms ease; }
 .action-bar button > span { display: grid; width: 19px; height: 19px; border-radius: 50%; background: rgba(0,0,0,.14); place-items: center; font-size: .65rem; }
 .action-bar button:active:not(:disabled) { filter: brightness(1.09); transform: scale(.985); }

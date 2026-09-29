@@ -215,7 +215,7 @@ test('POST /rooms rejects unapproved browser origins and supports approved prefl
 
   assert.equal(preflight.status, 204);
   assert.equal(preflight.headers.get('access-control-allow-origin'), approvedOrigin);
-  assert.equal(preflight.headers.get('access-control-allow-methods'), 'GET, POST');
+  assert.equal(preflight.headers.get('access-control-allow-methods'), 'GET, POST, PUT');
   assert.equal(preflight.headers.get('access-control-allow-credentials'), 'true');
 
   const rejected = await globalThis.fetch(`${baseUrl}/rooms`, {

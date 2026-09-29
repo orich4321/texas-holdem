@@ -5,6 +5,7 @@ import { io } from 'socket.io-client';
 import { AppBrand } from '../../ui';
 import { parsePositiveInteger } from '../../numeric-input';
 import { ProfileImage } from '../../profile-image';
+import { playActionSound, unlockActionAudio } from '../../action-sounds';
 
 declare const process: { env: { NODE_ENV?: string; NEXT_PUBLIC_GAME_URL?: string; NEXT_PUBLIC_SERVER_URL?: string } };
 
@@ -56,6 +57,8 @@ type PlayerView = {
   finalSummaryVisible?: boolean;
   isSittingOut?: boolean;
   lastAction?: PlayerActionNotification;
+  recentActions?: readonly PlayerActionNotification[];
+  preAction?: { type: 'check-fold' | 'call'; quotedToCall?: number };
   gameStartedAt?: string;
   turnDeadlineAt?: string;
   timeCardsRemaining?: number;
@@ -68,6 +71,7 @@ type PlayerView = {
   communityCards: readonly Card[];
   pot: number;
   toCall: number;
+  waitingToCall?: number;
   raise?: { minRaiseTo: number; maxRaiseTo: number; minimumIncrement: number };
   holeCards: readonly [Card, Card] | readonly [];
   seats: readonly { seatNumber: number; playerId: string; playerName: string; avatarDataUrl?: string; stack: number; currentBet: number; isFolded: boolean; isSittingOut: boolean }[];
@@ -202,6 +206,11 @@ function isPlayerView(value: unknown): value is PlayerView {
     && (view.finalSummaryVisible === undefined || typeof view.finalSummaryVisible === 'boolean')
     && (view.isSittingOut === undefined || typeof view.isSittingOut === 'boolean')
     && (view.lastAction === undefined || isPlayerActionNotification(view.lastAction))
+    && (view.recentActions === undefined || (Array.isArray(view.recentActions) && view.recentActions.every(isPlayerActionNotification)))
+    && (view.waitingToCall === undefined || (Number.isSafeInteger(view.waitingToCall) && (view.waitingToCall as number) >= 0))
+    && (view.preAction === undefined || (view.preAction !== null && typeof view.preAction === 'object'
+      && (view.preAction as { type?: unknown }).type !== undefined
+      && ['check-fold', 'call'].includes((view.preAction as { type: string }).type)))
     && (view.gameStartedAt === undefined || (typeof view.gameStartedAt === 'string' && Number.isFinite(Date.parse(view.gameStartedAt))))
     && (view.turnDeadlineAt === undefined || (typeof view.turnDeadlineAt === 'string' && Number.isFinite(Date.parse(view.turnDeadlineAt))))
     && (view.timeCardsRemaining === undefined || (Number.isSafeInteger(view.timeCardsRemaining) && (view.timeCardsRemaining as number) >= 0))
@@ -270,6 +279,8 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [turnSeconds, setTurnSeconds] = useState(60);
   const [usingTimeCard, setUsingTimeCard] = useState(false);
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const [savingPreAction, setSavingPreAction] = useState(false);
   const [activePotIndex, setActivePotIndex] = useState(0);
   const [finalSummary, setFinalSummary] = useState<FinalSummary>();
   const [downloadingSummary, setDownloadingSummary] = useState(false);
@@ -293,6 +304,50 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   const seenActionSequenceRef = useRef(-1);
   const previousStreetRef = useRef<PlayerView['street'] | undefined>(undefined);
   const expiryRequestRef = useRef<string | undefined>(undefined);
+  const seenSoundSequenceRef = useRef<number | undefined>(undefined);
+  const skipRecoveredSoundsRef = useRef(false);
+  const soundTimeoutsRef = useRef<Set<ReturnType<typeof globalThis.setTimeout>>>(new Set());
+
+  useEffect(() => {
+    try { setSoundEnabled(globalThis.localStorage.getItem('holdem-action-sound-enabled') !== 'false'); } catch { /* Storage is optional. */ }
+    const unlock = () => unlockActionAudio();
+    const skipBacklog = () => { skipRecoveredSoundsRef.current = true; };
+    globalThis.document.addEventListener('pointerdown', unlock);
+    globalThis.document.addEventListener('keydown', unlock);
+    globalThis.document.addEventListener('visibilitychange', skipBacklog);
+    globalThis.addEventListener('offline', skipBacklog);
+    return () => {
+      globalThis.document.removeEventListener('pointerdown', unlock);
+      globalThis.document.removeEventListener('keydown', unlock);
+      globalThis.document.removeEventListener('visibilitychange', skipBacklog);
+      globalThis.removeEventListener('offline', skipBacklog);
+      for (const timer of soundTimeoutsRef.current) globalThis.clearTimeout(timer);
+      soundTimeoutsRef.current.clear();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!view) return;
+    const sequence = view.sequence ?? -1;
+    if (seenSoundSequenceRef.current === undefined || skipRecoveredSoundsRef.current) {
+      seenSoundSequenceRef.current = sequence;
+      skipRecoveredSoundsRef.current = false;
+      return;
+    }
+    const fresh = (view.recentActions ?? (view.lastAction ? [view.lastAction] : []))
+      .filter((notice) => notice.sequence > seenSoundSequenceRef.current! && notice.sequence <= sequence)
+      .sort((left, right) => left.sequence - right.sequence);
+    seenSoundSequenceRef.current = Math.max(seenSoundSequenceRef.current, sequence);
+    if (!soundEnabled || globalThis.document.visibilityState !== 'visible') return;
+    fresh.forEach((notice, index) => {
+      const kind = notice.action.type === 'raise' ? notice.raiseKind ?? 'raise' : notice.action.type;
+      const timer = globalThis.setTimeout(() => {
+        soundTimeoutsRef.current.delete(timer);
+        playActionSound(kind);
+      }, index * 170);
+      soundTimeoutsRef.current.add(timer);
+    });
+  }, [view, soundEnabled]);
   const turnVibrationRef = useRef<{ identity: string; observedSequence: number; notified: boolean } | undefined>(undefined);
 
   useEffect(() => {
@@ -665,6 +720,39 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
     }
   }
 
+  async function selectPreAction(type: 'check-fold' | 'call') {
+    if (!view || isTurn || savingPreAction) return;
+    const selected = view.preAction?.type === type ? null : type;
+    const street = view.street;
+    setSavingPreAction(true);
+    try {
+      const response = await globalThis.fetch(`${SERVER_URL}/rooms/${encodeURIComponent(joinId)}/game/pre-action`, {
+        method: 'PUT', credentials: 'include', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ type: selected }),
+      });
+      const body = await response.json();
+      if (!response.ok || !body || typeof body !== 'object') throw new Error('Pre-action unavailable');
+      setView((current) => current && current.street === street && current.currentActorSeat !== ownSeat?.seatNumber
+        ? { ...current, preAction: body.preAction ?? undefined }
+        : current);
+    } catch {
+      setStatus('לא הצלחנו לשמור את הפעולה מראש. נסו שוב.');
+    } finally {
+      setSavingPreAction(false);
+    }
+  }
+
+  function toggleSound() {
+    const next = !soundEnabled;
+    if (!next) {
+      for (const timer of soundTimeoutsRef.current) globalThis.clearTimeout(timer);
+      soundTimeoutsRef.current.clear();
+    }
+    setSoundEnabled(next);
+    try { globalThis.localStorage.setItem('holdem-action-sound-enabled', String(next)); } catch { /* Storage is optional. */ }
+    if (next) unlockActionAudio();
+  }
+
   function submitRaise() {
     if (!view?.raise || raiseTo === undefined) return;
     void act(raiseTo === view.raise.maxRaiseTo ? { type: 'all-in' } : { type: 'raise', raiseTo });
@@ -967,7 +1055,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   return (
     <main className="table-shell" dir="rtl">
       <header className="table-header">
-        <a href={`/r/${joinId}`} aria-label="חזרה ללובי"><AppBrand compact /></a>
+        <div className="table-header-brand"><a href={`/r/${joinId}`} aria-label="חזרה ללובי"><AppBrand compact /></a><button type="button" className="table-sound-toggle" aria-label={soundEnabled ? 'השתקת צלילי המשחק' : 'הפעלת צלילי המשחק'} aria-pressed={soundEnabled} onClick={toggleSound}><span aria-hidden="true">{soundEnabled ? '♪' : '♪̸'}</span></button></div>
         {isCurrentHost ? <button type="button" className="table-management-button" aria-expanded={managementOpen} onClick={() => {
           setManagementOpen(true);
           void loadManagement();
@@ -1054,6 +1142,12 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
             </div>
             <button type="button" className="raise-submit" disabled={pending} onClick={submitRaise}><span aria-hidden="true">+</span> {(raiseTo ?? view.raise.minRaiseTo) === view.raise.maxRaiseTo ? 'אול אין' : 'העלאה לסכום שנבחר'}</button>
           </div> : null}
+        </div> : null}
+        {!isTurn && view.street !== 'showdown' && !view.allInRunout && ownSeat && ownSeat.stack > 0 && !ownSeat.isFolded && !ownSeat.isSittingOut && view.holeCards.length === 2 ? <div className="pre-action-bar" aria-label="בחירת פעולה לפני התור">
+          <span>לפני התור</span>
+          <button type="button" aria-pressed={view.preAction?.type === 'check-fold'} className={view.preAction?.type === 'check-fold' ? 'is-selected' : ''} disabled={savingPreAction} onClick={() => void selectPreAction('check-fold')}>צ׳ק / פרישה</button>
+          {(view.waitingToCall ?? 0) > 0 ? <button type="button" aria-pressed={view.preAction?.type === 'call'} className={view.preAction?.type === 'call' ? 'is-selected' : ''} disabled={savingPreAction} onClick={() => void selectPreAction('call')}>השוואה · {(view.preAction?.type === 'call' ? view.preAction.quotedToCall ?? view.waitingToCall! : view.waitingToCall!).toLocaleString('he-IL')}</button> : null}
+          {view.preAction ? <small>לחיצה נוספת מבטלת</small> : null}
         </div> : null}
         {view.allInRunout ? <div className="all-in-runout-panel" role="status">
           <div><span aria-hidden="true">⚡</span><p><strong>כולם באול אין</strong><small>הקלפים של המשתתפים פתוחים. המארח חושף את {streetNames[view.allInRunout.nextStreet]}.</small></p></div>

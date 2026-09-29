@@ -50,7 +50,9 @@ test('authenticated host start deals only on the server and commits the first si
 
   assert.deepEqual(started, { roomId: room.id, sequence: 0 });
   assert.deepEqual(db.calls.map(([name]) => name), ['room.findUnique', 'room.updateMany', 'gameEvent.create', 'gameSnapshot.create']);
-  assert.deepEqual(db.calls[1][1], { where: { id: room.id, hostPlayerId: room.hostPlayerId, status: 'WAITING' }, data: { status: 'IN_PROGRESS' } });
+  assert.deepEqual(db.calls[1][1].where, { id: room.id, hostPlayerId: room.hostPlayerId, status: 'WAITING' });
+  assert.equal(db.calls[1][1].data.status, 'IN_PROGRESS');
+  assert.ok(db.calls[1][1].data.turnDeadlineAt instanceof Date);
   assert.deepEqual(db.calls[2][1].data.payload, { dealerSeat: 1, smallBlind: 5, bigBlind: 10 });
   assert.equal(JSON.stringify(db.calls[2][1].data).includes('holeCards'), false);
   assert.equal(JSON.stringify(db.calls[2][1].data).includes('deck'), false);
@@ -87,7 +89,9 @@ test('game start atomically moves only the host waiting room in progress and per
   assert.deepEqual(started, { roomId: room.id, sequence: 0 });
   assert.deepEqual(db.calls.map(([name]) => name), ['room.findUnique', 'room.updateMany', 'gameEvent.create', 'gameSnapshot.create']);
   assert.deepEqual(db.calls[0][1], { where: { joinId: room.joinId }, select: { id: true } });
-  assert.deepEqual(db.calls[1][1], { where: { joinId: room.joinId, hostPlayerId: room.hostPlayerId, status: 'WAITING' }, data: { status: 'IN_PROGRESS' } });
+  assert.deepEqual(db.calls[1][1].where, { joinId: room.joinId, hostPlayerId: room.hostPlayerId, status: 'WAITING' });
+  assert.equal(db.calls[1][1].data.status, 'IN_PROGRESS');
+  assert.ok(db.calls[1][1].data.turnDeadlineAt instanceof Date);
   assert.deepEqual(db.calls[2][1].data, { roomId: room.id, sequence: 0, type: 'GAME_STARTED', payload: { dealerSeat: 1, smallBlind: 5, bigBlind: 10 } });
   assert.equal(db.calls[3][1].data.state, privateSnapshot);
   assert.equal(JSON.stringify(db.calls[2][1]).includes('holeCards'), false, 'events must never contain private cards/deck state');

@@ -25,12 +25,37 @@ const initial = signPrivateHandSnapshot(startHand({
 const raised = applyPreflopRaise(hydrateSignedPrivateHandSnapshot(initial, { roomId: room.id, sequence: 0 }, keyring).hand, 1, 20);
 const raisedSnapshot = signPrivateHandSnapshot(raised, { roomId: room.id, sequence: 1, keyId }, key);
 
-function createDb({ latest = { sequence: 0, state: initial }, currentHandStart = 'GAME_STARTED', duplicateAction = false } = {}) {
+function createDb({ latest = { sequence: 0, state: initial }, currentHandStart = 'GAME_STARTED', duplicateAction = false, players = room.players } = {}) {
   const calls = [];
   let currentLatest = latest;
+  const choices = new Map();
+  const preAction = {
+    findFirst: async () => [...choices.values()][0] ?? null,
+    findUnique: async ({ where }) => choices.get(where.roomId_playerId.playerId) ?? null,
+    upsert: async ({ where, create, update }) => {
+      const playerId = where.roomId_playerId.playerId;
+      const choice = { id: `choice-${playerId}`, ...(choices.has(playerId) ? update : create), roomId: room.id, playerId };
+      choices.set(playerId, choice);
+      return choice;
+    },
+    deleteMany: async ({ where }) => {
+      let count = 0;
+      for (const [playerId, choice] of choices) {
+        if (where.id && where.id !== choice.id) continue;
+        if (where.playerId && where.playerId !== playerId) continue;
+        if (where.OR && !where.OR.some((condition) => condition.playerId === playerId
+          || (condition.street?.not !== undefined && condition.street.not !== choice.street)
+          || (condition.type === choice.type && condition.expectedCurrentBet?.not !== undefined && condition.expectedCurrentBet.not !== choice.expectedCurrentBet))) continue;
+        choices.delete(playerId);
+        count++;
+      }
+      return { count };
+    },
+  };
   const tx = {
     room: {
-      findUnique: async (args) => { calls.push(['room.findUnique', args]); return room; },
+      findUnique: async (args) => { calls.push(['room.findUnique', args]); return { ...room, players }; },
+      findFirst: async () => ({ ...room, players }),
       updateMany: async (args) => { calls.push(['room.updateMany', args]); return { count: 1 }; },
       update: async (args) => { calls.push(['room.update', args]); return args.data; },
     },
@@ -49,14 +74,80 @@ function createDb({ latest = { sequence: 0, state: initial }, currentHandStart =
         if (args.where.clientActionId) return duplicateAction
           ? { sequence: latest.sequence, payload: { actorPlayerId: 'host-id', action: { type: 'call' }, amount: 5 } }
           : null;
-        return { type: currentHandStart };
+        return { type: currentHandStart, sequence: 0, createdAt: new Date('2026-01-01T12:00:00Z') };
       },
     },
     player: { update: async (args) => { calls.push(['player.update', args]); return args.data; } },
+    preAction,
     settlement: { create: async (args) => { calls.push(['settlement.create', args]); return args.data; } },
   };
-  return { calls, $transaction: async (callback) => callback(tx) };
+  return {
+    calls, choices, preAction, gameSnapshot: tx.gameSnapshot, gameEvent: tx.gameEvent,
+    room: { findFirst: async () => ({ ...room, players: players.map((player) => ({ ...player, preAction: choices.get(player.id) ?? null })), events: [] }) },
+    $transaction: async (callback) => callback(tx),
+  };
 }
+
+function createThreeSeatDb() {
+  const players = room.players.map((player) => player.id === 'parked-player'
+    ? { ...player, currentStack: 100, isSittingOut: false }
+    : player);
+  const hand = startHand({
+    seats: players.map((player, index) => ({ seatNumber: index + 1, playerId: player.id, stack: 100 })),
+    dealerSeat: 1, smallBlind: 5, bigBlind: 10, randomInt: () => 0,
+  });
+  return createDb({ latest: { sequence: 0, state: signPrivateHandSnapshot(hand, { roomId: room.id, sequence: 0, keyId }, key) }, players });
+}
+
+test('a quoted call survives another player calling and executes exactly once when the turn arrives', async () => {
+  const db = createThreeSeatDb();
+  const repository = new RoomRepository(db, undefined, undefined, undefined, keyring);
+  assert.deepEqual(await repository.setPreActionForPlayer(room.id, 'player-1', 'call'), { type: 'call', quotedToCall: 5 });
+  const guestView = await repository.recoverLatestPlayerViewForPlayer(room.id, 'player-1');
+  const hostView = await repository.recoverLatestPlayerViewForPlayer(room.id, 'host-id');
+  assert.equal(guestView?.preAction?.quotedToCall, 5);
+  assert.equal(hostView?.preAction, undefined, 'another player must not see the private choice');
+
+  await repository.persistPlayerActionAtomically({ roomId: room.id, playerId: 'host-id', action: { type: 'call' } });
+  await repository.drainPreActionsForRoom(room.id);
+  assert.equal(db.choices.size, 0);
+  assert.deepEqual(db.calls.filter(([name]) => name === 'gameEvent.create').map(([, args]) => args.data.payload.actorPlayerId), ['host-id', 'player-1']);
+  await repository.drainPreActionsForRoom(room.id);
+  assert.equal(db.calls.filter(([name]) => name === 'gameEvent.create').length, 2, 'the queued call is never repeated');
+});
+
+test('raising above an agreed call cancels it without taking the waiting player’s chips', async () => {
+  const db = createThreeSeatDb();
+  const repository = new RoomRepository(db, undefined, undefined, undefined, keyring);
+  await repository.setPreActionForPlayer(room.id, 'player-1', 'call');
+  await repository.persistPlayerActionAtomically({ roomId: room.id, playerId: 'host-id', action: { type: 'raise', raiseTo: 30 } });
+  await repository.drainPreActionsForRoom(room.id);
+  assert.equal(db.choices.size, 0);
+  assert.equal(db.calls.filter(([name]) => name === 'gameEvent.create').length, 1);
+  const next = await repository.recoverLatestPlayerViewForPlayer(room.id, 'player-1');
+  assert.equal(next?.preAction, undefined);
+  assert.equal(next?.currentActorSeat, 2);
+  assert.equal(next?.waitingToCall, 25);
+  await assert.rejects(repository.persistPlayerActionAtomically({ roomId: room.id, playerId: 'player-1', action: { type: 'call' }, expectedSequence: 1, preActionId: 'choice-player-1' }), /Queued action is unavailable/);
+});
+
+test('check or fold is decided only from the legal price when the chosen player acts', async () => {
+  const db = createThreeSeatDb();
+  const repository = new RoomRepository(db, undefined, undefined, undefined, keyring);
+  await repository.setPreActionForPlayer(room.id, 'parked-player', 'check-fold');
+  await repository.persistPlayerActionAtomically({ roomId: room.id, playerId: 'host-id', action: { type: 'call' } });
+  await repository.persistPlayerActionAtomically({ roomId: room.id, playerId: 'player-1', action: { type: 'call' } });
+  await repository.drainPreActionsForRoom(room.id);
+  assert.equal(db.calls.filter(([name]) => name === 'gameEvent.create').at(-1)[1].data.payload.action.type, 'check');
+  assert.equal(db.choices.size, 0);
+
+  const raisedDb = createThreeSeatDb();
+  const raisedRepository = new RoomRepository(raisedDb, undefined, undefined, undefined, keyring);
+  await raisedRepository.setPreActionForPlayer(room.id, 'player-1', 'check-fold');
+  await raisedRepository.persistPlayerActionAtomically({ roomId: room.id, playerId: 'host-id', action: { type: 'raise', raiseTo: 30 } });
+  await raisedRepository.drainPreActionsForRoom(room.id);
+  assert.equal(raisedDb.calls.filter(([name]) => name === 'gameEvent.create').at(-1)[1].data.payload.action.type, 'fold');
+});
 
 test('a busted seat stays visually active while the host reviews the hand, then sits out after declining a rebuy', async () => {
   const allInHand = applyPreflopCall(

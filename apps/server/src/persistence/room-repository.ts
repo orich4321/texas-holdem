@@ -49,11 +49,13 @@ type RoomViewPlayer = Readonly<{
   isSittingOut: boolean;
   rebuyDecisionPending: boolean;
   timeCardsRemaining?: number;
+  preAction?: { type: string; street: string; quotedToCall: number | null } | null;
 }>;
 
 const MAX_ACCESS_TOKEN_ATTEMPTS = 5;
 const MAX_CHIP_ADJUSTMENT = 1_000_000;
 const TURN_DURATION_MS = 60_000;
+const HAND_START_TYPES = ['GAME_STARTED', 'HAND_STARTED', 'FINAL_HAND_STARTED'];
 const DEFAULT_ROOM_SETTINGS: RoomGameSettings = Object.freeze({ initialStack: 500, smallBlind: 1, bigBlind: 2, maxPlayers: 9 });
 
 function isAccessTokenHashCollision(error: unknown): boolean {
@@ -111,7 +113,11 @@ export type PersistPlayerActionInput = Readonly<{
   clientActionId?: string;
   /** Server-only guard used by automatic turn expiry. */
   expectedSequence?: number;
+  /** Server-only ID of an authenticated queued choice being consumed. */
+  preActionId?: string;
 }>;
+
+export type PreActionChoice = 'check-fold' | 'call';
 
 export type StartGameForHostInput = Readonly<{
   joinId: string;
@@ -230,7 +236,69 @@ export class RoomRepository {
     private readonly privateSnapshotKeyring: ReadonlyMap<string, PrivateSnapshotSigningKey> = new Map(),
   ) {}
 
-  private decorateView(view: ServerPlayerView, sequence: number, hostPlayerId: string, gameCompleted = false, finalSummaryVisible = false, lastAction?: PlayerActionNotification, roomPlayers?: readonly RoomViewPlayer[], gameStartedAt?: string, turnDeadlineAt?: Date | null): ServerPlayerView {
+  /** Stores one authenticated choice for the current hand and betting street. */
+  async setPreActionForPlayer(roomId: string, playerId: string, type: PreActionChoice | null) {
+    return this.db.$transaction(async (tx) => {
+      const room = await tx.room.findFirst({ where: { id: roomId, status: 'IN_PROGRESS', players: { some: { id: playerId, leftAt: null } } }, select: { id: true } });
+      if (!room) throw new Error('Pre-action is unavailable');
+      const locked = await tx.room.updateMany({ where: { id: roomId, status: 'IN_PROGRESS' }, data: { updatedAt: new Date() } });
+      if (locked.count !== 1) throw new Error('Pre-action is unavailable');
+      if (type === null) {
+        await tx.preAction.deleteMany({ where: { roomId, playerId } });
+        return null;
+      }
+      if (type !== 'check-fold' && type !== 'call') throw new Error('Invalid pre-action');
+      const latest = await tx.gameSnapshot.findFirst({ where: { roomId }, orderBy: { sequence: 'desc' }, select: { sequence: true, state: true } });
+      if (!latest) throw new Error('Pre-action is unavailable');
+      const hand = hydrateSignedPrivateHandSnapshot(latest.state as unknown as SignedPrivateHandSnapshot, { roomId, sequence: latest.sequence }, this.privateSnapshotKeyring).hand;
+      const seat = hand.seats.find((candidate) => candidate.playerId === playerId);
+      if (hand.street === 'showdown' || hand.currentActorSeat === seat?.seatNumber || !seat?.holeCards || seat.isFolded || seat.stack === 0 || hand.pendingActorSeats.length === 0) throw new Error('Pre-action is unavailable');
+      const toCall = Math.max(0, hand.currentBet - seat.currentBet);
+      if (type === 'call' && toCall === 0) throw new Error('Nothing to call');
+      const handStart = await tx.gameEvent.findFirst({ where: { roomId, sequence: { lte: latest.sequence }, type: { in: HAND_START_TYPES } }, orderBy: { sequence: 'desc' }, select: { sequence: true } });
+      if (!handStart) throw new Error('Pre-action is unavailable');
+      await tx.preAction.upsert({
+        where: { roomId_playerId: { roomId, playerId } },
+        create: { roomId, playerId, handStartSequence: handStart.sequence, street: hand.street, type, expectedCurrentBet: type === 'call' ? hand.currentBet : null, quotedToCall: type === 'call' ? Math.min(toCall, seat.stack) : null },
+        update: { handStartSequence: handStart.sequence, street: hand.street, type, expectedCurrentBet: type === 'call' ? hand.currentBet : null, quotedToCall: type === 'call' ? Math.min(toCall, seat.stack) : null },
+      });
+      return { type, ...(type === 'call' ? { quotedToCall: Math.min(toCall, seat.stack) } : {}) };
+    });
+  }
+
+  /** Rechecks each queued choice under the same action lock and legal rules. */
+  async drainPreActionsForRoom(roomId: string): Promise<void> {
+    for (let step = 0; step < 9; step += 1) {
+      const hasChoice = await this.db.preAction.findFirst({ where: { roomId }, select: { id: true } });
+      if (!hasChoice) return;
+      const latest = await this.db.gameSnapshot.findFirst({ where: { roomId }, orderBy: { sequence: 'desc' }, select: { sequence: true, state: true } });
+      if (!latest) return;
+      const hand = hydrateSignedPrivateHandSnapshot(latest.state as unknown as SignedPrivateHandSnapshot, { roomId, sequence: latest.sequence }, this.privateSnapshotKeyring).hand;
+      const actor = hand.seats.find((seat) => seat.seatNumber === hand.currentActorSeat);
+      if (!actor || hand.street === 'showdown') return;
+      const choice = await this.db.preAction.findUnique({ where: { roomId_playerId: { roomId, playerId: actor.playerId } } });
+      if (!choice) return;
+      const handStart = await this.db.gameEvent.findFirst({ where: { roomId, sequence: { lte: latest.sequence }, type: { in: HAND_START_TYPES } }, orderBy: { sequence: 'desc' }, select: { sequence: true } });
+      const valid = hand.street === choice.street && handStart?.sequence === choice.handStartSequence
+        && !actor.isFolded && actor.stack > 0 && (choice.type === 'check-fold' || (choice.type === 'call' && hand.currentBet === choice.expectedCurrentBet && hand.currentBet > actor.currentBet));
+      if (!valid) {
+        await this.db.preAction.deleteMany({ where: { id: choice.id } });
+        continue;
+      }
+      const action: PlayerAction = choice.type === 'check-fold'
+        ? { type: hand.currentBet === actor.currentBet ? 'check' : 'fold' }
+        : { type: 'call' };
+      try {
+        await this.persistPlayerActionAtomically({ roomId, playerId: actor.playerId, action, expectedSequence: latest.sequence, preActionId: choice.id });
+      } catch {
+        // A concurrent manual action or raise wins the lock; the stale choice
+        // cannot be retried at a new price or on a new street.
+        await this.db.preAction.deleteMany({ where: { id: choice.id } });
+      }
+    }
+  }
+
+  private decorateView(view: ServerPlayerView, sequence: number, hostPlayerId: string, gameCompleted = false, finalSummaryVisible = false, lastAction?: PlayerActionNotification, roomPlayers?: readonly RoomViewPlayer[], gameStartedAt?: string, turnDeadlineAt?: Date | null, recentActions?: readonly PlayerActionNotification[]): ServerPlayerView {
     const activeSeats = new Map(view.seats.map((seat) => [seat.playerId, seat]));
     const seats = roomPlayers
       ? roomPlayers.map((player, index) => {
@@ -250,6 +318,10 @@ export class RoomRepository {
       })
       : view.seats;
     const viewer = roomPlayers?.find((player) => player.id === view.playerId);
+    const choice = viewer?.preAction?.street === view.street ? viewer.preAction : undefined;
+    const preAction: ServerPlayerView['preAction'] = choice?.type === 'call'
+      ? { type: 'call', ...(choice.quotedToCall !== null ? { quotedToCall: choice.quotedToCall } : {}) }
+      : choice?.type === 'check-fold' ? { type: 'check-fold' } : undefined;
     return Object.freeze({
       ...view,
       seats: Object.freeze(seats),
@@ -258,6 +330,8 @@ export class RoomRepository {
       gameCompleted,
       finalSummaryVisible,
       ...(lastAction ? { lastAction } : {}),
+      ...(recentActions ? { recentActions } : lastAction ? { recentActions: [lastAction] } : {}),
+      ...(preAction ? { preAction } : {}),
       ...(gameStartedAt ? { gameStartedAt } : {}),
       ...(turnDeadlineAt ? { turnDeadlineAt: turnDeadlineAt.toISOString() } : {}),
       ...(viewer?.timeCardsRemaining !== undefined ? { timeCardsRemaining: viewer.timeCardsRemaining } : {}),
@@ -524,12 +598,12 @@ export class RoomRepository {
           turnDeadlineAt: true,
           players: {
             orderBy: { createdAt: 'asc' },
-            select: { id: true, displayName: true, avatarDataUrl: true, currentStack: true, isSittingOut: true, rebuyDecisionPending: true, timeCardsRemaining: true },
+            select: { id: true, displayName: true, avatarDataUrl: true, currentStack: true, isSittingOut: true, rebuyDecisionPending: true, timeCardsRemaining: true, preAction: { select: { type: true, street: true, quotedToCall: true } } },
           },
           events: {
             where: { type: 'PLAYER_ACTION' },
             orderBy: { sequence: 'desc' },
-            take: 1,
+            take: 12,
             select: { sequence: true, payload: true },
           },
         },
@@ -573,11 +647,15 @@ export class RoomRepository {
     const latestAction = room.events[0]?.sequence === latest.sequence
       ? actionNotificationFromEvent(room.events[0], room.players)
       : undefined;
-    return this.decorateView(safeView, latest.sequence, room.hostPlayerId, room.status === 'COMPLETED', room.status === 'COMPLETED' && room.finalSummaryVisible, latestAction, room.players, gameStarted?.createdAt.toISOString(), room.turnDeadlineAt);
+    const recentActions = room.events.filter((event) => event.sequence <= latest.sequence)
+      .map((event) => actionNotificationFromEvent(event, room.players))
+      .filter((event): event is PlayerActionNotification => Boolean(event))
+      .reverse();
+    return this.decorateView(safeView, latest.sequence, room.hostPlayerId, room.status === 'COMPLETED', room.status === 'COMPLETED' && room.finalSummaryVisible, latestAction, room.players, gameStarted?.createdAt.toISOString(), room.turnDeadlineAt, recentActions);
   }
 
   /** Applies an authenticated action to the latest verified state and commits its successor atomically. */
-  async persistPlayerActionAtomically({ roomId, playerId, action, clientActionId, expectedSequence }: PersistPlayerActionInput) {
+  async persistPlayerActionAtomically({ roomId, playerId, action, clientActionId, expectedSequence, preActionId }: PersistPlayerActionInput) {
     validatePersistedPlayerAction(action);
     if (clientActionId !== undefined && !/^[0-9a-f-]{36}$/i.test(clientActionId)) throw new Error('Invalid action identifier');
     return this.db.$transaction(async (tx) => {
@@ -601,6 +679,7 @@ export class RoomRepository {
       if (!latest) throw new Error('Game action is unavailable');
       if (expectedSequence !== undefined && latest.sequence !== expectedSequence) throw new Error('Game action is unavailable');
       if (expectedSequence === undefined && room.turnDeadlineAt && room.turnDeadlineAt.getTime() <= Date.now()) throw new Error('Turn has expired');
+      if (preActionId && room.turnDeadlineAt && room.turnDeadlineAt.getTime() <= Date.now()) throw new Error('Turn has expired');
       const recovery = hydrateSignedPrivateHandSnapshot(latest.state as unknown as SignedPrivateHandSnapshot, { roomId, sequence: latest.sequence }, this.privateSnapshotKeyring);
       const hand = recovery.hand;
       const playersById = new Map(room.players.map((player) => [player.id, player]));
@@ -626,6 +705,13 @@ export class RoomRepository {
       const beforeAction = lifecycle.viewFor(playerId);
       const actorSeat = beforeAction.seats.find((seat) => seat.playerId === playerId);
       if (!actorSeat) throw new Error('Game action is unavailable');
+      if (preActionId) {
+        const queued = await tx.preAction.findUnique({ where: { roomId_playerId: { roomId, playerId } } });
+        if (!queued || queued.id !== preActionId || queued.street !== hand.street || hand.currentActorSeat !== actorSeat.seatNumber
+          || (queued.type === 'call' && (queued.expectedCurrentBet !== hand.currentBet || beforeAction.toCall <= 0))
+          || (queued.type === 'check-fold' && action.type !== (beforeAction.toCall === 0 ? 'check' : 'fold'))
+          || (queued.type === 'call' && action.type !== 'call')) throw new Error('Queued action is unavailable');
+      }
       // A raise to the actor's complete stack is semantically an all-in even
       // when an older client submitted it through the generic raise control.
       const effectiveAction: PlayerAction = action.type === 'raise' && action.raiseTo === actorSeat.currentBet + actorSeat.stack
@@ -645,6 +731,11 @@ export class RoomRepository {
         ? Math.max(...beforeAction.seats.map((seat) => seat.currentBet)) === 0 ? 'bet' as const : 'raise' as const
         : undefined;
       const view = lifecycle.applyAction(playerId, effectiveAction);
+      await tx.preAction.deleteMany({ where: { roomId, OR: [
+        { playerId },
+        { street: { not: lifecycle.handForDurableSnapshot().street } },
+        { type: 'call', expectedCurrentBet: { not: lifecycle.handForDurableSnapshot().currentBet } },
+      ] } });
       let gameCompleted = false;
       const settledHand = lifecycle.handForDurableSnapshot();
       const settlement = settledHand.street === 'showdown'
@@ -1010,6 +1101,7 @@ export class RoomRepository {
       });
       const sequence = latest.sequence + 1;
       const snapshot = signPrivateHandSnapshot(hand, { roomId: room.id, sequence, keyId }, key);
+      await tx.preAction.deleteMany({ where: { roomId: room.id } });
       await tx.gameEvent.create({
         data: {
           roomId: room.id,
