@@ -3,7 +3,7 @@
 import { type FormEvent, useState } from 'react';
 import { DEFAULT_ROOM_SETTINGS, EMPTY_NICKNAME_MESSAGE, submitRoomCreation, type RoomSettings } from './room-creation';
 import { parsePositiveInteger } from './numeric-input';
-import { AppBrand, IconBadge } from './ui';
+import { AppBrand } from './ui';
 import { AvatarPicker } from './avatar-picker';
 
 export default function HomePage() {
@@ -53,65 +53,38 @@ export default function HomePage() {
   }
 
   return (
-    <main className="home-shell">
+    <main className="entry-shell home-shell">
       <div className="app-aurora" aria-hidden="true" />
-      <header className="home-topbar"><AppBrand compact /><span>שולחן פרטי · הזמנה בלבד</span></header>
+      <header className="entry-topbar"><AppBrand compact /><span>יצירת שולחן</span></header>
 
-      <section className="home-layout" aria-labelledby="home-title">
-        <div className="home-hero">
-          <div className="hero-cards" aria-hidden="true"><span>A<small>♠</small></span><span>K<small>♥</small></span></div>
-          <p className="eyebrow">הערב שלכם. השולחן שלכם.</p>
-          <h1 id="home-title">פוקר עם חברים,<br /><em>כמו שצריך.</em></h1>
-          <p className="invitation">פותחים שולחן פרטי, שולחים קישור ומתחילים לשחק — בלי הורדות ובלי הרשמה.</p>
-          <div className="home-benefits" aria-label="יתרונות השולחן">
-            <span><IconBadge>♟</IconBadge> עד 9 שחקנים</span>
-            <span><IconBadge>⚡</IconBadge> משחק בזמן אמת</span>
-            <span><IconBadge>⌁</IconBadge> חוזרים בדיוק לאותה יד</span>
+      <section className="entry-stage">
+        <div className="entry-panel home-entry-panel" aria-labelledby="home-title">
+          <span className="entry-suit" aria-hidden="true">♠</span>
+          <div className="entry-intro">
+            <p>שולחן חדש</p>
+            <h1 id="home-title">פותחים משחק</h1>
+            <span>בחרו שם ותמונה. את הקישור לחברים תקבלו מיד.</span>
           </div>
-        </div>
 
-        <div className="home-card">
-          <div className="home-card-heading"><span>01</span><div><p>פתיחת שולחן</p><small>הגדירו את המשחק והזמינו חברים</small></div></div>
+          <form className="entry-form host-form" onSubmit={handleSubmit}>
+            <label htmlFor="nickname">השם שלכם בשולחן</label>
+            <input id="nickname" name="nickname" type="text" autoComplete="nickname" maxLength={24} placeholder="למשל: אורי" value={nickname} onChange={(event) => setNickname(event.target.value)} disabled={pending} aria-describedby={status ? 'host-status' : undefined} />
+            <AvatarPicker value={avatarDataUrl} onChange={setAvatarDataUrl} disabled={pending} />
 
-        <form className="host-form" onSubmit={handleSubmit}>
-          <label htmlFor="nickname">כינוי בשולחן</label>
-          <input
-            id="nickname"
-            name="nickname"
-            type="text"
-            autoComplete="nickname"
-            maxLength={24}
-            placeholder="איך לקרוא לך?"
-            value={nickname}
-            onChange={(event) => setNickname(event.target.value)}
-            disabled={pending}
-            aria-describedby={status ? 'host-status' : undefined}
-          />
-          <AvatarPicker value={avatarDataUrl} onChange={setAvatarDataUrl} disabled={pending} />
-          <fieldset className="game-settings" disabled={pending}>
-            <legend>מבנה המשחק</legend>
-            <label>צ׳יפים לכל שחקן<input inputMode="numeric" type="number" min="100" max="1000000" value={settings.initialStack} onChange={(event) => setSettings((current) => ({ ...current, initialStack: event.target.value }))} /></label>
-            <div className="game-settings-row">
-              <label>סמול בליינד<input inputMode="numeric" type="number" min="1" max="100000" value={settings.smallBlind} onChange={(event) => setSettings((current) => ({ ...current, smallBlind: event.target.value }))} /></label>
-              <label>ביג בליינד<input inputMode="numeric" type="number" min="2" max="100000" value={settings.bigBlind} onChange={(event) => setSettings((current) => ({ ...current, bigBlind: event.target.value }))} /></label>
-            </div>
-            <small>כל מי שמצטרף מקבל את אותה ערימת פתיחה.</small>
-          </fieldset>
-          <button type="submit" disabled={pending || !validSettings}>
-            <span aria-hidden="true">♠</span>{pending ? 'פותחים שולחן…' : 'פתחו שולחן פרטי'}
-          </button>
-          {status ? (
-            <p id="host-status" className="host-status" role="status" aria-live="polite">
-              {status}
-            </p>
-          ) : null}
-        </form>
+            <details className="entry-settings">
+              <summary><span>הגדרות המשחק</span><small>{settings.initialStack || '—'} צ׳יפים · {settings.smallBlind || '—'}/{settings.bigBlind || '—'}</small></summary>
+              <div className="entry-settings-fields">
+                <label>צ׳יפים<input inputMode="numeric" type="number" min="100" max="1000000" value={settings.initialStack} onChange={(event) => setSettings((current) => ({ ...current, initialStack: event.target.value }))} disabled={pending} /></label>
+                <label>סמול בליינד<input inputMode="numeric" type="number" min="1" max="100000" value={settings.smallBlind} onChange={(event) => setSettings((current) => ({ ...current, smallBlind: event.target.value }))} disabled={pending} /></label>
+                <label>ביג בליינד<input inputMode="numeric" type="number" min="2" max="100000" value={settings.bigBlind} onChange={(event) => setSettings((current) => ({ ...current, bigBlind: event.target.value }))} disabled={pending} /></label>
+              </div>
+            </details>
 
-          <p className="share-note"><span aria-hidden="true">◆</span> המארח יקבל קישור אישי לשיתוף עם כולם</p>
+            <button className="entry-primary" type="submit" disabled={pending || !validSettings}>{pending ? 'פותחים…' : 'פתיחת שולחן'}</button>
+            {status ? <p id="host-status" className="entry-status" role="status" aria-live="polite">{status}</p> : null}
+          </form>
         </div>
       </section>
-
-      <footer><span>© HOLD&apos;EM PRIVATE TABLE</span><span>משחק ביתי. אווירה של שולחן אמיתי.</span></footer>
     </main>
   );
 }

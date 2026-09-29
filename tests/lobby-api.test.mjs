@@ -122,6 +122,10 @@ test('mobile table UI keeps the player anchored, reconnects safely, and exposes 
   assert.match(styles, /\.action-bar button\s*\{[^}]*min-height:\s*44px/s);
   assert.match(lobby, /lobby\.settings\.initialStack\.toLocaleString\('he-IL'\)/);
   assert.doesNotMatch(lobby, />1,000 צ׳יפים</);
+  assert.match(lobby, /!lobby\.isParticipant && !lobby\.isHost/);
+  assert.match(lobby, /className="entry-panel join-entry-panel"/);
+  assert.match(lobby, /השם שלכם בשולחן/);
+  assert.doesNotMatch(lobby, /className="lobby-join-form"/);
 });
 
 test('server game authority uses one poker-core module identity in production', async () => {

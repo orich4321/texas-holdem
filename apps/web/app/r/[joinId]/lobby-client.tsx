@@ -135,6 +135,34 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
     return <StateScreen icon="♠" title="המשחק כבר הסתיים"><p>רק משתתפי השולחן יכולים לפתוח את הסיכום הסופי.</p></StateScreen>;
   }
 
+  if (!lobby.isParticipant && !lobby.isHost) {
+    return (
+      <main className="entry-shell join-entry-shell">
+        <div className="app-aurora" aria-hidden="true" />
+        <header className="entry-topbar"><AppBrand compact /><span>הזמנה פרטית</span></header>
+        <section className="entry-stage">
+          <div className="entry-panel join-entry-panel" aria-labelledby="join-title">
+            <div className="entry-host" aria-label={`המארח: ${lobby.host.displayName}`}>
+              <ProfileImage className="entry-host-avatar" dataUrl={lobby.host.avatarDataUrl} fallback="♠" />
+              <div><small>הוזמנתם לשולחן של</small><strong>{lobby.host.displayName}</strong></div>
+            </div>
+            <div className="entry-intro">
+              <h1 id="join-title">מצטרפים למשחק</h1>
+              <span>{lobby.settings.initialStack.toLocaleString('he-IL')} צ׳יפים · בליינדים {lobby.settings.smallBlind}/{lobby.settings.bigBlind}</span>
+            </div>
+            <form className="entry-form join-entry-form" onSubmit={handleJoin}>
+              <label htmlFor="lobby-nickname">השם שלכם בשולחן</label>
+              <input id="lobby-nickname" name="nickname" type="text" autoComplete="nickname" maxLength={24} placeholder="איך לקרוא לכם?" value={nickname} onChange={(event) => setNickname(event.target.value)} disabled={joining} aria-describedby={joinMessage ? 'join-status' : undefined} />
+              <AvatarPicker value={avatarDataUrl} onChange={setAvatarDataUrl} disabled={joining} />
+              <button className="entry-primary" type="submit" disabled={joining}>{joining ? 'מצטרפים…' : 'כניסה לשולחן'}</button>
+              {joinMessage ? <p id="join-status" className="entry-status" role="status" aria-live="polite">{joinMessage}</p> : null}
+            </form>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
   return (
     <main className="lobby-shell">
       <div className="app-aurora" aria-hidden="true" />
@@ -193,19 +221,8 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
 
             {isHostRoute && lobby.isHost ? (
               <p className="lobby-already-joined" role="status"><span aria-hidden="true">✓</span> אתם כבר יושבים בשולחן כמארחים.</p>
-            ) : lobby.isParticipant ? (
-              <p className="lobby-already-joined" role="status"><span aria-hidden="true">✓</span> אתם כבר יושבים בשולחן הזה.</p>
             ) : (
-              <form className="lobby-join-form" onSubmit={handleJoin}>
-                <div className="lobby-form-heading"><h2>הצטרפות לשולחן</h2><span>{lobby.settings.initialStack.toLocaleString('he-IL')} צ׳יפים</span></div>
-                <label htmlFor="lobby-nickname">הכינוי שלכם</label>
-                <AvatarPicker value={avatarDataUrl} onChange={setAvatarDataUrl} disabled={joining} />
-                <div className="lobby-input-row">
-                  <input id="lobby-nickname" name="nickname" type="text" autoComplete="nickname" maxLength={24} placeholder="איך לקרוא לכם?" value={nickname} onChange={(event) => setNickname(event.target.value)} disabled={joining} aria-describedby={joinMessage ? 'join-status' : undefined} />
-                  <button type="submit" disabled={joining}>{joining ? 'מצטרפים…' : 'שבו בשולחן'}</button>
-                </div>
-                {joinMessage ? <p id="join-status" className="lobby-status" role="status" aria-live="polite">{joinMessage}</p> : null}
-              </form>
+              <p className="lobby-already-joined" role="status"><span aria-hidden="true">✓</span> אתם כבר יושבים בשולחן הזה.</p>
             )}
           </aside>
         </div>

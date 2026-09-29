@@ -34,7 +34,7 @@ function contrastRatio(foreground, background) {
   return (lighter + 0.05) / (darker + 0.05);
 }
 
-test('home presents the focused Hebrew room-hosting flow with an accessible dark UI', async () => {
+test('home presents a minimal Hebrew room-hosting flow with an accessible dark UI', async () => {
   const [page, layout, styles] = await Promise.all([
     source('apps/web/app/page.tsx'),
     source('apps/web/app/layout.tsx'),
@@ -44,11 +44,12 @@ test('home presents the focused Hebrew room-hosting flow with an accessible dark
   assert.match(layout, /<html lang="he" dir="rtl">/);
   assert.match(layout, /import ['"]\.\/globals\.css['"]/);
 
-  assert.match(page, /פוקר/);
-  assert.match(page, /כינוי/);
-  assert.match(page, /פתחו שולחן פרטי/);
-  assert.match(page, /המארח.*קישור/s);
+  assert.match(page, /פותחים משחק/);
+  assert.match(page, /השם שלכם בשולחן/);
+  assert.match(page, /פתיחת שולחן/);
+  assert.match(page, /entry-settings/);
   assert.doesNotMatch(page, /קוד חדר|הצטרף לחדר/);
+  assert.doesNotMatch(page, /home-benefits|home-hero|hero-cards/);
 
   assert.match(styles, /color-scheme:\s*dark/);
   assert.match(styles, /min-height:\s*44px/);
@@ -57,39 +58,31 @@ test('home presents the focused Hebrew room-hosting flow with an accessible dark
   assert.match(styles, /input:not\(\[type="range"\]\), select, textarea\s*\{\s*font-size:\s*16px/);
 });
 
-test('home footer text meets WCAG AA contrast against the page background', async () => {
-  const styles = await source('apps/web/app/globals.css');
-  const footer = rule(styles, '.home-shell > footer');
-  const color = footer.match(/color:\s*(#[\da-f]{6})/i)?.[1];
-
-  assert.ok(color, 'home footer must set an explicit six-digit text color');
-  assert.ok(
-    contrastRatio(color, '#070a09') >= 4.5,
-    `${color} must have at least 4.5:1 contrast against #070a09`,
-  );
+test('minimal entry button text meets WCAG AA contrast', async () => {
+  assert.ok(contrastRatio('#f2eee4', '#526252') >= 4.5);
 });
 
 test('main app shells fill the dynamic viewport without page-level scrolling', async () => {
   const styles = await source('apps/web/app/globals.css');
-  const shell = rule(styles, '.home-shell');
+  const shell = rule(styles, '.entry-shell');
   const document = rule(styles, 'html, body');
   const roster = rule(styles, '.lobby-roster ul');
 
-  assert.match(shell, /grid-template-rows:\s*auto\s+minmax\(0,\s*1fr\)\s+auto/);
+  assert.match(shell, /grid-template-rows:\s*auto\s+minmax\(0,\s*1fr\)/);
   assert.match(shell, /height:\s*100dvh/);
   assert.doesNotMatch(shell, /overflow(?:-y)?:\s*hidden/);
   assert.match(document, /overflow:\s*hidden/);
   assert.match(roster, /overflow-y:\s*auto/);
 });
 
-test('home typography rules are scoped and use logical alignment', async () => {
+test('entry typography rules are scoped and use logical alignment', async () => {
   const styles = await source('apps/web/app/globals.css');
 
-  assert.match(styles, /\.home-hero\s+h1\s*\{/);
-  assert.match(styles, /\.home-shell\s*>\s*footer\s*\{/);
+  assert.match(styles, /\.entry-intro\s+h1\s*\{/);
+  assert.match(styles, /\.entry-form\s*\{/);
   assert.doesNotMatch(styles, /(?:^|\n)h1\s*\{/);
   assert.doesNotMatch(styles, /(?:^|\n)footer\s*\{/);
-  assert.match(rule(styles, '.host-form'), /text-align:\s*start/);
+  assert.match(rule(styles, '.entry-form'), /text-align:\s*start/);
   assert.doesNotMatch(styles, /text-align:\s*right/);
 });
 
