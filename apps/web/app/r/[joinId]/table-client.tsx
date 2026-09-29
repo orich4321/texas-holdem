@@ -293,6 +293,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   const seenActionSequenceRef = useRef(-1);
   const previousStreetRef = useRef<PlayerView['street'] | undefined>(undefined);
   const expiryRequestRef = useRef<string | undefined>(undefined);
+  const turnVibrationRef = useRef<{ identity: string; observedSequence: number; notified: boolean } | undefined>(undefined);
 
   useEffect(() => {
     let active = true;
@@ -426,6 +427,49 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   }, [view]);
   const isTurn = Boolean(view && ownSeat && view.currentActorSeat === ownSeat.seatNumber && view.street !== 'showdown' && !view.allInRunout);
   const callIsAllIn = Boolean(isTurn && ownSeat && view && view.toCall > 0 && view.toCall >= ownSeat.stack);
+
+  useEffect(() => {
+    if (!isTurn || !view || !ownSeat || ownSeat.stack <= 0 || ownSeat.isFolded || ownSeat.isSittingOut || view.holeCards.length !== 2) {
+      turnVibrationRef.current = undefined;
+      return;
+    }
+
+    const identity = `${joinId}:${view.playerId}:${view.street}:${view.holeCards.map(cardKey).join(',')}`;
+    const previous = turnVibrationRef.current;
+    const actionSequence = view.lastAction?.sequence;
+    const observedSequence = Math.max(view.sequence ?? -1, actionSequence ?? -1);
+    // Repeated polling, reconnects, and time-card extensions keep the same
+    // alert. A newer player action can hand the turn back between two polls.
+    if (!previous || previous.identity !== identity || (actionSequence !== undefined && actionSequence > previous.observedSequence)) {
+      turnVibrationRef.current = { identity, observedSequence, notified: false };
+    } else {
+      previous.observedSequence = Math.max(previous.observedSequence, observedSequence);
+    }
+    const turn = turnVibrationRef.current!;
+    if (turn.notified || typeof globalThis.navigator.vibrate !== 'function') return;
+
+    const notify = () => {
+      if (turn.notified || turnVibrationRef.current !== turn || globalThis.document.visibilityState !== 'visible') return;
+      // Browsers require an interaction with the page before allowing haptics.
+      if (globalThis.navigator.userActivation && !globalThis.navigator.userActivation.hasBeenActive) return;
+      try {
+        turn.notified = globalThis.navigator.vibrate(80);
+      } catch {
+        // Missing hardware or browser restrictions must not interrupt play.
+      }
+    };
+    notify();
+    globalThis.document.addEventListener('visibilitychange', notify);
+    globalThis.document.addEventListener('click', notify);
+    globalThis.document.addEventListener('keyup', notify);
+    globalThis.addEventListener('focus', notify);
+    return () => {
+      globalThis.document.removeEventListener('visibilitychange', notify);
+      globalThis.document.removeEventListener('click', notify);
+      globalThis.document.removeEventListener('keyup', notify);
+      globalThis.removeEventListener('focus', notify);
+    };
+  }, [joinId, isTurn, view, ownSeat]);
 
   useEffect(() => {
     const deadline = view?.turnDeadlineAt ? Date.parse(view.turnDeadlineAt) : Number.NaN;
