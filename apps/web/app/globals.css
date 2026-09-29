@@ -234,9 +234,9 @@ button:disabled { cursor: wait; opacity: 0.55; }
 .table-seat-sitting-out .table-seat-avatar, .table-seat-sitting-out .table-seat-info { opacity: .56; filter: grayscale(1) saturate(0); }
 .table-seat-sitting-out small { color: #b0b5b2; font-size: clamp(.48rem,.78vw,.57rem); line-height: 1.15; white-space: normal; }
 .seat-revealed-cards { display: flex; grid-column: 1/-1; justify-content: center; margin-top: 3px; direction: ltr; gap: 2px; }
-.seat-revealed-cards .playing-card { width: 21px; padding: 2px; border-radius: 4px; box-shadow: 0 2px 5px rgba(0,0,0,.38); }
-.seat-revealed-cards .playing-card b { font-size: .48rem; }
-.seat-revealed-cards .playing-card i { font-size: .65rem; }
+.seat-revealed-cards .playing-card { width: 28px; padding: 3px; border-radius: 5px; box-shadow: 0 2px 5px rgba(0,0,0,.38); }
+.seat-revealed-cards .playing-card b { font-size: .63rem; }
+.seat-revealed-cards .playing-card i { font-size: .9rem; }
 .seat-action { position: absolute; z-index: 9; right: 50%; bottom: -13px; display: inline-flex; align-items: center; justify-content: center; min-height: 25px; max-width: calc(100% - 10px); padding: 3px 8px; border: 1px solid currentColor; border-radius: 999px; background: rgba(8,15,12,.97); box-shadow: 0 5px 14px rgba(0,0,0,.42); gap: 5px; direction: rtl; line-height: 1; white-space: nowrap; transform: translateX(50%); }
 .seat-action i { display: grid; flex: 0 0 17px; width: 17px; height: 17px; border: 1px solid currentColor; border-radius: 50%; place-items: center; font-style: normal; font-size: .61rem; font-weight: 950; }
 .seat-action b { overflow: hidden; font-size: .5rem; text-overflow: ellipsis; }
@@ -253,7 +253,9 @@ button:disabled { cursor: wait; opacity: 0.55; }
 .your-hand > p { margin: 0 0 3px; color: #b8c2bc; font-size: .58rem; font-weight: 800; text-align: center; }
 .your-hand > p span { color: var(--emerald); }
 .hole-cards { display: flex; direction: ltr; gap: 4px; }
-.hole-cards .playing-card { width: clamp(36px,5.1vw,49px); }
+.hole-cards .playing-card { width: clamp(52px,5.2vw,66px); padding: clamp(5px,.7vw,8px); }
+.hole-cards .playing-card b { font-size: clamp(1rem,1.5vw,1.25rem); }
+.hole-cards .playing-card i { font-size: clamp(1.45rem,2.3vw,1.9rem); }
 .your-stack { display: grid; align-content: center; justify-items: center; min-width: 0; }
 .your-stack span { color: var(--muted); font-size: .55rem; }
 .your-stack strong { display: flex; align-items: center; color: var(--gold-light); gap: 7px; font-family: Georgia,serif; font-size: clamp(1rem,2.5vw,1.35rem); font-variant-numeric: tabular-nums; }
@@ -477,7 +479,7 @@ button:disabled { cursor: wait; opacity: 0.55; }
   .seat-action i { width: 15px; height: 15px; flex-basis: 15px; font-size: .53rem; }
   .seat-action b { font-size: .45rem; }
   .player-panel { grid-template-columns: auto auto minmax(0,1fr); padding: 5px 6px; border-radius: 13px; gap: 5px 6px; }
-  .hole-cards .playing-card { width: 36px; }
+  .hole-cards .playing-card { width: clamp(48px,13vw,58px); }
   .action-bar { gap: 4px; }
   .action-bar button { min-height: 42px; padding: 0 3px; border-radius: 10px; gap: 3px; font-size: clamp(.52rem,2.25vw,.65rem); }
   .action-bar button > span { width: 16px; height: 16px; font-size: .54rem; }
