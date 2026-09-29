@@ -23,6 +23,7 @@ import {
   advancePreflopToFlop,
   advanceRiverToShowdown,
   advanceTurnToRiver,
+  advanceUncontestedRunout,
   compareFiveCardHands,
   finishUncontestedHand,
   getFlopLegalActions,
@@ -34,8 +35,8 @@ import {
   settleShowdown,
   type Card,
   type ShowdownPot,
+  type StartedHand,
 } from '@texas-holdem/poker-core/server';
-import { advanceUncontestedRunout, type StartedHand } from '../../../packages/poker-core/src/server-recovery.js';
 
 import { startServerHand } from './hand-start.js';
 import { isVerifiedPrivateHandRecovery, type VerifiedPrivateHandRecovery } from './persistence/private-hand-snapshot.js';

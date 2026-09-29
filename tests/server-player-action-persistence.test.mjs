@@ -27,6 +27,7 @@ const raisedSnapshot = signPrivateHandSnapshot(raised, { roomId: room.id, sequen
 
 function createDb({ latest = { sequence: 0, state: initial }, currentHandStart = 'GAME_STARTED', duplicateAction = false } = {}) {
   const calls = [];
+  let currentLatest = latest;
   const tx = {
     room: {
       findUnique: async (args) => { calls.push(['room.findUnique', args]); return room; },
@@ -34,8 +35,12 @@ function createDb({ latest = { sequence: 0, state: initial }, currentHandStart =
       update: async (args) => { calls.push(['room.update', args]); return args.data; },
     },
     gameSnapshot: {
-      findFirst: async (args) => { calls.push(['gameSnapshot.findFirst', args]); return latest; },
-      create: async (args) => { calls.push(['gameSnapshot.create', args]); return args.data; },
+      findFirst: async (args) => { calls.push(['gameSnapshot.findFirst', args]); return currentLatest; },
+      create: async (args) => {
+        calls.push(['gameSnapshot.create', args]);
+        currentLatest = { sequence: args.data.sequence, state: args.data.state };
+        return args.data;
+      },
     },
     gameEvent: {
       create: async (args) => { calls.push(['gameEvent.create', args]); return args.data; },
@@ -225,24 +230,31 @@ test('the host persists one all-in board street without exposing cards in the ev
   assert.equal(persisted.hand.communityCards.length, 3);
 });
 
-test('the host persists one hypothetical board street after an uncontested hand without changing settlement', async () => {
+test('the host persists the hypothetical flop, turn, and river after an uncontested hand without changing settlement', async () => {
   const recoveredRaise = hydrateSignedPrivateHandSnapshot(raisedSnapshot, { roomId: room.id, sequence: 1 }, keyring).hand;
   const foldedShowdown = finishUncontestedHand(applyPreflopFold(recoveredRaise, 2));
   const foldedSnapshot = signPrivateHandSnapshot(foldedShowdown, { roomId: room.id, sequence: 2, keyId }, key);
   const db = createDb({ latest: { sequence: 2, state: foldedSnapshot } });
   const repository = new RoomRepository(db, undefined, undefined, undefined, keyring);
 
-  const result = await repository.advanceRabbitRunoutForHostAtomically({ joinId: room.joinId, hostPlayerId: 'host-id' });
+  const flop = await repository.advanceRabbitRunoutForHostAtomically({ joinId: room.joinId, hostPlayerId: 'host-id' });
+  const turn = await repository.advanceRabbitRunoutForHostAtomically({ joinId: room.joinId, hostPlayerId: 'host-id' });
+  const river = await repository.advanceRabbitRunoutForHostAtomically({ joinId: room.joinId, hostPlayerId: 'host-id' });
 
-  assert.equal(result.sequence, 3);
-  assert.deepEqual(db.calls.find(([name]) => name === 'gameEvent.create')[1].data, {
+  assert.deepEqual([flop.sequence, turn.sequence, river.sequence], [3, 4, 5]);
+  assert.deepEqual(db.calls.filter(([name]) => name === 'gameEvent.create').map(([, args]) => args.data), [{
     roomId: room.id, sequence: 3, type: 'UNCONTESTED_RUNOUT_ADVANCED', payload: { communityCardCount: 3 },
-  });
+  }, {
+    roomId: room.id, sequence: 4, type: 'UNCONTESTED_RUNOUT_ADVANCED', payload: { communityCardCount: 4 },
+  }, {
+    roomId: room.id, sequence: 5, type: 'UNCONTESTED_RUNOUT_ADVANCED', payload: { communityCardCount: 5 },
+  }]);
   assert.equal(db.calls.filter(([name]) => name === 'settlement.create').length, 0);
   assert.equal(db.calls.filter(([name]) => name === 'player.update').length, 0);
-  const persisted = hydrateSignedPrivateHandSnapshot(db.calls.find(([name]) => name === 'gameSnapshot.create')[1].data.state, { roomId: room.id, sequence: 3 }, keyring);
+  const snapshots = db.calls.filter(([name]) => name === 'gameSnapshot.create');
+  const persisted = hydrateSignedPrivateHandSnapshot(snapshots.at(-1)[1].data.state, { roomId: room.id, sequence: 5 }, keyring);
   assert.equal(persisted.hand.street, 'showdown');
-  assert.equal(persisted.hand.communityCards.length, 3);
+  assert.equal(persisted.hand.communityCards.length, 5);
 });
 
 test('a voluntary single-card showdown reveal is signed into the next snapshot without accepting client cards', async () => {

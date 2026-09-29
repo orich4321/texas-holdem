@@ -124,6 +124,16 @@ test('mobile table UI keeps the player anchored, reconnects safely, and exposes 
   assert.doesNotMatch(lobby, />1,000 צ׳יפים</);
 });
 
+test('server game authority uses one poker-core module identity in production', async () => {
+  const [lifecycle, handStart] = await Promise.all([
+    readFile(resolve(root, 'apps/server/src/game-lifecycle.ts'), 'utf8'),
+    readFile(resolve(root, 'apps/server/src/hand-start.ts'), 'utf8'),
+  ]);
+  assert.match(lifecycle, /advanceUncontestedRunout[\s\S]*from '@texas-holdem\/poker-core\/server'/);
+  assert.doesNotMatch(lifecycle, /packages\/poker-core\/src/);
+  assert.doesNotMatch(handStart, /packages\/poker-core\/src/);
+});
+
 test('production uses the same-origin game service and the host route never offers another seat', async () => {
   const [creation, lobbyApi, lobby, table] = await Promise.all([
     readFile(resolve(root, 'apps/web/app/room-creation.ts'), 'utf8'),
