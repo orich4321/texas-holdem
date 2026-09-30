@@ -96,6 +96,15 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
     }
   }
 
+  async function copyRoomCode() {
+    try {
+      await globalThis.navigator.clipboard.writeText(joinId.toUpperCase());
+      setCopied('קוד החדר הועתק. החברים יכולים להזין אותו בעמוד כניסה לחדר.');
+    } catch {
+      setCopied('לא הצלחנו להעתיק. אפשר להקריא את הקוד שמופיע כאן.');
+    }
+  }
+
   async function handleStart() {
     if (starting) return;
     setStarting(true);
@@ -208,8 +217,9 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
             </section>
 
             <div className="lobby-share">
-              <div><strong>מזמינים חברים</strong><span>הקישור פותח את מסך האורח, ללא הרשאות מארח.</span></div>
-              <button type="button" onClick={() => void copyInvitation()}><span aria-hidden="true">↗</span> העתקת קישור</button>
+              <div><strong>מזמינים חברים</strong><span>קישור או קוד חדר יובילו למסך האורח, ללא הרשאות מארח.</span></div>
+              <div className="room-code-display"><small>קוד החדר</small><code dir="ltr">{joinId.toUpperCase()}</code></div>
+              <div className="room-share-buttons"><button type="button" onClick={() => void copyInvitation()}><span aria-hidden="true">↗</span> העתקת קישור</button><button type="button" onClick={() => void copyRoomCode()}>העתקת קוד</button></div>
               {copied ? <p role="status" aria-live="polite">{copied}</p> : null}
             </div>
 

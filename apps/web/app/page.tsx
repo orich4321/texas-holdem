@@ -83,6 +83,7 @@ export default function HomePage() {
             <button className="entry-primary" type="submit" disabled={pending || !validSettings}>{pending ? 'פותחים…' : 'פתיחת שולחן'}</button>
             {status ? <p id="host-status" className="entry-status" role="status" aria-live="polite">{status}</p> : null}
           </form>
+          <a className="entry-secondary-link" href="/enter-room">יש לכם קוד חדר? היכנסו למשחק</a>
         </div>
       </section>
     </main>

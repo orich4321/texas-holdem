@@ -942,6 +942,15 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
     }
   }
 
+  async function copyRoomCode() {
+    try {
+      await globalThis.navigator.clipboard.writeText(joinId.toUpperCase());
+      setStatus('קוד החדר הועתק. החברים יכולים להזין אותו בכתובת /enter-room.');
+    } catch {
+      setStatus('לא הצלחנו להעתיק את הקוד. אפשר להקריא אותו מהמסך.');
+    }
+  }
+
   async function downloadFinalSummary() {
     if (!finalSummary || !isCurrentHost || downloadingSummary) return;
     setDownloadingSummary(true);
@@ -1191,7 +1200,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
         <div className="management-grid">
           <section className="management-card"><h3>היד האחרונה</h3><p>{management?.nextHandIsFinal ? 'היד הבאה מסומנת כאחרונה.' : 'המשחק ימשיך כרגיל.'}</p><button type="button" className={management?.nextHandIsFinal ? 'management-cancel' : 'management-gold'} disabled={managementBusy} onClick={() => void scheduleFinalHand(!management?.nextHandIsFinal)}>{management?.nextHandIsFinal ? 'ביטול הסימון' : 'סימון סיבוב אחרון'}</button></section>
           <section className="management-card"><h3>בליינדים מהיד הבאה</h3><div className="blind-inputs"><label>סמול<input type="number" inputMode="numeric" min="1" value={smallBlind} onChange={(event) => setSmallBlind(event.target.value)} /></label><label>ביג<input type="number" inputMode="numeric" min="2" value={bigBlind} onChange={(event) => setBigBlind(event.target.value)} /></label></div><button type="button" disabled={managementBusy || !validBlinds} onClick={() => void saveBlinds()}>שמירת בליינדים</button></section>
-          <section className="management-card management-invite"><h3>הוספת שחקנים</h3><p>הקישור תמיד פותח את מסך האורח.</p><button type="button" onClick={() => void copyInvitationForNextHand()}>העתקת קישור הזמנה</button></section>
+          <section className="management-card management-invite"><h3>הוספת שחקנים</h3><p>אפשר להזמין בקישור או למסור את קוד החדר. מצטרפים חדשים ייכנסו ליד הבאה.</p><div className="room-code-display"><small>קוד החדר</small><code dir="ltr">{joinId.toUpperCase()}</code></div><div className="room-share-buttons"><button type="button" onClick={() => void copyInvitationForNextHand()}>העתקת קישור הזמנה</button><button type="button" onClick={() => void copyRoomCode()}>העתקת קוד</button></div></section>
         </div>
         <button type="button" className="management-roster-toggle" aria-expanded={playersOpen} onClick={() => setPlayersOpen((open) => !open)}><span>רשימת שחקנים</span><strong>{management?.players.length ?? 0}</strong><i aria-hidden="true">{playersOpen ? '−' : '+'}</i></button>
         {playersOpen ? <section className="management-players"><h3>שחקנים וניהול ערימות</h3>{management?.players.map((player) => <article key={player.id} className={player.leaveAfterHand ? 'player-management-leaving' : ''}>

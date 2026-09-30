@@ -49,7 +49,8 @@ test('home presents a minimal Hebrew room-hosting flow with an accessible dark U
   assert.match(page, /השם שלכם בשולחן/);
   assert.match(page, /פתיחת שולחן/);
   assert.match(page, /entry-settings/);
-  assert.doesNotMatch(page, /קוד חדר|הצטרף לחדר/);
+  assert.match(page, /href="\/enter-room"/);
+  assert.doesNotMatch(page, /name="room-code"|הצטרף לחדר/);
   assert.doesNotMatch(page, /home-benefits|home-hero|hero-cards/);
 
   assert.match(styles, /color-scheme:\s*dark/);
