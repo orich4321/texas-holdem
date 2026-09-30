@@ -12,8 +12,16 @@ import TableClient from './table-client';
 import { AppBrand, StateScreen } from '../../ui';
 import { AvatarPicker } from '../../avatar-picker';
 import { ProfileImage } from '../../profile-image';
+import { unlockActionAudio } from '../../action-sounds';
 
 type LobbyClientProps = { joinId: string; isHostRoute?: boolean };
+
+function unlockPreferredActionAudio() {
+  try {
+    if (globalThis.localStorage.getItem('holdem-action-sound-enabled') === 'false') return;
+  } catch { /* Storage is optional. */ }
+  void unlockActionAudio();
+}
 
 export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClientProps) {
   const [lobby, setLobby] = useState<Lobby>();
@@ -65,6 +73,7 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
   async function handleJoin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (joining) return;
+    unlockPreferredActionAudio();
     setJoinMessage(undefined);
     if (!nickname.trim()) {
       setJoinMessage(EMPTY_NICKNAME_MESSAGE);
@@ -107,6 +116,7 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
 
   async function handleStart() {
     if (starting) return;
+    unlockPreferredActionAudio();
     setStarting(true);
     setJoinMessage(undefined);
     const result = await startLobbyGame(joinId, { fetch: (...args) => globalThis.fetch(...args) });

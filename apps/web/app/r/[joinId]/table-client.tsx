@@ -2,10 +2,9 @@
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { io } from 'socket.io-client';
-import { AppBrand } from '../../ui';
 import { parsePositiveInteger } from '../../numeric-input';
 import { ProfileImage } from '../../profile-image';
-import { playActionSound, unlockActionAudio } from '../../action-sounds';
+import { actionAudioIsReady, playActionSound, unlockActionAudio } from '../../action-sounds';
 
 declare const process: { env: { NODE_ENV?: string; NEXT_PUBLIC_GAME_URL?: string; NEXT_PUBLIC_SERVER_URL?: string } };
 
@@ -280,6 +279,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   const [turnSeconds, setTurnSeconds] = useState(60);
   const [usingTimeCard, setUsingTimeCard] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
+  const soundEnabledRef = useRef(true);
   const [savingPreAction, setSavingPreAction] = useState(false);
   const [activePotIndex, setActivePotIndex] = useState(0);
   const [finalSummary, setFinalSummary] = useState<FinalSummary>();
@@ -309,18 +309,27 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   const soundTimeoutsRef = useRef<Set<ReturnType<typeof globalThis.setTimeout>>>(new Set());
 
   useEffect(() => {
-    try { setSoundEnabled(globalThis.localStorage.getItem('holdem-action-sound-enabled') !== 'false'); } catch { /* Storage is optional. */ }
-    const unlock = () => unlockActionAudio();
-    const skipBacklog = () => { skipRecoveredSoundsRef.current = true; };
-    globalThis.document.addEventListener('pointerdown', unlock);
+    try {
+      const saved = globalThis.localStorage.getItem('holdem-action-sound-enabled') !== 'false';
+      soundEnabledRef.current = saved;
+      setSoundEnabled(saved);
+    } catch { /* Storage is optional. */ }
+    const unlock = () => { if (soundEnabledRef.current) void unlockActionAudio(); };
+    const resume = () => {
+      skipRecoveredSoundsRef.current = true;
+      if (globalThis.document.visibilityState === 'visible') unlock();
+    };
+    globalThis.document.addEventListener('click', unlock);
     globalThis.document.addEventListener('keydown', unlock);
-    globalThis.document.addEventListener('visibilitychange', skipBacklog);
-    globalThis.addEventListener('offline', skipBacklog);
+    globalThis.document.addEventListener('visibilitychange', resume);
+    globalThis.addEventListener('focus', resume);
+    globalThis.addEventListener('offline', resume);
     return () => {
-      globalThis.document.removeEventListener('pointerdown', unlock);
+      globalThis.document.removeEventListener('click', unlock);
       globalThis.document.removeEventListener('keydown', unlock);
-      globalThis.document.removeEventListener('visibilitychange', skipBacklog);
-      globalThis.removeEventListener('offline', skipBacklog);
+      globalThis.document.removeEventListener('visibilitychange', resume);
+      globalThis.removeEventListener('focus', resume);
+      globalThis.removeEventListener('offline', resume);
       for (const timer of soundTimeoutsRef.current) globalThis.clearTimeout(timer);
       soundTimeoutsRef.current.clear();
     };
@@ -348,7 +357,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
       soundTimeoutsRef.current.add(timer);
     });
   }, [view, soundEnabled]);
-  const turnVibrationRef = useRef<{ identity: string; observedSequence: number; notified: boolean } | undefined>(undefined);
+  const turnAlertRef = useRef<{ identity: string; observedSequence: number; vibrated: boolean; soundNotified: boolean } | undefined>(undefined);
 
   useEffect(() => {
     let active = true;
@@ -485,30 +494,34 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
 
   useEffect(() => {
     if (!isTurn || !view || !ownSeat || ownSeat.stack <= 0 || ownSeat.isFolded || ownSeat.isSittingOut || view.holeCards.length !== 2) {
-      turnVibrationRef.current = undefined;
+      turnAlertRef.current = undefined;
       return;
     }
 
     const identity = `${joinId}:${view.playerId}:${view.street}:${view.holeCards.map(cardKey).join(',')}`;
-    const previous = turnVibrationRef.current;
+    const previous = turnAlertRef.current;
     const actionSequence = view.lastAction?.sequence;
     const observedSequence = Math.max(view.sequence ?? -1, actionSequence ?? -1);
     // Repeated polling, reconnects, and time-card extensions keep the same
     // alert. A newer player action can hand the turn back between two polls.
     if (!previous || previous.identity !== identity || (actionSequence !== undefined && actionSequence > previous.observedSequence)) {
-      turnVibrationRef.current = { identity, observedSequence, notified: false };
+      turnAlertRef.current = { identity, observedSequence, vibrated: false, soundNotified: false };
     } else {
       previous.observedSequence = Math.max(previous.observedSequence, observedSequence);
     }
-    const turn = turnVibrationRef.current!;
-    if (turn.notified || typeof globalThis.navigator.vibrate !== 'function') return;
+    const turn = turnAlertRef.current!;
+    if (!turn.soundNotified && soundEnabled && actionAudioIsReady() && globalThis.document.visibilityState === 'visible') {
+      turn.soundNotified = true;
+      playActionSound('turn');
+    }
+    if (turn.vibrated || typeof globalThis.navigator.vibrate !== 'function') return;
 
     const notify = () => {
-      if (turn.notified || turnVibrationRef.current !== turn || globalThis.document.visibilityState !== 'visible') return;
+      if (turn.vibrated || turnAlertRef.current !== turn || globalThis.document.visibilityState !== 'visible') return;
       // Browsers require an interaction with the page before allowing haptics.
       if (globalThis.navigator.userActivation && !globalThis.navigator.userActivation.hasBeenActive) return;
       try {
-        turn.notified = globalThis.navigator.vibrate(80);
+        turn.vibrated = globalThis.navigator.vibrate(80);
       } catch {
         // Missing hardware or browser restrictions must not interrupt play.
       }
@@ -524,7 +537,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
       globalThis.document.removeEventListener('keyup', notify);
       globalThis.removeEventListener('focus', notify);
     };
-  }, [joinId, isTurn, view, ownSeat]);
+  }, [joinId, isTurn, view, ownSeat, soundEnabled]);
 
   useEffect(() => {
     const deadline = view?.turnDeadlineAt ? Date.parse(view.turnDeadlineAt) : Number.NaN;
@@ -748,9 +761,12 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
       for (const timer of soundTimeoutsRef.current) globalThis.clearTimeout(timer);
       soundTimeoutsRef.current.clear();
     }
+    soundEnabledRef.current = next;
     setSoundEnabled(next);
     try { globalThis.localStorage.setItem('holdem-action-sound-enabled', String(next)); } catch { /* Storage is optional. */ }
-    if (next) unlockActionAudio();
+    if (next) void unlockActionAudio().then((ready) => {
+      if (ready && !isTurn) playActionSound('check');
+    });
   }
 
   function submitRaise() {
@@ -1064,11 +1080,11 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   return (
     <main className="table-shell" dir="rtl">
       <header className="table-header">
-        <div className="table-header-brand"><a href={`/r/${joinId}`} aria-label="חזרה ללובי"><AppBrand compact /></a><button type="button" className="table-sound-toggle" aria-label={soundEnabled ? 'השתקת צלילי המשחק' : 'הפעלת צלילי המשחק'} aria-pressed={soundEnabled} onClick={toggleSound}><span aria-hidden="true">{soundEnabled ? '♪' : '♪̸'}</span></button></div>
-        {isCurrentHost ? <button type="button" className="table-management-button" aria-expanded={managementOpen} onClick={() => {
+        <div className="table-header-tools"><button type="button" className="table-sound-toggle" aria-label={soundEnabled ? 'השתקת צלילי המשחק' : 'הפעלת צלילי המשחק'} aria-pressed={soundEnabled} title={soundEnabled ? 'השתקת צלילים' : 'הפעלת צלילים ובדיקתם'} onClick={toggleSound}><span aria-hidden="true">{soundEnabled ? '♪' : '♪̸'}</span></button></div>
+        {isCurrentHost ? <button type="button" className="table-management-button" aria-label="ניהול שולחן" title="ניהול שולחן" aria-expanded={managementOpen} onClick={() => {
           setManagementOpen(true);
           void loadManagement();
-        }}><span aria-hidden="true">⚙</span> ניהול שולחן</button> : null}
+        }}><span aria-hidden="true">⚙</span></button> : null}
         <div className="table-timer"><span>זמן משחק</span><strong dir="ltr">{gameTime}</strong></div>
         {view.street !== 'showdown' && !view.allInRunout ? <div className={`turn-clock${turnSeconds <= 10 ? ' turn-clock-urgent' : ''}`} aria-label={`נותרו ${turnSeconds} שניות לתור`}><span>זמן לתור</span><strong dir="ltr">{Math.floor(turnSeconds / 60).toString().padStart(2, '0')}:{(turnSeconds % 60).toString().padStart(2, '0')}</strong>{isTurn ? <button type="button" disabled={usingTimeCard || (view.timeCardsRemaining ?? 0) < 1} onClick={() => void useTimeCard()}>+60 · {view.timeCardsRemaining ?? 0}</button> : null}</div> : null}
         <div className="table-round"><span>שלב במשחק</span><strong>{streetNames[view.street]}</strong></div>
