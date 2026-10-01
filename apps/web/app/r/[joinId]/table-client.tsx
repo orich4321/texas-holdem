@@ -349,7 +349,11 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
     seenSoundSequenceRef.current = Math.max(seenSoundSequenceRef.current, sequence);
     if (!soundEnabled || globalThis.document.visibilityState !== 'visible') return;
     fresh.forEach((notice, index) => {
-      const kind = notice.action.type === 'raise' ? notice.raiseKind ?? 'raise' : notice.action.type;
+      const kind = notice.actorPlayerId === view.playerId
+        ? 'own-action'
+        : notice.action.type === 'raise' || notice.action.type === 'call' || notice.action.type === 'all-in'
+          ? 'chips'
+          : 'cards';
       const timer = globalThis.setTimeout(() => {
         soundTimeoutsRef.current.delete(timer);
         playActionSound(kind);
@@ -765,7 +769,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
     setSoundEnabled(next);
     try { globalThis.localStorage.setItem('holdem-action-sound-enabled', String(next)); } catch { /* Storage is optional. */ }
     if (next) void unlockActionAudio().then((ready) => {
-      if (ready && !isTurn) playActionSound('check');
+      if (ready && !isTurn) playActionSound('cards');
     });
   }
 
