@@ -70,6 +70,7 @@ export default function ProfilePage() {
         <input id="profile-name" value={name} maxLength={24} autoComplete="nickname" onChange={(event) => setName(event.target.value)} disabled={busy} required />
         <AvatarPicker value={avatar} onChange={setAvatar} disabled={busy} />
         <button className="entry-primary" type="submit" disabled={busy || !name.trim()}>{busy ? 'שומרים…' : account.profile.displayName ? 'שמירת שינויים' : 'שמירה והמשך'}</button>
+        <Link className="entry-secondary-link" href="/history">היסטוריית המשחקים והידיים שלי</Link>
         <button className="profile-sign-out" type="button" onClick={() => void signOut()} disabled={busy}>התנתקות מהחשבון</button>
       </form> : null}
       {account && !account.enabled ? <p>התחברות Google עדיין אינה מוגדרת באתר.</p> : null}

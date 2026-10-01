@@ -1,4 +1,5 @@
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
+import { projectHandHistory } from './hand-history.js';
 import type { Prisma, PrismaClient, RoomStatus } from '@prisma/client';
 import {
   createPlayerAccessToken,
@@ -1279,6 +1280,70 @@ export class RoomRepository {
       }
       return { hostPlayerId: target.id, previousHostLeaves: leaveAfterHand };
     });
+  }
+
+  /** Account-scoped history; never use a room URL or a legacy room cookie as authority. */
+  async listGamesForAccount(accountId: string) {
+    const rooms = await this.db.room.findMany({
+      where: { players: { some: { accountId } } },
+      orderBy: { updatedAt: 'desc' },
+      select: {
+        joinId: true, status: true, createdAt: true, updatedAt: true,
+        players: { where: { accountId }, select: { id: true, initialStack: true, currentStack: true } },
+        chipAdjustments: { where: { player: { accountId }, status: 'APPLIED' }, select: { playerId: true, amount: true } },
+        _count: { select: { settlements: true } },
+      },
+    });
+    return rooms.map((room) => ({
+      joinId: room.joinId, status: room.status,
+      createdAt: room.createdAt.toISOString(), updatedAt: room.updatedAt.toISOString(),
+      handCount: room._count.settlements,
+      yourNet: room.players.reduce((total, player) => total + player.currentStack - player.initialStack
+        - room.chipAdjustments.filter((adjustment) => adjustment.playerId === player.id).reduce((sum, adjustment) => sum + adjustment.amount, 0), 0),
+    }));
+  }
+
+  async listHandsForAccount(accountId: string, joinId: string) {
+    const room = await this.db.room.findFirst({
+      where: { joinId, players: { some: { accountId } } },
+      select: {
+        id: true, joinId: true, status: true, createdAt: true,
+        settlements: { orderBy: { createdAt: 'asc' }, select: { idempotencyKey: true, createdAt: true } },
+      },
+    });
+    if (!room) return null;
+    return {
+      joinId: room.joinId, status: room.status, createdAt: room.createdAt.toISOString(),
+      hands: room.settlements.map((settlement, index) => ({
+        key: settlement.idempotencyKey, number: index + 1, settledAt: settlement.createdAt.toISOString(),
+      })),
+    };
+  }
+
+  async getHandForAccount(accountId: string, joinId: string, handKey: string) {
+    if (!/^hand-\d+$/.test(handKey)) return null;
+    const room = await this.db.room.findFirst({
+      where: { joinId, players: { some: { accountId } } },
+      select: { id: true, players: { where: { accountId }, select: { id: true } },
+        settlements: { where: { idempotencyKey: handKey }, take: 1, select: { result: true, createdAt: true } } },
+    });
+    const settlement = room?.settlements[0];
+    if (!room || !settlement) return null;
+    const finalSequence = Number(handKey.slice(5)) + 1;
+    const start = await this.db.gameEvent.findFirst({
+      where: { roomId: room.id, sequence: { lte: finalSequence }, type: { in: ['GAME_STARTED', 'HAND_STARTED', 'FINAL_HAND_STARTED'] } },
+      orderBy: { sequence: 'desc' }, select: { sequence: true },
+    });
+    const next = await this.db.gameEvent.findFirst({
+      where: { roomId: room.id, sequence: { gt: finalSequence }, type: { in: ['HAND_STARTED', 'FINAL_HAND_STARTED'] } },
+      orderBy: { sequence: 'asc' }, select: { sequence: true },
+    });
+    const events = await this.db.gameEvent.findMany({
+      where: { roomId: room.id, sequence: { gte: start?.sequence ?? finalSequence, ...(next ? { lt: next.sequence } : {}) }, type: { in: ['PLAYER_ACTION', 'SHOWDOWN_CARD_REVEALED'] } },
+      orderBy: { sequence: 'asc' }, select: { sequence: true, type: true, payload: true, createdAt: true },
+    });
+    return { key: handKey, settledAt: settlement.createdAt.toISOString(),
+      ...projectHandHistory(settlement.result, new Set(room.players.map((player) => player.id)), events) };
   }
 
   /** Returns only the public audit trail and final stacks to a room participant. */

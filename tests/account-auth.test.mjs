@@ -36,6 +36,7 @@ async function withServer(roomRepository, accountRepository, run) {
 test('OAuth destinations never allow external or protocol-relative redirects', () => {
   assert.equal(safeAuthDestination(`/r/${joinId}`), `/r/${joinId}`);
   assert.equal(safeAuthDestination(`/r/${joinId}/host`), `/r/${joinId}/host`);
+  assert.equal(safeAuthDestination(`/history/${joinId}`), `/history/${joinId}`);
   for (const input of ['//evil.example', 'https://evil.example', '/\\evil.example', '/admin', '/r/nope']) {
     assert.equal(safeAuthDestination(input), '/');
   }

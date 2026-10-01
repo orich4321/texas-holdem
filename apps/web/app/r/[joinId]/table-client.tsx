@@ -261,7 +261,7 @@ function PlayingCard({ card, hidden = false, placeholder = false, highlighted = 
   return <span className={`playing-card${red ? ' playing-card-red' : ''}${highlighted ? ' playing-card-winning' : ''}`} aria-label={`${card.rank} ${card.suit}`}><b>{card.rank}</b><i>{suit}</i></span>;
 }
 
-export default function TableClient({ joinId, isHost }: { joinId: string; isHost: boolean }) {
+export default function TableClient({ joinId, isHost, networkActive = true }: { joinId: string; isHost: boolean; networkActive?: boolean }) {
   const [view, setView] = useState<PlayerView>();
   const [status, setStatus] = useState('מתחברים לשולחן…');
   const [raiseTo, setRaiseTo] = useState<number>();
@@ -366,12 +366,14 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   const turnAlertRef = useRef<{ identity: string; observedSequence: number; vibrated: boolean; soundNotified: boolean } | undefined>(undefined);
 
   useEffect(() => {
+    if (!networkActive) return;
     let active = true;
+    const controller = new AbortController();
     let refreshTag: string | undefined;
     const refresh = async () => {
       try {
         const response = await globalThis.fetch(`${SERVER_URL}/rooms/${encodeURIComponent(joinId)}/game`, {
-          credentials: 'include', cache: 'no-store',
+          credentials: 'include', cache: 'no-store', signal: controller.signal,
           ...(refreshTag ? { headers: { 'If-None-Match': refreshTag } } : {}),
         });
         if (response.status === 304) return;
@@ -446,6 +448,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
     globalThis.document.addEventListener('visibilitychange', onVisibilityChange);
     return () => {
       active = false;
+      controller.abort();
       socket.close();
       socketRef.current = null;
       if (pollTimer !== undefined) globalThis.clearTimeout(pollTimer);
@@ -453,7 +456,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
       globalThis.removeEventListener('online', restoreAfterResume);
       globalThis.document.removeEventListener('visibilitychange', onVisibilityChange);
     };
-  }, [joinId]);
+  }, [joinId, networkActive]);
 
   useEffect(() => {
     if (!view) return;
@@ -553,6 +556,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   }, [joinId, isTurn, view, ownSeat, soundEnabled]);
 
   useEffect(() => {
+    if (!networkActive) return;
     const deadline = view?.turnDeadlineAt ? Date.parse(view.turnDeadlineAt) : Number.NaN;
     if (!view || !Number.isFinite(deadline) || view.street === 'showdown' || view.allInRunout) {
       setTurnSeconds(0);
@@ -577,7 +581,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
     update();
     const timer = globalThis.setInterval(update, 250);
     return () => globalThis.clearInterval(timer);
-  }, [joinId, view?.sequence, view?.turnDeadlineAt, view?.street, view?.allInRunout?.nextStreet]);
+  }, [joinId, networkActive, view?.sequence, view?.turnDeadlineAt, view?.street, view?.allInRunout?.nextStreet]);
   const exposedBySeat = useMemo(() => new Map(view?.exposedHands.map((hand) => [hand.seatNumber, hand])), [view]);
   const ownExposedCardIndexes = useMemo(() => {
     const exposedHand = view?.exposedHands.find((hand) => hand.playerId === view.playerId);
@@ -629,8 +633,9 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   }, [view?.raise?.minRaiseTo, view?.raise?.maxRaiseTo]);
 
   useEffect(() => {
-    if (view?.street !== 'showdown' || !view.gameCompleted || !view.finalSummaryVisible) return;
+    if (!networkActive || view?.street !== 'showdown' || !view.gameCompleted || !view.finalSummaryVisible) return;
     let active = true;
+    let attempts = 0;
     let retryTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
     const load = async () => {
       try {
@@ -644,14 +649,14 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
         // The completed room and its summary are committed together, but a
         // retry also covers a transient serverless cold start or network gap.
       }
-      if (active) retryTimer = globalThis.setTimeout(() => { void load(); }, 350);
+      if (active) retryTimer = globalThis.setTimeout(() => { void load(); }, Math.min(10_000, 350 * 2 ** attempts++));
     };
     void load();
     return () => {
       active = false;
       if (retryTimer !== undefined) globalThis.clearTimeout(retryTimer);
     };
-  }, [joinId, view?.gameCompleted, view?.finalSummaryVisible, view?.street]);
+  }, [joinId, networkActive, view?.gameCompleted, view?.finalSummaryVisible, view?.street]);
 
   useEffect(() => {
     if (!isTurn || !view?.raise) setShowRaiseControls(false);
@@ -1099,7 +1104,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
           void loadManagement();
         }}><span aria-hidden="true">⚙</span></button> : null}
         <div className="table-timer"><span>זמן משחק</span><strong dir="ltr">{gameTime}</strong></div>
-        {view.street !== 'showdown' && !view.allInRunout ? <div className={`turn-clock${turnSeconds <= 10 ? ' turn-clock-urgent' : ''}`} aria-label={`נותרו ${turnSeconds} שניות לתור`}><span>זמן לתור</span><strong dir="ltr">{Math.floor(turnSeconds / 60).toString().padStart(2, '0')}:{(turnSeconds % 60).toString().padStart(2, '0')}</strong>{isTurn ? <button type="button" disabled={usingTimeCard || (view.timeCardsRemaining ?? 0) < 1} onClick={() => void useTimeCard()}>+60 · {view.timeCardsRemaining ?? 0}</button> : null}</div> : null}
+        {view.street !== 'showdown' && !view.allInRunout ? <div className={`turn-clock${turnSeconds <= 10 ? ' turn-clock-urgent' : ''}`} aria-label={`נותרו ${turnSeconds} שניות לתור`}><span>זמן לתור</span><strong dir="ltr">{Math.floor(turnSeconds / 60).toString().padStart(2, '0')}:{(turnSeconds % 60).toString().padStart(2, '0')}</strong>{isTurn ? <button type="button" disabled={usingTimeCard || (view.timeCardsRemaining ?? 0) < 1} onClick={() => void useTimeCard()} title="שימוש בכרטיס זמן מוסיף דקה אחת לתור">כרטיס זמן: עוד דקה · נותרו {view.timeCardsRemaining ?? 0}</button> : null}</div> : null}
         <div className="table-round"><span>שלב במשחק</span><strong>{streetNames[view.street]}</strong></div>
         <div className="table-header-pot"><span>{view.showdown ? 'קופה שחולקה' : 'קופה נוכחית'}</span><strong><i aria-hidden="true" />{displayedPot.toLocaleString('he-IL')}</strong></div>
       </header>

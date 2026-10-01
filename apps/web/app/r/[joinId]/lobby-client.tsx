@@ -15,6 +15,7 @@ import { ProfileImage } from '../../profile-image';
 import { unlockActionAudio } from '../../action-sounds';
 import { googleLoginPath, loadAccount, profilePath, type AccountState } from '../../account-api';
 import { AccountLink } from '../../account-link';
+import { usePageActivity } from '../../use-page-activity';
 
 type LobbyClientProps = { joinId: string; isHostRoute?: boolean };
 
@@ -26,6 +27,7 @@ function unlockPreferredActionAudio() {
 }
 
 export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClientProps) {
+  const activity = usePageActivity();
   const [lobby, setLobby] = useState<Lobby>();
   const [nickname, setNickname] = useState('');
   const [avatarDataUrl, setAvatarDataUrl] = useState<string>();
@@ -37,6 +39,7 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
   const [copied, setCopied] = useState<string>();
   const [account, setAccount] = useState<AccountState>();
   const autoJoinAttempted = useRef(false);
+  const wasNetworkActive = useRef(activity.networkActive);
 
   useEffect(() => {
     void loadAccount().then(setAccount).catch(() => setJoinMessage('לא הצלחנו לבדוק את החשבון. נסו לרענן את הדף.'));
@@ -59,10 +62,21 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
   }, [refreshLobby]);
 
   useEffect(() => {
-    if (lobby?.status !== 'WAITING') return undefined;
-    const timer = globalThis.setInterval(() => { void refreshLobby(); }, 1_000);
-    return () => globalThis.clearInterval(timer);
-  }, [lobby?.status, refreshLobby]);
+    if (lobby?.status !== 'WAITING' || !activity.networkActive) return undefined;
+    let active = true;
+    let timer: ReturnType<typeof globalThis.setTimeout>;
+    const poll = async () => {
+      await refreshLobby();
+      if (active) timer = globalThis.setTimeout(() => { void poll(); }, 2_000);
+    };
+    timer = globalThis.setTimeout(() => { void poll(); }, 2_000);
+    return () => { active = false; globalThis.clearTimeout(timer); };
+  }, [lobby?.status, refreshLobby, activity.networkActive]);
+
+  useEffect(() => {
+    if (activity.networkActive && !wasNetworkActive.current && lobby?.status === 'WAITING') void refreshLobby();
+    wasNetworkActive.current = activity.networkActive;
+  }, [activity.networkActive, lobby?.status, refreshLobby]);
 
   useEffect(() => {
     if (lobby?.isHost && !isHostRoute) {
@@ -167,7 +181,7 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
   }
 
   if ((lobby.status === 'IN_PROGRESS' || lobby.status === 'COMPLETED') && lobby.isParticipant) {
-    return <TableClient joinId={joinId} isHost={lobby.isHost} />;
+    return <><TableClient joinId={joinId} isHost={lobby.isHost} networkActive={activity.networkActive} />{activity.paused ? <div className="idle-overlay" role="status"><div><strong>השולחן מושהה במכשיר הזה</strong><p>לא הייתה פעילות במשך 10 דקות. עצרנו את החיבור והרענון כדי לחסוך בתעבורה. המשחק והמושב שלכם שמורים.</p><button type="button" onClick={activity.resume}>חזרה לשולחן</button></div></div> : null}</>;
   }
 
   if (lobby.status === 'COMPLETED') {
@@ -271,6 +285,7 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
           </aside>
         </div>
       </section>
+      {activity.paused ? <div className="idle-overlay" role="status"><div><strong>החדר מושהה במכשיר הזה</strong><p>עצרנו את הרענון אחרי 10 דקות ללא פעילות. החדר והשחקנים נשמרו.</p><button type="button" onClick={activity.resume}>חזרה לחדר</button></div></div> : null}
     </main>
   );
 }

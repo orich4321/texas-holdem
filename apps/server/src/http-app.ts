@@ -322,6 +322,37 @@ export function createApp({ roomRepository, accountRepository, googleOAuth, publ
     }
   });
 
+  routes.get('/auth/history', async (request, response) => {
+    try {
+      const account = await findAccountIdentity(request.headers.cookie);
+      if (!account) { response.status(401).json({ error: { code: 'AUTH_REQUIRED' } }); return; }
+      response.setHeader('Cache-Control', 'private, no-store');
+      response.json({ games: await roomRepository.listGamesForAccount(account.id) });
+    } catch { response.status(500).json({ error: { code: 'INTERNAL_ERROR' } }); }
+  });
+
+  routes.get('/auth/history/:joinId', async (request, response) => {
+    try {
+      const account = await findAccountIdentity(request.headers.cookie);
+      if (!account) { response.status(401).json({ error: { code: 'AUTH_REQUIRED' } }); return; }
+      response.setHeader('Cache-Control', 'private, no-store');
+      const game = await roomRepository.listHandsForAccount(account.id, request.params.joinId);
+      if (!game) { response.status(404).json({ error: { code: 'HISTORY_NOT_FOUND' } }); return; }
+      response.json(game);
+    } catch { response.status(500).json({ error: { code: 'INTERNAL_ERROR' } }); }
+  });
+
+  routes.get('/auth/history/:joinId/hands/:handKey', async (request, response) => {
+    try {
+      const account = await findAccountIdentity(request.headers.cookie);
+      if (!account) { response.status(401).json({ error: { code: 'AUTH_REQUIRED' } }); return; }
+      response.setHeader('Cache-Control', 'private, no-store');
+      const hand = await roomRepository.getHandForAccount(account.id, request.params.joinId, request.params.handKey);
+      if (!hand) { response.status(404).json({ error: { code: 'HISTORY_NOT_FOUND' } }); return; }
+      response.json(hand);
+    } catch { response.status(500).json({ error: { code: 'INTERNAL_ERROR' } }); }
+  });
+
   routes.post('/rooms', async (request, response) => {
     try {
       const account = authReady ? await findAccount(request.headers.cookie) : null;

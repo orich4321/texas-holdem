@@ -6,7 +6,7 @@ const VERIFIER = /^[A-Za-z0-9_-]{43}$/;
 
 export function safeAuthDestination(value: unknown): string {
   return typeof value === 'string' && value.length <= 250
-    && (/^\/$/.test(value) || /^\/enter-room$/.test(value) || /^\/profile$/.test(value) || /^\/r\/[a-f0-9]{16}(?:\/host)?$/i.test(value))
+    && (/^\/$/.test(value) || /^\/enter-room$/.test(value) || /^\/profile$/.test(value) || /^\/history(?:\/[a-f0-9]{16})?$/i.test(value) || /^\/r\/[a-f0-9]{16}(?:\/host)?$/i.test(value))
     ? value : '/';
 }
 
