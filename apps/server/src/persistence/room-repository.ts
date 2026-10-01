@@ -523,12 +523,11 @@ export class RoomRepository {
           id: true,
           hostPlayerId: true,
           status: true,
-          players: { orderBy: { createdAt: 'asc' }, select: { id: true, currentStack: true } },
           smallBlind: true,
           bigBlind: true,
         },
       });
-      if (!room || room.hostPlayerId !== hostPlayerId || room.status !== 'WAITING' || room.players.length < 2) {
+      if (!room || room.hostPlayerId !== hostPlayerId || room.status !== 'WAITING') {
         throw new Error('Room is not startable by this host');
       }
 
@@ -540,8 +539,17 @@ export class RoomRepository {
       });
       if (claimed.count !== 1) throw new Error('Room is not startable by this host');
 
+      // Read the roster only after acquiring the room-row lock. A concurrent
+      // host removal must not leave a stale player in the first dealt hand.
+      const players = await tx.player.findMany({
+        where: { roomId: room.id, leftAt: null, isSittingOut: false },
+        orderBy: { createdAt: 'asc' },
+        select: { id: true, currentStack: true },
+      });
+      if (players.length < 2) throw new Error('Room is not startable by this host');
+
       const hand = startServerHand({
-        seats: room.players.map((player, index) => ({
+        seats: players.map((player, index) => ({
           seatNumber: index + 1,
           playerId: player.id,
           stack: player.currentStack,
@@ -1210,6 +1218,27 @@ export class RoomRepository {
       await tx.player.update({ where: { id: targetPlayerId }, data: { leaveAfterHand: true } });
       await tx.chipAdjustment.updateMany({ where: { roomId: room.id, playerId: targetPlayerId, status: 'PENDING' }, data: { status: 'CANCELLED', cancelledAt: new Date() } });
       return { roomId: room.id, scheduledPlayerId: targetPlayerId };
+    });
+  }
+
+  /** Removes a guest before the first deal, without deleting their account or other history. */
+  async removeWaitingPlayerForHostAtomically({ joinId, hostPlayerId, targetPlayerId }: RemovePlayerForHostInput) {
+    return this.db.$transaction(async (tx) => {
+      const room = await tx.room.findUnique({ where: { joinId }, select: { id: true, hostPlayerId: true, status: true } });
+      if (!room || room.hostPlayerId !== hostPlayerId || room.status !== 'WAITING' || targetPlayerId === hostPlayerId) {
+        throw new Error('Waiting-room removal is unavailable');
+      }
+      const locked = await tx.room.updateMany({
+        where: { id: room.id, hostPlayerId, status: 'WAITING' },
+        data: { updatedAt: new Date() },
+      });
+      if (locked.count !== 1) throw new Error('Waiting-room removal is unavailable');
+      const removed = await tx.player.updateMany({
+        where: { id: targetPlayerId, roomId: room.id, leftAt: null },
+        data: { leftAt: new Date() },
+      });
+      if (removed.count !== 1) throw new Error('Waiting-room removal is unavailable');
+      return { removedPlayerId: targetPlayerId };
     });
   }
 

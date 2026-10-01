@@ -127,12 +127,14 @@ button:disabled { cursor: wait; opacity: 0.55; }
 .lobby-roster-heading h2 { margin: 0; font-size: .76rem; }
 .lobby-roster-heading > span { color: var(--gold); font-size: .65rem; font-weight: 900; }
 .lobby-roster ul { display: grid; align-content: start; min-height: 0; margin: 0; padding: 0 0 2px 4px; overflow-y: auto; overscroll-behavior: contain; list-style: none; gap: 6px; scrollbar-color: rgba(230,189,105,.35) transparent; }
-.lobby-roster li { display: grid; grid-template-columns: auto auto 1fr auto; align-items: center; min-height: 42px; padding: 6px 9px; border: 1px solid rgba(255,255,255,.07); border-radius: 12px; background: rgba(255,255,255,.025); gap: 9px; }
+.lobby-roster li { display: grid; grid-template-columns: auto auto minmax(0,1fr) auto auto; align-items: center; min-height: 42px; padding: 6px 9px; border: 1px solid rgba(255,255,255,.07); border-radius: 12px; background: rgba(255,255,255,.025); gap: 9px; }
 .lobby-seat { display: grid; width: 27px; height: 27px; border-radius: 9px; color: #aeb8b2; background: rgba(255,255,255,.06); place-items: center; font-size: .61rem; font-weight: 900; }
 .lobby-player-avatar { display: grid; width: 29px; height: 29px; overflow: hidden; border: 1px solid rgba(230,189,105,.25); border-radius: 50%; color: #d9c58f; background: #14251e; place-items: center; font-size: .65rem; font-weight: 900; }
 .lobby-roster li strong { overflow: hidden; font-size: .76rem; text-overflow: ellipsis; white-space: nowrap; }
-.lobby-roster li > span:last-child { color: var(--gold-light); font-size: .7rem; font-variant-numeric: tabular-nums; }
+.lobby-roster .lobby-stack { color: var(--gold-light); font-size: .7rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .lobby-roster li small { color: var(--muted); font-size: .55rem; }
+.lobby-remove-player { min-height: 32px; padding: 0 9px; border: 1px solid rgba(205,136,128,.35); border-radius: 8px; color: #e6b6b0; background: rgba(112,47,42,.14); cursor: pointer; font-size: .62rem; font-weight: 800; }
+.lobby-remove-player:disabled { opacity: .55; cursor: default; }
 .lobby-settings { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 7px; }
 .lobby-settings > p { grid-column: 1/-1; margin: 0 2px; color: var(--muted); font-size: .63rem; font-weight: 900; }
 .lobby-settings > div { display: grid; padding: 10px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.025); text-align: center; }
@@ -748,7 +750,7 @@ button:disabled { cursor: wait; opacity: 0.55; }
 .social-panel section { display: grid; gap: 6px; }
 .social-person { display: flex; align-items: center; min-width: 0; padding: 6px; border: 1px solid var(--line); border-radius: 10px; gap: 7px; }
 .social-avatar { display: grid; width: 34px; height: 34px; flex: 0 0 34px; overflow: hidden; border: 1px solid var(--gold-line); border-radius: 50%; color: var(--gold-light); background-color: #1a3325; background-position: center; background-size: cover; place-items: center; }
-.social-person > span { display: grid; flex: 1; min-width: 0; }
+.social-person > span:not(.social-avatar) { display: grid; flex: 1; min-width: 0; }
 .social-person strong { overflow: hidden; color: var(--ink); font-size: .72rem; text-overflow: ellipsis; white-space: nowrap; }
 .social-person small { justify-self: start; color: var(--muted); font-size: .6rem; }
 .social-message { color: var(--gold-light) !important; }
@@ -757,7 +759,7 @@ button:disabled { cursor: wait; opacity: 0.55; }
 .lobby-friend-invites > small, .lobby-friend-invites p { margin: 0; color: var(--muted); font-size: .6rem; }
 .lobby-friend-invites > div { display: grid; max-height: 120px; overflow-y: auto; gap: 4px; }
 .lobby-friend-invites button { display: flex; align-items: center; min-height: 42px; padding: 4px 7px; border: 1px solid var(--line); border-radius: 9px; color: var(--ink); background: #20382a; cursor: pointer; gap: 7px; text-align: start; }
-.lobby-friend-invites button span { display: grid; flex: 1; min-width: 0; font-size: .68rem; }
+.lobby-friend-invites button span:not(.social-avatar) { display: grid; flex: 1; min-width: 0; font-size: .68rem; }
 .lobby-friend-invites button small { color: var(--muted); font-size: .55rem; }
 .lobby-friend-invites button b { color: var(--gold-light); font-size: .6rem; }
 .lobby-friend-invites button:disabled, .home-invite-banner button:disabled, .social-person button:disabled { opacity: .55; cursor: default; }

@@ -6,6 +6,7 @@ import {
   type Lobby,
   loadLobby,
   joinLobby,
+  removeWaitingPlayer,
   startLobbyGame,
 } from '../../lobby-api';
 import TableClient from './table-client';
@@ -36,6 +37,7 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
   const [loading, setLoading] = useState(true);
   const [joining, setJoining] = useState(false);
   const [starting, setStarting] = useState(false);
+  const [removingPlayerId, setRemovingPlayerId] = useState<string>();
   const [copied, setCopied] = useState<string>();
   const [account, setAccount] = useState<AccountState>();
   const [friends, setFriends] = useState<SocialAccount[]>([]);
@@ -177,6 +179,16 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
     setStarting(false);
   }
 
+  async function handleRemovePlayer(playerId: string, displayName: string) {
+    if (removingPlayerId || !globalThis.confirm(`להסיר את ${displayName} מהחדר? הוא לא יוכל להצטרף מחדש עם אותו חשבון.`)) return;
+    setRemovingPlayerId(playerId);
+    setJoinMessage(undefined);
+    const result = await removeWaitingPlayer(joinId, playerId, { fetch: (...args) => globalThis.fetch(...args) });
+    if (result.ok) await refreshLobby();
+    else setJoinMessage(result.message);
+    setRemovingPlayerId(undefined);
+  }
+
   if (loading && !lobby) {
     return <StateScreen icon="♠" title="מכינים את השולחן"><p className="state-loading" aria-busy="true">טוענים את החדר הפרטי…</p></StateScreen>;
   }
@@ -263,15 +275,17 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
               </div>
               <ul>
                 {lobby.players.map((player, index) => (
-                  <li key={`${player.displayName}-${index}`}>
+                  <li key={player.id ?? `${player.displayName}-${index}`}>
                     <span className="lobby-seat" aria-hidden="true">{index + 1}</span>
                     <ProfileImage className="lobby-player-avatar" dataUrl={player.avatarDataUrl} fallback={player.displayName.slice(0, 1)} />
                     <strong>{player.displayName}</strong>
-                    <span>{player.currentStack.toLocaleString('he-IL')} <small>צ׳יפים</small></span>
+                    <span className="lobby-stack">{player.currentStack.toLocaleString('he-IL')} <small>צ׳יפים</small></span>
+                    {lobby.isHost && index > 0 && player.id ? <button type="button" className="lobby-remove-player" disabled={Boolean(removingPlayerId) || starting} onClick={() => void handleRemovePlayer(player.id!, player.displayName)} aria-label={`הסרת ${player.displayName} מהחדר`}>{removingPlayerId === player.id ? 'מסירים…' : 'הסרה'}</button> : null}
                   </li>
                 ))}
               </ul>
             </section>
+            {joinMessage ? <p className="lobby-status" role="status">{joinMessage}</p> : null}
           </div>
 
           <aside className="lobby-side-column">

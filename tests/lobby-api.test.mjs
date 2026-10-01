@@ -277,3 +277,21 @@ test('host start sends only an authenticated, cookie-backed request and keeps fa
   assert.equal(failed.ok, false);
   assert.doesNotMatch(failed.message, /private database detail/);
 });
+
+test('waiting-room removal sends the selected seat to a host-only endpoint', async () => {
+  const { removeWaitingPlayer } = await lobbyApi();
+  const requests = [];
+  const result = await removeWaitingPlayer('abc123', 'seat-id', {
+    fetch: async (...request) => { requests.push(request); return { status: 200, json: async () => null }; },
+  });
+  assert.deepEqual(result, { ok: true });
+  assert.deepEqual(requests, [[
+    'http://localhost:3001/rooms/abc123/lobby/players/seat-id/remove',
+    { method: 'POST', credentials: 'include' },
+  ]]);
+  const rejected = await removeWaitingPlayer('abc123', 'seat-id', {
+    fetch: async () => ({ status: 403, json: async () => ({ error: 'private detail' }) }),
+  });
+  assert.equal(rejected.ok, false);
+  assert.doesNotMatch(rejected.message, /private detail/);
+});

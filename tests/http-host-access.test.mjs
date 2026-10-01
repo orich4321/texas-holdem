@@ -77,6 +77,7 @@ test('a second authenticated player cannot invoke host-only HTTP controls by cal
       `/rooms/${joinId}/game/runout/next`,
       `/rooms/${joinId}/game/runout/uncontested`,
       `/rooms/${joinId}/players/${targetPlayerId}/remove`,
+      `/rooms/${joinId}/lobby/players/${targetPlayerId}/remove`,
       `/rooms/${joinId}/management/blinds`,
       `/rooms/${joinId}/management/players/${targetPlayerId}/removal`,
       `/rooms/${joinId}/management/players/${targetPlayerId}/chips`,
@@ -88,6 +89,28 @@ test('a second authenticated player cannot invoke host-only HTTP controls by cal
     }
     assert.deepEqual(attempted, []);
   });
+});
+
+test('waiting-room removal resolves the host from their session and rejects invalid targets', async () => {
+  const calls = [];
+  const repository = {
+    async findPlayerByRoomJoinIdAndAccessToken(requestedJoinId, token) {
+      return requestedJoinId === joinId && token === hostToken ? { id: 'host-id', roomId: room.id } : null;
+    },
+    async findRoomByJoinId() { return room; },
+    async removeWaitingPlayerForHostAtomically(input) { calls.push(input); return { removedPlayerId: input.targetPlayerId }; },
+  };
+  await withServer(repository, async (baseUrl) => {
+    const path = `/rooms/${joinId}/lobby/players/${targetPlayerId}/remove`;
+    const forbidden = await globalThis.fetch(`${baseUrl}${path}`, { method: 'POST', headers: { cookie: `poker_player_token=${guestToken}` } });
+    assert.equal(forbidden.status, 403);
+    const invalid = await globalThis.fetch(`${baseUrl}/rooms/${joinId}/lobby/players/not-a-uuid/remove`, { method: 'POST', headers: { cookie: `poker_player_token=${hostToken}` } });
+    assert.equal(invalid.status, 400);
+    const removed = await globalThis.fetch(`${baseUrl}${path}`, { method: 'POST', headers: { cookie: `poker_player_token=${hostToken}` } });
+    assert.equal(removed.status, 200);
+    assert.deepEqual(await removed.json(), { removedPlayerId: targetPlayerId });
+  });
+  assert.deepEqual(calls, [{ joinId, hostPlayerId: 'host-id', targetPlayerId }]);
 });
 
 test('participants see final standings, but only the authenticated host can download the detailed JSON', async () => {

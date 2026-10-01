@@ -82,6 +82,19 @@ test('minimal entry button text meets WCAG AA contrast', async () => {
   assert.ok(contrastRatio('#f2eee4', '#526252') >= 4.5);
 });
 
+test('friend avatars stay circular instead of inheriting the flexible text-column layout', async () => {
+  const styles = await source('apps/web/app/globals.css');
+  const avatar = rule(styles, '.social-avatar');
+  assert.match(avatar, /width:\s*34px/);
+  assert.match(avatar, /height:\s*34px/);
+  assert.match(avatar, /flex:\s*0 0 34px/);
+  assert.match(avatar, /border-radius:\s*50%/);
+  assert.match(styles, /\.social-person > span:not\(\.social-avatar\)\s*\{/);
+  assert.match(styles, /\.lobby-friend-invites button span:not\(\.social-avatar\)\s*\{/);
+  assert.doesNotMatch(styles, /\.social-person > span\s*\{/);
+  assert.doesNotMatch(styles, /\.lobby-friend-invites button span\s*\{/);
+});
+
 test('main app shells fill the dynamic viewport without page-level scrolling', async () => {
   const styles = await source('apps/web/app/globals.css');
   const shell = rule(styles, '.entry-shell');

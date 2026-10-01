@@ -19,7 +19,7 @@ export type Lobby = {
   canStart: boolean;
   settings: { initialStack: number; smallBlind: number; bigBlind: number; maxPlayers: number };
   host: { displayName: string; avatarDataUrl?: string | null };
-  players: Array<{ displayName: string; avatarDataUrl?: string | null; initialStack: number; currentStack: number }>;
+  players: Array<{ id?: string; displayName: string; avatarDataUrl?: string | null; initialStack: number; currentStack: number }>;
 };
 
 type ResponseBoundary = { status: number; json: () => Promise<unknown> };
@@ -31,9 +31,24 @@ function isPlayer(value: unknown): value is Lobby['players'][number] {
   if (value === null || typeof value !== 'object') return false;
   const player = value as Record<string, unknown>;
   return typeof player.displayName === 'string'
+    && (player.id === undefined || typeof player.id === 'string')
     && (player.avatarDataUrl === undefined || player.avatarDataUrl === null || typeof player.avatarDataUrl === 'string')
     && typeof player.initialStack === 'number' && isFinite(player.initialStack)
     && typeof player.currentStack === 'number' && isFinite(player.currentStack);
+}
+
+export async function removeWaitingPlayer(joinId: string, playerId: string, boundaries: Boundaries): Promise<{ ok: true } | { ok: false; message: string }> {
+  try {
+    const response = await boundaries.fetch(`${SERVER_URL}/rooms/${encodeURIComponent(joinId)}/lobby/players/${encodeURIComponent(playerId)}/remove`, {
+      method: 'POST',
+      credentials: 'include',
+    });
+    return response.status === 200
+      ? { ok: true }
+      : { ok: false, message: 'לא הצלחנו להסיר את השחקן. נסו שוב.' };
+  } catch {
+    return { ok: false, message: 'לא הצלחנו להסיר את השחקן. נסו שוב.' };
+  }
 }
 
 function isLobby(value: unknown, expectedJoinId: string): value is Lobby {

@@ -29,6 +29,7 @@ function createDb({ updateCount = 1, createEvent = undefined, createSnapshot = u
       updateMany: async (args) => { calls.push(['room.updateMany', args]); return { count: updateCount }; },
       findUnique: async (args) => { calls.push(['room.findUnique', args]); return roomRecord; },
     },
+    player: { findMany: async (args) => { calls.push(['player.findMany', args]); return roomRecord?.players ?? []; } },
     gameEvent: { create: async (args) => { calls.push(['gameEvent.create', args]); return createEvent ?? { id: 'event-1', sequence: 0, ...args.data }; } },
     gameSnapshot,
   };
@@ -49,18 +50,19 @@ test('authenticated host start deals only on the server and commits the first si
   const started = await repository.startGameForHostAtomically({ joinId: room.joinId, hostPlayerId: room.hostPlayerId });
 
   assert.deepEqual(started, { roomId: room.id, sequence: 0 });
-  assert.deepEqual(db.calls.map(([name]) => name), ['room.findUnique', 'room.updateMany', 'gameEvent.create', 'gameSnapshot.create']);
+  assert.deepEqual(db.calls.map(([name]) => name), ['room.findUnique', 'room.updateMany', 'player.findMany', 'gameEvent.create', 'gameSnapshot.create']);
   assert.deepEqual(db.calls[1][1].where, { id: room.id, hostPlayerId: room.hostPlayerId, status: 'WAITING' });
   assert.equal(db.calls[1][1].data.status, 'IN_PROGRESS');
   assert.ok(db.calls[1][1].data.turnDeadlineAt instanceof Date);
-  assert.deepEqual(db.calls[2][1].data.payload, { dealerSeat: 1, smallBlind: 5, bigBlind: 10 });
-  assert.equal(JSON.stringify(db.calls[2][1].data).includes('holeCards'), false);
-  assert.equal(JSON.stringify(db.calls[2][1].data).includes('deck'), false);
-  const recovered = hydrateSignedPrivateHandSnapshot(db.calls[3][1].data.state, { roomId: room.id, sequence: 0 }, snapshotKeyring);
+  assert.deepEqual(db.calls[2][1].where, { roomId: room.id, leftAt: null, isSittingOut: false });
+  assert.deepEqual(db.calls[3][1].data.payload, { dealerSeat: 1, smallBlind: 5, bigBlind: 10 });
+  assert.equal(JSON.stringify(db.calls[3][1].data).includes('holeCards'), false);
+  assert.equal(JSON.stringify(db.calls[3][1].data).includes('deck'), false);
+  const recovered = hydrateSignedPrivateHandSnapshot(db.calls[4][1].data.state, { roomId: room.id, sequence: 0 }, snapshotKeyring);
   assert.deepEqual(recovered.hand.seats.map((seat) => seat.playerId), ['host-id', 'player-1']);
 });
 
-test('authenticated start refuses a non-host or a one-player room before claiming it', async () => {
+test('authenticated start refuses a non-host or a one-player room without committing a hand', async () => {
   for (const roomRecord of [
     { ...room, players: [{ id: 'host-id', currentStack: 100 }] },
     { ...room, players: [{ id: 'host-id', currentStack: 100 }, { id: 'player-1', currentStack: 100 }] },
@@ -71,7 +73,9 @@ test('authenticated start refuses a non-host or a one-player room before claimin
       repository.startGameForHostAtomically({ joinId: room.joinId, hostPlayerId: roomRecord.players.length === 1 ? room.hostPlayerId : 'attacker' }),
       /not startable/i,
     );
-    assert.deepEqual(db.calls.map(([name]) => name), ['room.findUnique']);
+    assert.deepEqual(db.calls.map(([name]) => name), roomRecord.players.length === 1
+      ? ['room.findUnique', 'room.updateMany', 'player.findMany']
+      : ['room.findUnique']);
   }
 });
 
