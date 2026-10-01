@@ -328,31 +328,32 @@ button:disabled { cursor: wait; opacity: 0.55; }
 .your-stack strong { display: flex; align-items: center; color: var(--gold-light); gap: 7px; font-family: Georgia,serif; font-size: clamp(1rem,2.5vw,1.35rem); font-variant-numeric: tabular-nums; }
 .your-stack small { color: var(--muted); font-size: .5rem; }
 .table-status { grid-column: 1/-1; margin: 0; padding: 6px; border-radius: 9px; color: #ffd8d3; background: rgba(150,45,45,.2); font-size: .62rem; text-align: center; }
-.action-bar { position: static; display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); width: 100%; gap: 5px; }
+.action-bar { position: static; display: grid; grid-template-columns: minmax(0,1fr); width: 100%; gap: 5px; }
+.turn-gesture-hint { max-width: 180px; margin: 0; color: #b7c4b9; font-size: .62rem; line-height: 1.4; text-align: center; }
 .pre-action-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; min-height: 40px; }
 .pre-action-bar > span, .pre-action-bar > small { color: var(--muted); font-size: .62rem; white-space: nowrap; }
 .pre-action-bar button { min-height: 36px; padding: 0 11px; border: 1px solid rgba(196,180,141,.28); border-radius: 10px; color: #d9ded8; background: rgba(255,255,255,.05); cursor: pointer; font-size: .69rem; font-weight: 800; }
 .pre-action-bar button.is-selected { border-color: #baa16c; color: #f3e1bc; background: rgba(125,97,47,.3); box-shadow: inset 0 0 0 1px rgba(186,161,108,.25); }
 .pre-action-bar button:disabled { opacity: .55; cursor: wait; }
 .action-bar button { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 7px; border: 1px solid rgba(255,255,255,.15); border-radius: 12px; color: #edf6f1; background: rgba(255,255,255,.06); cursor: pointer; gap: 6px; font-size: clamp(.63rem,1.4vw,.75rem); font-weight: 900; white-space: nowrap; transition: transform 130ms ease, filter 130ms ease, box-shadow 130ms ease; }
-.action-bar button > span { display: grid; width: 19px; height: 19px; border-radius: 50%; background: rgba(0,0,0,.14); place-items: center; font-size: .65rem; }
 .action-bar button:active:not(:disabled) { filter: brightness(1.09); transform: scale(.985); }
-.action-bar .action-fold { color: #ffe0dc; border-color: rgba(255,150,150,.2); background: linear-gradient(135deg,rgba(150,47,57,.72),rgba(79,26,32,.9)); }
 .action-bar .action-primary { flex-wrap: wrap; padding-block: 3px; color: var(--action-ink); border: 1px solid rgba(139,162,145,.3); background: linear-gradient(135deg,var(--action-light),var(--action)); box-shadow: 0 7px 18px rgba(20,43,32,.24); white-space: normal; }
-.action-bar button > .chip-amount { display: flex; width: auto; height: auto; border-radius: 0; background: transparent; }
 .chip-amount-call .chip-amount-piece > .bet-chip { width: 13px; height: 13px; border-width: 1px; font-size: .29rem; }
 .chip-amount-call .chip-amount-piece > b { color: inherit; font-size: .4rem; }
 .pre-action-bar button:has(.chip-amount) { display: inline-flex; align-items: center; gap: 5px; }
 .action-raise-toggle { color: #e4e9e3 !important; border-color: rgba(120,148,128,.3) !important; background: rgba(53,88,68,.5) !important; }
 .action-raise-toggle[aria-expanded="true"] { color: var(--action-ink) !important; background: var(--action-light) !important; }
-.chip-tray { grid-column: 1/-1; display: grid; min-width: 0; padding: 7px 9px; border: 1px solid rgba(159,137,97,.35); border-radius: 12px; background: linear-gradient(145deg,#20372a,#0c1b14); box-shadow: inset 0 1px rgba(255,255,255,.05); gap: 5px; animation: raise-panel-in 150ms ease both; }
+.chip-tray { grid-column: 1/-1; display: grid; min-width: 0; padding: 5px 8px; border: 1px solid rgba(159,137,97,.35); border-radius: 12px; background: linear-gradient(145deg,#20372a,#0c1b14); box-shadow: inset 0 1px rgba(255,255,255,.05); gap: 3px; animation: raise-panel-in 150ms ease both; }
 .chip-tray-waiting { padding-block: 4px; gap: 2px; animation: none; }
 .chip-tray-waiting .chip-pile { gap: 1px; }
 .chip-tray-waiting .chip-pile > .bet-chip { width: 31px; height: 31px; opacity: .85; box-shadow: 0 2px 0 #090d0a,0 3px 5px rgba(0,0,0,.3); }
 .chip-tray-waiting .chip-pile > strong { font-size: .56rem; }
 .chip-tray-header, .chip-tray-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.chip-tray-header { min-width: 0; }
 .chip-tray-header span { color: #d8e5dc; font-size: .65rem; font-weight: 850; }
 .chip-tray-header strong { color: var(--gold-light); font-size: .69rem; font-variant-numeric: tabular-nums; }
+.chip-all-in { flex: 0 0 auto; min-height: 23px; padding: 0 7px; border: 1px solid rgba(196,180,141,.32); border-radius: 7px; color: #efe7d1; background: #38483b; cursor: pointer; font-size: .56rem; font-weight: 850; }
+.chip-all-in:disabled { opacity: .5; cursor: default; }
 .chip-piles { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 5px; }
 .chip-pile { display: grid; justify-items: center; min-width: 0; gap: 2px; }
 .chip-pile > strong { color: #e2e8e1; font-size: .67rem; font-variant-numeric: tabular-nums; }
@@ -365,16 +366,17 @@ button:disabled { cursor: wait; opacity: 0.55; }
 .bet-chip-100 { background: #232b2a; border-color: #a9aaa3; }
 .bet-chip:disabled { opacity: .35; cursor: default; }
 .bet-chip:active:not(:disabled) { transform: translateY(2px); box-shadow: 0 1px 4px rgba(0,0,0,.35); }
-.chip-break, .chip-break-spacer { min-height: 20px; }
+.chip-break, .chip-break-spacer { min-height: 16px; }
 .chip-break { padding: 0 4px; border: 0; color: #c6d2c8; background: transparent; cursor: pointer; font-size: .54rem; text-decoration: underline; }
 .chip-break:disabled { opacity: .3; cursor: default; }
-.chip-tray-selected { display: flex; align-items: center; min-height: 29px; padding: 2px 5px; border: 1px solid rgba(255,255,255,.1); border-radius: 8px; background: rgba(0,0,0,.15); gap: 5px; }
+.chip-tray-actions { display: flex; align-items: center; min-width: 0; gap: 5px; }
+.chip-tray-selected { display: flex; flex: 1 1 130px; align-items: center; min-width: 0; min-height: 27px; padding: 2px 5px; overflow-x: auto; border: 1px solid rgba(255,255,255,.1); border-radius: 8px; background: rgba(0,0,0,.15); gap: 5px; }
 .chip-tray-selected > span { color: #d4dfd6; font-size: .56rem; font-weight: 800; white-space: nowrap; }
 .chip-tray-selected > small { color: var(--muted); font-size: .55rem; }
 .chip-tray-selected .bet-chip { display: flex; width: auto; min-width: 35px; height: 25px; padding: 0 5px; border-width: 2px; border-radius: 14px; box-shadow: none; gap: 2px; font-size: .55rem; }
 .chip-tray-selected .bet-chip::after { display: none; }
 .chip-tray-selected .bet-chip i { font-style: normal; font-size: .5rem; }
-.chip-tray-footer { flex-wrap: wrap; }
+.chip-tray-footer { flex: 0 0 auto; flex-wrap: nowrap; gap: 5px; }
 .chip-tray-footer small { margin-inline-end: auto; color: #c0cfc3; font-size: .56rem; }
 .chip-tray-footer button { min-height: 30px; padding: 0 9px; border: 1px solid rgba(196,180,141,.3); border-radius: 8px; color: #e8ece4; background: #334739; cursor: pointer; font-size: .58rem; font-weight: 800; }
 .chip-tray-footer button:disabled { opacity: .4; cursor: default; }
@@ -586,12 +588,25 @@ button:disabled { cursor: wait; opacity: 0.55; }
   .seat-action { bottom: -11px; min-height: 22px; padding: 2px 6px; gap: 3px; }
   .seat-action i { width: 15px; height: 15px; flex-basis: 15px; font-size: .53rem; }
   .seat-action b { font-size: .45rem; }
-  .player-panel { grid-template-columns: auto auto minmax(0,1fr); padding: 5px 6px; border-radius: 13px; gap: 5px 6px; }
-  .hole-cards .playing-card { width: clamp(48px,13vw,58px); }
+  .player-panel { grid-template-columns: auto auto minmax(0,1fr); padding: 4px 5px; border-radius: 13px; gap: 3px 5px; }
+  .hole-cards .playing-card { width: clamp(42px,11.5vw,52px); }
+  .your-stack strong { font-size: clamp(.9rem,3.5vw,1.1rem); }
+  .turn-gesture-hint { font-size: .54rem; }
   .action-bar { gap: 4px; }
-  .action-bar button { min-height: 42px; padding: 0 3px; border-radius: 10px; gap: 3px; font-size: clamp(.52rem,2.25vw,.65rem); }
-  .action-bar button > span { width: 16px; height: 16px; font-size: .54rem; }
-  .chip-tray { padding: 6px; gap: 4px; }
+  .action-bar button { min-height: 39px; padding: 0 3px; border-radius: 10px; gap: 3px; font-size: clamp(.52rem,2.25vw,.65rem); }
+  .chip-tray { padding: 4px 5px; gap: 2px; }
+  .chip-tray-header { gap: 4px; }
+  .chip-tray-header span, .chip-tray-header strong { font-size: .54rem; }
+  .chip-all-in { min-height: 21px; padding-inline: 5px; font-size: .52rem; }
+  .chip-pile { gap: 1px; }
+  .chip-pile > strong { font-size: .56rem; }
+  .chip-pile > .bet-chip { width: 32px; height: 32px; }
+  .chip-break, .chip-break-spacer { min-height: 13px; font-size: .47rem; }
+  .chip-tray-actions { gap: 3px; }
+  .chip-tray-selected { min-height: 25px; gap: 3px; }
+  .chip-tray-selected .bet-chip { min-width: 29px; height: 21px; padding-inline: 3px; }
+  .chip-tray-footer { gap: 3px; }
+  .chip-tray-footer button { min-height: 27px; padding-inline: 6px; font-size: .53rem; }
   .chip-tray-waiting { padding: 3px 5px; gap: 1px; }
   .chip-tray-waiting .chip-tray-header { line-height: 1; }
   .chip-tray-waiting .chip-tray-header span, .chip-tray-waiting .chip-tray-header strong { font-size: .54rem; }
@@ -636,7 +651,6 @@ button:disabled { cursor: wait; opacity: 0.55; }
   .table-management-button, .table-sound-toggle { width: 34px; height: 34px; }
   .table-seat { width: 82px; }
   .community-cards .playing-card { width: 30px; }
-  .action-bar button > span { display: none; }
 }
 
 @media (max-height: 740px) {
@@ -692,7 +706,7 @@ button:disabled { cursor: wait; opacity: 0.55; }
   .turn-banner { grid-column: 1/-1; min-height: 26px; }
   .poker-table { grid-column: 1; grid-row: 3; }
   .player-panel { grid-column: 2; grid-row: 3; align-self: stretch; grid-template-columns: auto auto minmax(0,1fr); align-content: center; width: 100%; }
-  .action-bar { grid-template-columns: repeat(2,minmax(0,1fr)); }
+  .action-bar { grid-template-columns: minmax(0,1fr); }
   .chip-tray { max-height: 100%; overflow-y: auto; }
 }
 

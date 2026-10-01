@@ -48,10 +48,15 @@ test('mobile table UI keeps the player anchored, reconnects safely, and exposes 
   assert.match(table, /void act\(\{ type: 'check' \}\)/);
   assert.match(table, /onPointerMove=\{moveCardDrag\}/);
   assert.match(table, /void act\(\{ type: 'fold' \}\)/);
+  assert.doesNotMatch(table, /className="action-fold"/);
+  assert.doesNotMatch(table, />צ׳ק<\/button>/);
+  assert.match(table, /isTurn && view\.toCall > 0 \? <div className="action-bar"/);
+  assert.match(table, /isTurn && view\.raise && selectedChipAmount > 0 \? <div className="chip-tray-actions"/);
   assert.match(table, /className="table-wagers"/);
   assert.match(table, /<ChipAmount amount=\{seat\.currentBet\}/);
   assert.doesNotMatch(table, /className="action-all-in"/);
   assert.match(table, /onClick=\{\(\) => setChipTray\(selectAllChips\)\}>אול אין/);
+  assert.match(styles, /\.chip-tray-actions \{ display: flex/);
   assert.match(table, /game\/final-hand/);
   assert.match(table, /className="table-management-button"/);
   assert.match(table, /management\/transfer-host/);
