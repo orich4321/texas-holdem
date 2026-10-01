@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { io } from 'socket.io-client';
 import { parsePositiveInteger } from '../../numeric-input';
 import { ProfileImage } from '../../profile-image';
+import { formatChipsInBigBlinds } from '../../chips-in-blinds';
 import { actionAudioIsReady, playActionSound, unlockActionAudio } from '../../action-sounds';
 
 declare const process: { env: { NODE_ENV?: string; NEXT_PUBLIC_GAME_URL?: string; NEXT_PUBLIC_SERVER_URL?: string } };
@@ -71,6 +72,7 @@ type PlayerView = {
   dealerSeat: number;
   smallBlindSeat: number;
   bigBlindSeat: number;
+  bigBlind: number;
   currentActorSeat: number;
   communityCards: readonly Card[];
   pot: number;
@@ -222,6 +224,7 @@ function isPlayerView(value: unknown): value is PlayerView {
     && typeof view.dealerSeat === 'number'
     && typeof view.smallBlindSeat === 'number'
     && typeof view.bigBlindSeat === 'number'
+    && Number.isSafeInteger(view.bigBlind) && (view.bigBlind as number) > 0
     && typeof view.currentActorSeat === 'number'
     && typeof view.pot === 'number'
     && typeof view.toCall === 'number'
@@ -1145,7 +1148,8 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
                 <ProfileImage className="table-seat-avatar" dataUrl={seat.avatarDataUrl} fallback={seat.playerName.slice(0, 1)} />
                 <div className="table-seat-info">
                   <strong>{seat.playerName}{isYou ? ' · אתם' : ''}</strong>
-                  <small>{seat.isSittingOut ? 'יושב/ת בחוץ · לא מקבל/ת קלפים' : seat.isFolded ? 'פרש/ה מהיד' : <><i aria-hidden="true" />{seat.stack.toLocaleString('he-IL')} צ׳יפים</>}</small>
+                  <small>{seat.isSittingOut ? 'יושב/ת בחוץ · לא מקבל/ת קלפים' : <><span className="seat-stack-chips"><i aria-hidden="true" />{seat.stack.toLocaleString('he-IL')} צ׳יפים</span><span className="seat-stack-blinds" aria-label={`${formatChipsInBigBlinds(seat.stack, view.bigBlind)} ביג בליינדים`}>{formatChipsInBigBlinds(seat.stack, view.bigBlind)}</span></>}</small>
+                  {seat.isFolded && !seat.isSittingOut ? <em>פרש/ה מהיד</em> : null}
                   {!seat.isSittingOut && seat.currentBet > 0 ? <em>הימור {seat.currentBet.toLocaleString('he-IL')}</em> : null}
                   {uncalledReturnBySeat.has(seat.seatNumber) ? <em>הוחזרו {uncalledReturnBySeat.get(seat.seatNumber)!.toLocaleString('he-IL')} צ׳יפים שלא הושוו</em> : null}
                 </div>
@@ -1162,7 +1166,7 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
       </section>
       <section className="player-panel" aria-label="היד שלכם">
         <div className="your-hand"><p><span aria-hidden="true">◆</span> {view.holeCards.length ? 'הקלפים שלכם' : 'מחוץ לשולחן'}</p><div className="hole-cards">{view.holeCards.length ? <><PlayingCard card={view.holeCards[0]} /><PlayingCard card={view.holeCards[1]} /></> : <small>ממתינים להחזרה ליד הבאה</small>}</div></div>
-        <div className="your-stack"><span>הערימה שלכם</span><strong><i aria-hidden="true" />{ownSeat?.stack.toLocaleString('he-IL') ?? (view.isSittingOut ? '0' : '—')}</strong><small>צ׳יפים</small></div>
+        <div className="your-stack"><span>הערימה שלכם</span><strong><i aria-hidden="true" />{ownSeat?.stack.toLocaleString('he-IL') ?? (view.isSittingOut ? '0' : '—')}</strong><small>צ׳יפים · {formatChipsInBigBlinds(ownSeat?.stack ?? 0, view.bigBlind)}</small></div>
         {status.includes('נכשל') || status.includes('לא זמינה') || status.startsWith('לא הצלחנו') ? <p className="table-status" role="alert">{status}</p> : null}
         {isTurn ? <div className="action-bar" aria-label="פעולות בתור שלכם">
           <button type="button" className="action-fold" disabled={pending} onClick={() => void act({ type: 'fold' })}><span aria-hidden="true">✕</span> פרישה</button>

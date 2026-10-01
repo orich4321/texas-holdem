@@ -40,7 +40,7 @@ export class GoogleOAuth {
     return url.toString();
   }
 
-  async exchangeCode(code: unknown, verifier: unknown): Promise<string> {
+  async exchangeCode(code: unknown, verifier: unknown): Promise<{ id: string; email: string }> {
     if (typeof code !== 'string' || !AUTH_CODE.test(code) || typeof verifier !== 'string' || !VERIFIER.test(verifier)) throw new Error('Invalid OAuth callback');
     const response = await this.httpFetch(`${this.baseUrl}/auth/v1/token?grant_type=pkce`, {
       method: 'POST',
@@ -56,10 +56,12 @@ export class GoogleOAuth {
       signal: AbortSignal.timeout(8_000),
     });
     if (!userResponse.ok) throw new Error('OAuth identity verification failed');
-    const user = await userResponse.json() as { id?: unknown; app_metadata?: { providers?: unknown } };
-    if (typeof user.id !== 'string' || !UUID.test(user.id) || !Array.isArray(user.app_metadata?.providers) || !user.app_metadata.providers.includes('google')) {
+    const user = await userResponse.json() as { id?: unknown; email?: unknown; app_metadata?: { providers?: unknown } };
+    if (typeof user.id !== 'string' || !UUID.test(user.id) || typeof user.email !== 'string'
+      || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(user.email) || user.email.length > 254
+      || !Array.isArray(user.app_metadata?.providers) || !user.app_metadata.providers.includes('google')) {
       throw new Error('Google identity required');
     }
-    return user.id;
+    return { id: user.id, email: user.email };
   }
 }

@@ -15,6 +15,7 @@ import { ProfileImage } from '../../profile-image';
 import { unlockActionAudio } from '../../action-sounds';
 import { googleLoginPath, loadAccount, profilePath, type AccountState } from '../../account-api';
 import { usePageActivity } from '../../use-page-activity';
+import { inviteFriend, loadSocial, type SocialAccount } from '../../social-api';
 
 type LobbyClientProps = { joinId: string; isHostRoute?: boolean };
 
@@ -37,12 +38,30 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
   const [starting, setStarting] = useState(false);
   const [copied, setCopied] = useState<string>();
   const [account, setAccount] = useState<AccountState>();
+  const [friends, setFriends] = useState<SocialAccount[]>([]);
+  const [invitingFriendId, setInvitingFriendId] = useState<string>();
+  const [inviteMessage, setInviteMessage] = useState('');
   const autoJoinAttempted = useRef(false);
   const wasNetworkActive = useRef(activity.networkActive);
 
   useEffect(() => {
     void loadAccount().then(setAccount).catch(() => setJoinMessage('לא הצלחנו לבדוק את החשבון. נסו לרענן את הדף.'));
   }, []);
+
+  useEffect(() => {
+    if (!account?.profile?.id || !lobby?.isHost || lobby.status !== 'WAITING') return;
+    void loadSocial().then((overview) => setFriends(overview.friends)).catch(() => setInviteMessage('לא הצלחנו לטעון את רשימת החברים.'));
+  }, [account?.profile?.id, lobby?.isHost, lobby?.status]);
+
+  async function sendInvite(friend: SocialAccount) {
+    setInvitingFriendId(friend.id);
+    setInviteMessage('');
+    try {
+      await inviteFriend(joinId, friend.id);
+      setInviteMessage(`ההזמנה נשלחה אל ${friend.displayName ?? friend.username}.`);
+    } catch { setInviteMessage('לא הצלחנו לשלוח את ההזמנה. בדקו שהחבר עדיין זמין להצטרפות.'); }
+    finally { setInvitingFriendId(undefined); }
+  }
 
   const refreshLobby = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -266,6 +285,7 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
               <div><strong>מזמינים חברים</strong><span>קישור או קוד חדר יובילו למסך האורח, ללא הרשאות מארח.</span></div>
               <div className="room-code-display"><small>קוד החדר</small><code dir="ltr">{joinId.toUpperCase()}</code></div>
               <div className="room-share-buttons"><button type="button" onClick={() => void copyInvitation()}><span aria-hidden="true">↗</span> העתקת קישור</button><button type="button" onClick={() => void copyRoomCode()}>העתקת קוד</button></div>
+              {lobby.isHost && account?.profile ? <div className="lobby-friend-invites"><strong>הזמנה דרך האתר</strong>{friends.length ? <div>{friends.map((friend) => <button type="button" key={friend.id} disabled={Boolean(invitingFriendId)} onClick={() => void sendInvite(friend)}><ProfileImage className="social-avatar" dataUrl={friend.avatarDataUrl} fallback="♠" /><span>{friend.displayName ?? friend.username}<small dir="ltr">@{friend.username}</small></span><b>{invitingFriendId === friend.id ? 'שולחים…' : 'הזמנה'}</b></button>)}</div> : <small>הוסיפו חברים דרך הפרופיל בדף הבית כדי להזמין אותם ישירות.</small>}{inviteMessage ? <p role="status">{inviteMessage}</p> : null}</div> : null}
               {copied ? <p role="status" aria-live="polite">{copied}</p> : null}
             </div>
 

@@ -6,6 +6,7 @@ import { createOriginPolicy, isAllowedRequestOrigin } from './origin-policy.js';
 import { prisma } from './persistence/prisma.js';
 import { RoomRepository } from './persistence/room-repository.js';
 import { AccountRepository } from './persistence/account-repository.js';
+import { SocialRepository } from './persistence/social-repository.js';
 import { GoogleOAuth } from './google-oauth.js';
 import { createPrivateSnapshotKeyring } from './persistence/private-snapshot-keyring.js';
 import { attachSocketSessionTransport } from './socket-transport.js';
@@ -23,6 +24,7 @@ const appOrigin = process.env.PUBLIC_APP_ORIGIN;
 // been enabled. Explicitly switch over only after the provider is verified.
 const accountRepository = process.env.GOOGLE_AUTH_ENABLED === 'true' && supabaseUrl && publishableKey && appOrigin
   ? new AccountRepository(prisma) : undefined;
+const socialRepository = accountRepository ? new SocialRepository(prisma) : undefined;
 const googleOAuth = accountRepository ? new GoogleOAuth(
   supabaseUrl!, publishableKey!,
   process.env.NODE_ENV === 'production'
@@ -32,6 +34,7 @@ const googleOAuth = accountRepository ? new GoogleOAuth(
 const app = createApp({
   roomRepository,
   accountRepository,
+  socialRepository,
   googleOAuth,
   publicAppOrigin: appOrigin,
   isOriginAllowed,

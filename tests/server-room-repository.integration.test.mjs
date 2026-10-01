@@ -15,6 +15,9 @@ const { RoomRepository } = integrationEnabled
 const { AccountRepository } = integrationEnabled
   ? await import('../apps/server/src/persistence/account-repository.ts')
   : { AccountRepository: undefined };
+const { SocialRepository } = integrationEnabled
+  ? await import('../apps/server/src/persistence/social-repository.ts')
+  : { SocialRepository: undefined };
 
 const snapshotKeyring = new Map([['integration-current', Buffer.from('integration snapshot signing key that is safely over 32 bytes', 'utf8')]]);
 
@@ -43,7 +46,7 @@ if (integrationEnabled) {
 test('a Google-linked account resumes its durable seat across room-cookie changes', { skip: !integrationEnabled }, async () => {
   const accounts = new AccountRepository(prisma);
   const rooms = new RoomRepository(prisma);
-  const { token, profile } = await accounts.createSession(randomUUID());
+  const { token, profile } = await accounts.createSession(randomUUID(), `player${randomUUID().slice(0, 8)}@example.com`);
   const updated = await accounts.updateProfile(profile.id, 'אורי', null);
   assert.equal(updated.displayName, 'אורי');
   assert.equal((await accounts.findBySession(token))?.id, profile.id);
@@ -55,6 +58,42 @@ test('a Google-linked account resumes its durable seat across room-cookie change
   assert.equal(await rooms.findPlayerByRoomJoinIdAndAccessToken(room.joinId, room.hostAccessToken), null);
   await accounts.revokeSession(token);
   assert.equal(await accounts.findBySession(token), null);
+});
+
+test('presets, friendships, and invitations persist across accounts and join through the existing seat flow', { skip: !integrationEnabled }, async () => {
+  const accounts = new AccountRepository(prisma);
+  const social = new SocialRepository(prisma);
+  const rooms = new RoomRepository(prisma);
+  const localPart = `friends${randomUUID().slice(0, 8)}`;
+  const a = (await accounts.createSession(randomUUID(), `${localPart}@gmail.com`)).profile;
+  const b = (await accounts.createSession(randomUUID(), `${localPart}@example.com`)).profile;
+  assert.equal(a.username, localPart);
+  assert.equal(b.username, `${localPart}-2`);
+
+  await accounts.saveGamePreset(a.id, 'משחק קצר', 500, 1, 2);
+  assert.equal((await accounts.listGamePresets(a.id))[0].name, 'משחק קצר');
+  assert.deepEqual(await accounts.listGamePresets(b.id), []);
+
+  assert.equal(await social.requestFriend(a.id, b.username), 'sent');
+  assert.equal(await social.requestFriend(a.id, b.username), 'pending');
+  const incoming = (await social.overview(b.id)).incoming;
+  assert.equal(incoming.length, 1);
+  assert.equal(await social.answerFriendRequest(a.id, incoming[0].id, true), false);
+  assert.equal(await social.answerFriendRequest(b.id, incoming[0].id, true), true);
+  assert.equal((await social.overview(a.id)).friends[0].id, b.id);
+
+  const room = await rooms.createRoom({ status: 'WAITING', host: { id: randomUUID(), accountId: a.id, displayName: 'אורי', initialStack: 500 } });
+  assert.equal(await social.inviteFriend(room.joinId, a.id, b.id), 'sent');
+  const invite = (await social.listInvitations(b.id))[0];
+  assert.equal(invite.joinId, room.joinId);
+  assert.equal(invite.from.avatarDataUrl, null);
+  assert.equal(await social.answerGameInvite(a.id, invite.id, true), null);
+  assert.equal(await social.answerGameInvite(b.id, invite.id, true), room.joinId);
+  const guestId = randomUUID();
+  const joined = await rooms.joinWaitingRoom(room.joinId, { id: guestId, accountId: b.id, displayName: 'חבר' });
+  assert.equal(joined.kind, 'joined');
+  assert.equal((await rooms.findPlayerByRoomJoinIdAndAccountId(room.joinId, b.id))?.id, guestId);
+  assert.equal(await social.inviteFriend(room.joinId, a.id, b.id), 'already-playing');
 });
 
 test('room repository persists a room with two players and retrieves it by join ID', { skip: !integrationEnabled }, async () => {

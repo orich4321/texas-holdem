@@ -69,7 +69,7 @@ test('profile editing and private hand history open from home, not the active ta
     source('apps/web/app/history/history-list.tsx'),
   ]);
   assert.match(home, /<HomeAccountPanel/);
-  assert.match(home, /פרופיל והיסטוריה/);
+  assert.match(home, /החברים והיסטוריית המשחקים/);
   assert.match(panel, /<AvatarPicker/);
   assert.match(panel, /<HistoryList onSelectGame=/);
   assert.match(panel, /<HistoryGame joinId=/);
@@ -145,6 +145,15 @@ test('room creation posts the normalized nickname and host-selected table settin
   ]]);
   assert.deepEqual(destinations, ['/r/abc123/host']);
   assert.deepEqual(result, { ok: true });
+});
+
+test('stack display converts chips to the current big blind without changing their chip total', async () => {
+  const { formatChipsInBigBlinds } = await import(pathToFileURL(resolve(root, 'apps/web/app/chips-in-blinds.ts')).href);
+  assert.equal(formatChipsInBigBlinds(500, 2), '250 BB');
+  assert.equal(formatChipsInBigBlinds(500, 3), '166.7 BB');
+  assert.equal(formatChipsInBigBlinds(0, 2), '0 BB');
+  assert.equal(formatChipsInBigBlinds(1, 100), '<0.1 BB');
+  assert.equal(formatChipsInBigBlinds(500, 0), '—');
 });
 
 test('room creation rejects an empty nickname without making a request', async () => {

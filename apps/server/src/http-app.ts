@@ -4,6 +4,7 @@ import type { PlayerAction } from './game-lifecycle.js';
 import { createOriginPolicy, isAllowedRequestOrigin } from './origin-policy.js';
 import { GoogleOAuth, newCodeVerifier, safeAuthDestination } from './google-oauth.js';
 import type { AccountRepository } from './persistence/account-repository.js';
+import type { SocialRepository } from './persistence/social-repository.js';
 import type { RoomRepository } from './persistence/room-repository.js';
 import { parseCookieHeader } from './socket-session.js';
 
@@ -21,12 +22,14 @@ const DEFAULT_BIG_BLIND = 2;
 const DEFAULT_MAX_PLAYERS = 9;
 const PLAYER_SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1_000;
 const PLAYER_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 type OriginPolicy = (origin: string | undefined) => boolean;
 
 type CreateAppDependencies = {
   roomRepository: RoomRepository;
   accountRepository?: AccountRepository;
+  socialRepository?: SocialRepository;
   googleOAuth?: GoogleOAuth;
   publicAppOrigin?: string;
   isOriginAllowed?: OriginPolicy;
@@ -99,6 +102,22 @@ function validateCreateRoomInput(body: unknown): ValidatedRoomInput | undefined 
   return { displayName, ...(avatarDataUrl ? { avatarDataUrl } : {}), initialStack: initialStack as number, smallBlind: smallBlind as number, bigBlind: bigBlind as number, maxPlayers: maxPlayers as number };
 }
 
+function validateGamePreset(body: unknown): { name: string; initialStack: number; smallBlind: number; bigBlind: number } | undefined {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return undefined;
+  const candidate = body as Record<string, unknown>;
+  if (typeof candidate.name !== 'string') return undefined;
+  const name = candidate.name.trim();
+  if (!name || Array.from(name).length > 24) return undefined;
+  if (![candidate.initialStack, candidate.smallBlind, candidate.bigBlind].every(Number.isSafeInteger)) return undefined;
+  const settings = validateCreateRoomInput({
+    displayName: 'preset',
+    initialStack: candidate.initialStack,
+    smallBlind: candidate.smallBlind,
+    bigBlind: candidate.bigBlind,
+  });
+  return settings ? { name, initialStack: settings.initialStack, smallBlind: settings.smallBlind, bigBlind: settings.bigBlind } : undefined;
+}
+
 function validateJoinRoomInput(body: unknown): { displayName: string; avatarDataUrl?: string } | undefined {
   const displayName = validateDisplayName(body);
   if (!displayName) return undefined;
@@ -161,7 +180,7 @@ function createHttpCorsMiddleware(isOriginAllowed: OriginPolicy): RequestHandler
 
     response.setHeader('Access-Control-Allow-Origin', origin);
     response.setHeader('Access-Control-Allow-Credentials', 'true');
-    response.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT');
+    response.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE');
     response.setHeader('Access-Control-Allow-Headers', 'Content-Type, If-None-Match');
     response.setHeader('Vary', 'Origin');
 
@@ -190,7 +209,7 @@ function setPlayerSessionCookie(response: express.Response, accessToken: string)
 }
 
 /** Builds the HTTP API independently from the Socket.IO transport. */
-export function createApp({ roomRepository, accountRepository, googleOAuth, publicAppOrigin, isOriginAllowed = createOriginPolicy(), basePath }: CreateAppDependencies) {
+export function createApp({ roomRepository, accountRepository, socialRepository, googleOAuth, publicAppOrigin, isOriginAllowed = createOriginPolicy(), basePath }: CreateAppDependencies) {
   const app = express();
   const routes = express.Router();
 
@@ -253,6 +272,121 @@ export function createApp({ roomRepository, accountRepository, googleOAuth, publ
     }
   });
 
+  routes.get('/auth/game-presets', async (request, response) => {
+    try {
+      const account = await findAccountIdentity(request.headers.cookie);
+      if (!account || !accountRepository) { response.status(401).json({ error: { code: 'AUTH_REQUIRED' } }); return; }
+      response.json({ presets: await accountRepository.listGamePresets(account.id) });
+    } catch { response.status(500).json({ error: { code: 'INTERNAL_ERROR' } }); }
+  });
+
+  routes.put('/auth/game-presets', async (request, response) => {
+    const input = validateGamePreset(request.body);
+    if (!input) { response.status(400).json({ error: { code: 'INVALID_PRESET' } }); return; }
+    try {
+      const account = await findAccountIdentity(request.headers.cookie);
+      if (!account || !accountRepository) { response.status(401).json({ error: { code: 'AUTH_REQUIRED' } }); return; }
+      const preset = await accountRepository.saveGamePreset(account.id, input.name, input.initialStack, input.smallBlind, input.bigBlind);
+      if (!preset) { response.status(409).json({ error: { code: 'PRESET_LIMIT_REACHED' } }); return; }
+      response.json({ preset });
+    } catch { response.status(500).json({ error: { code: 'INTERNAL_ERROR' } }); }
+  });
+
+  routes.delete('/auth/game-presets/:presetId', async (request, response) => {
+    if (!UUID_PATTERN.test(request.params.presetId)) { response.status(400).json({ error: { code: 'INVALID_PRESET' } }); return; }
+    try {
+      const account = await findAccountIdentity(request.headers.cookie);
+      if (!account || !accountRepository) { response.status(401).json({ error: { code: 'AUTH_REQUIRED' } }); return; }
+      if (!await accountRepository.deleteGamePreset(account.id, request.params.presetId)) {
+        response.status(404).json({ error: { code: 'PRESET_NOT_FOUND' } }); return;
+      }
+      response.status(204).end();
+    } catch { response.status(500).json({ error: { code: 'INTERNAL_ERROR' } }); }
+  });
+
+  routes.get('/social', async (request, response) => {
+    try {
+      const account = await findAccountIdentity(request.headers.cookie);
+      if (!account || !socialRepository) { response.status(401).json({ error: { code: 'AUTH_REQUIRED' } }); return; }
+      response.setHeader('Cache-Control', 'private, no-store');
+      response.json(await socialRepository.overview(account.id));
+    } catch { response.status(500).json({ error: { code: 'INTERNAL_ERROR' } }); }
+  });
+
+  routes.get('/social/invitations', async (request, response) => {
+    try {
+      const account = await findAccountIdentity(request.headers.cookie);
+      if (!account || !socialRepository) { response.status(401).json({ error: { code: 'AUTH_REQUIRED' } }); return; }
+      response.setHeader('Cache-Control', 'private, no-store');
+      response.json(await socialRepository.notificationSnapshot(account.id));
+    } catch { response.status(500).json({ error: { code: 'INTERNAL_ERROR' } }); }
+  });
+
+  routes.post('/social/friend-requests', async (request, response) => {
+    const username = request.body?.username;
+    if (typeof username !== 'string' || !/^[a-z0-9._-]{1,24}$/i.test(username)) {
+      response.status(400).json({ error: { code: 'INVALID_USERNAME' } }); return;
+    }
+    try {
+      const account = await findAccountIdentity(request.headers.cookie);
+      if (!account || !socialRepository) { response.status(401).json({ error: { code: 'AUTH_REQUIRED' } }); return; }
+      const result = await socialRepository.requestFriend(account.id, username.toLowerCase());
+      if (result !== 'sent') { response.status(result === 'not-found' ? 404 : 409).json({ error: { code: result.toUpperCase().replaceAll('-', '_') } }); return; }
+      response.status(201).json({ status: 'PENDING' });
+    } catch { response.status(500).json({ error: { code: 'INTERNAL_ERROR' } }); }
+  });
+
+  routes.put('/social/friend-requests/:requestId', async (request, response) => {
+    if (!UUID_PATTERN.test(request.params.requestId) || typeof request.body?.accept !== 'boolean') {
+      response.status(400).json({ error: { code: 'INVALID_REQUEST' } }); return;
+    }
+    try {
+      const account = await findAccountIdentity(request.headers.cookie);
+      if (!account || !socialRepository) { response.status(401).json({ error: { code: 'AUTH_REQUIRED' } }); return; }
+      if (!await socialRepository.answerFriendRequest(account.id, request.params.requestId, request.body.accept)) {
+        response.status(404).json({ error: { code: 'REQUEST_NOT_FOUND' } }); return;
+      }
+      response.status(204).end();
+    } catch { response.status(500).json({ error: { code: 'INTERNAL_ERROR' } }); }
+  });
+
+  routes.delete('/social/friends/:friendId', async (request, response) => {
+    if (!UUID_PATTERN.test(request.params.friendId)) { response.status(400).json({ error: { code: 'INVALID_REQUEST' } }); return; }
+    try {
+      const account = await findAccountIdentity(request.headers.cookie);
+      if (!account || !socialRepository) { response.status(401).json({ error: { code: 'AUTH_REQUIRED' } }); return; }
+      if (!await socialRepository.removeFriend(account.id, request.params.friendId)) {
+        response.status(404).json({ error: { code: 'FRIEND_NOT_FOUND' } }); return;
+      }
+      response.status(204).end();
+    } catch { response.status(500).json({ error: { code: 'INTERNAL_ERROR' } }); }
+  });
+
+  routes.post('/rooms/:joinId/invites', async (request, response) => {
+    if (!UUID_PATTERN.test(request.body?.friendId)) { response.status(400).json({ error: { code: 'INVALID_REQUEST' } }); return; }
+    try {
+      const account = await findAccountIdentity(request.headers.cookie);
+      const host = await findAuthenticatedHost(request.params.joinId, request.headers.cookie);
+      if (!account || !host || !socialRepository) { response.status(403).json({ error: { code: 'HOST_FORBIDDEN' } }); return; }
+      const result = await socialRepository.inviteFriend(request.params.joinId, account.id, request.body.friendId);
+      if (result !== 'sent') { response.status(409).json({ error: { code: result.toUpperCase().replaceAll('-', '_') } }); return; }
+      response.status(201).json({ status: 'PENDING' });
+    } catch { response.status(500).json({ error: { code: 'INTERNAL_ERROR' } }); }
+  });
+
+  routes.put('/social/invitations/:inviteId', async (request, response) => {
+    if (!UUID_PATTERN.test(request.params.inviteId) || typeof request.body?.accept !== 'boolean') {
+      response.status(400).json({ error: { code: 'INVALID_REQUEST' } }); return;
+    }
+    try {
+      const account = await findAccountIdentity(request.headers.cookie);
+      if (!account || !socialRepository) { response.status(401).json({ error: { code: 'AUTH_REQUIRED' } }); return; }
+      const joinId = await socialRepository.answerGameInvite(account.id, request.params.inviteId, request.body.accept);
+      if (!joinId) { response.status(404).json({ error: { code: 'INVITE_NOT_FOUND' } }); return; }
+      response.json({ joinPath: request.body.accept ? `/r/${joinId}` : null });
+    } catch { response.status(500).json({ error: { code: 'INTERNAL_ERROR' } }); }
+  });
+
   routes.get('/auth/google/start', (request, response) => {
     if (!googleOAuth || !accountRepository) {
       response.status(503).json({ error: { code: 'AUTH_NOT_CONFIGURED' } });
@@ -274,8 +408,8 @@ export function createApp({ roomRepository, accountRepository, googleOAuth, publ
       return;
     }
     try {
-      const supabaseUserId = await googleOAuth.exchangeCode(request.query.code, cookies.poker_oauth_verifier);
-      const { token, profile } = await accountRepository.createSession(supabaseUserId);
+      const identity = await googleOAuth.exchangeCode(request.query.code, cookies.poker_oauth_verifier);
+      const { token, profile } = await accountRepository.createSession(identity.id, identity.email);
       response.cookie('poker_account_token', token, {
         httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', path: '/', maxAge: PLAYER_SESSION_MAX_AGE_MS,
       });

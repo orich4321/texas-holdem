@@ -129,6 +129,7 @@ export interface ServerPlayerView {
   dealerSeat: number;
   smallBlindSeat: number;
   bigBlindSeat: number;
+  bigBlind: number;
   currentActorSeat: number;
   communityCards: readonly Card[];
   pot: number;
@@ -326,6 +327,7 @@ export class ServerGameLifecycle {
       dealerSeat: hand.dealerSeat,
       smallBlindSeat: hand.smallBlindSeat,
       bigBlindSeat: hand.bigBlindSeat,
+      bigBlind: hand.bigBlindAmount,
       currentActorSeat: hand.currentActorSeat,
       communityCards: Object.freeze(hand.communityCards.map((card) => Object.freeze({ ...card }))),
       // Once settlement has happened there are no chips left in the live pot.

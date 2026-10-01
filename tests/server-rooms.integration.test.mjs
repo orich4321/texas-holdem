@@ -215,7 +215,7 @@ test('POST /rooms rejects unapproved browser origins and supports approved prefl
 
   assert.equal(preflight.status, 204);
   assert.equal(preflight.headers.get('access-control-allow-origin'), approvedOrigin);
-  assert.equal(preflight.headers.get('access-control-allow-methods'), 'GET, POST, PUT');
+  assert.equal(preflight.headers.get('access-control-allow-methods'), 'GET, POST, PUT, DELETE');
   assert.equal(preflight.headers.get('access-control-allow-credentials'), 'true');
 
   const rejected = await globalThis.fetch(`${baseUrl}/rooms`, {
@@ -360,9 +360,11 @@ test('GET /rooms/:joinId exposes a player-safe waiting-room lobby projection', {
 
 test('POST /rooms hides actual PostgreSQL failures behind a generic server error', { skip: !integrationEnabled }, async () => {
   await prisma.$executeRawUnsafe('ALTER TABLE "Room" RENAME TO "Room_unavailable"');
-
-  const response = await postRoom({ displayName: 'Host', initialStack: 800 });
-
-  assert.equal(response.status, 500);
-  assert.deepEqual(await response.json(), { error: { code: 'INTERNAL_ERROR' } });
+  try {
+    const response = await postRoom({ displayName: 'Host', initialStack: 800 });
+    assert.equal(response.status, 500);
+    assert.deepEqual(await response.json(), { error: { code: 'INTERNAL_ERROR' } });
+  } finally {
+    await prisma.$executeRawUnsafe('ALTER TABLE "Room_unavailable" RENAME TO "Room"');
+  }
 });

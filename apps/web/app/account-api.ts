@@ -4,7 +4,7 @@ export const SERVER_URL = process.env.NODE_ENV === 'production'
   ? '/server'
   : process.env.NEXT_PUBLIC_SERVER_URL ?? process.env.NEXT_PUBLIC_GAME_URL ?? 'http://localhost:3001';
 
-export type AccountProfile = { id: string; displayName: string | null; avatarDataUrl: string | null };
+export type AccountProfile = { id: string; displayName: string | null; avatarDataUrl: string | null; username: string | null };
 export type AccountState = { enabled: boolean; profile: AccountProfile | null };
 
 export async function loadAccount(): Promise<AccountState> {
@@ -17,7 +17,8 @@ export async function loadAccount(): Promise<AccountState> {
   if (profile === null) return { enabled: true, profile: null };
   if (!profile || typeof profile !== 'object' || Array.isArray(profile)) throw new Error('Invalid account profile');
   const value = profile as Record<string, unknown>;
-  if (typeof value.id !== 'string' || (value.displayName !== null && typeof value.displayName !== 'string')
+  if (typeof value.id !== 'string' || (value.username !== null && typeof value.username !== 'string')
+    || (value.displayName !== null && typeof value.displayName !== 'string')
     || (value.avatarDataUrl !== null && typeof value.avatarDataUrl !== 'string')) throw new Error('Invalid account profile');
   return { enabled: true, profile: value as AccountProfile };
 }

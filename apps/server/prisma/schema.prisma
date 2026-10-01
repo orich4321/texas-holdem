@@ -32,6 +32,7 @@ model Room {
   settlements  Settlement[]
   chipAdjustments ChipAdjustment[]
   preActions   PreAction[]
+  gameInvites  GameInvite[]
   createdAt    DateTime   @default(now())
   updatedAt    DateTime   @updatedAt
 
@@ -72,10 +73,73 @@ model Account {
   supabaseUserId String @unique @db.Uuid
   displayName    String?
   avatarDataUrl  String?
+  username       String? @unique
   sessions       AccountSession[]
   players        Player[]
+  gamePresets    GamePreset[]
+  sentFriendRequests     FriendRequest[] @relation("FriendRequestSender")
+  receivedFriendRequests FriendRequest[] @relation("FriendRequestRecipient")
+  friendshipsA Friend[] @relation("FriendA")
+  friendshipsB Friend[] @relation("FriendB")
+  sentGameInvites GameInvite[] @relation("GameInviteSender")
+  receivedGameInvites GameInvite[] @relation("GameInviteRecipient")
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
+}
+
+model FriendRequest {
+  id            String   @id @default(uuid()) @db.Uuid
+  fromAccountId String   @db.Uuid
+  toAccountId   String   @db.Uuid
+  fromAccount   Account  @relation("FriendRequestSender", fields: [fromAccountId], references: [id], onDelete: Cascade)
+  toAccount     Account  @relation("FriendRequestRecipient", fields: [toAccountId], references: [id], onDelete: Cascade)
+  createdAt     DateTime @default(now())
+
+  @@unique([fromAccountId, toAccountId])
+  @@index([toAccountId])
+}
+
+model Friend {
+  id         String   @id @default(uuid()) @db.Uuid
+  accountAId String   @db.Uuid
+  accountBId String   @db.Uuid
+  accountA   Account  @relation("FriendA", fields: [accountAId], references: [id], onDelete: Cascade)
+  accountB   Account  @relation("FriendB", fields: [accountBId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+
+  @@unique([accountAId, accountBId])
+  @@index([accountBId])
+}
+
+model GameInvite {
+  id            String   @id @default(uuid()) @db.Uuid
+  roomId        String   @db.Uuid
+  fromAccountId String   @db.Uuid
+  toAccountId   String   @db.Uuid
+  status        String   @default("PENDING")
+  room          Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  fromAccount   Account  @relation("GameInviteSender", fields: [fromAccountId], references: [id], onDelete: Cascade)
+  toAccount     Account  @relation("GameInviteRecipient", fields: [toAccountId], references: [id], onDelete: Cascade)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([roomId, toAccountId])
+  @@index([toAccountId, status])
+}
+
+model GamePreset {
+  id           String   @id @default(uuid()) @db.Uuid
+  accountId    String   @db.Uuid
+  name         String
+  initialStack Int
+  smallBlind   Int
+  bigBlind     Int
+  account      Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([accountId, name])
+  @@index([accountId])
 }
 
 model AccountSession {

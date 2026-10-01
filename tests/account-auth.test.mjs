@@ -7,15 +7,17 @@ import { test } from 'node:test';
 import { createApp } from '../apps/server/src/http-app.ts';
 import { GoogleOAuth, safeAuthDestination } from '../apps/server/src/google-oauth.ts';
 import { authenticateSocketSession } from '../apps/server/src/socket-session.ts';
+import { AccountRepository, usernameBaseFromEmail } from '../apps/server/src/persistence/account-repository.ts';
 
 const joinId = '0123456789abcdef';
 const accountToken = 'A'.repeat(43);
 const account = { id: 'account-1', displayName: 'אורי', avatarDataUrl: null };
 
-async function withServer(roomRepository, accountRepository, run) {
+async function withServer(roomRepository, accountRepository, run, socialRepository) {
   const app = createApp({
     roomRepository,
     accountRepository,
+    socialRepository,
     googleOAuth: {
       authorizationUrl: () => 'https://example.supabase.co/auth/v1/authorize',
       exchangeCode: async () => '018f7b16-690c-4d1f-9d0b-a8c4a14ae999',
@@ -42,19 +44,67 @@ test('OAuth destinations never allow external or protocol-relative redirects', (
   }
 });
 
+test('friends and room invitations require authenticated recipients and the actual room host', async () => {
+  const requestId = '018f7b16-690c-4d1f-9d0b-a8c4a14ae999';
+  const otherId = '018f7b16-690c-4d1f-9d0b-a8c4a14ae998';
+  const calls = [];
+  const accounts = { async findIdentityBySession(token) {
+    return token === accountToken ? { id: account.id } : token === 'B'.repeat(43) ? { id: otherId } : null;
+  } };
+  const rooms = {
+    async findPlayerByRoomJoinIdAndAccountId(_joinId, accountId) { return accountId === account.id ? { id: 'host-player' } : null; },
+    async findPlayerByRoomJoinIdAndAccessToken() { return null; },
+    async findRoomByJoinId() { return { hostPlayerId: 'host-player' }; },
+  };
+  const social = {
+    async overview(id) { calls.push(['overview', id]); return { friends: [], incoming: [], outgoing: [], invitations: [] }; },
+    async notificationSnapshot(id) { calls.push(['notifications', id]); return { invitations: [], pendingFriendRequests: 1 }; },
+    async requestFriend(id, username) { calls.push(['request', id, username]); return 'sent'; },
+    async answerFriendRequest(id, target, accept) { calls.push(['answer', id, target, accept]); return id === otherId; },
+    async inviteFriend(room, id, target) { calls.push(['invite', room, id, target]); return 'sent'; },
+    async answerGameInvite(id, target, accept) { calls.push(['invite-answer', id, target, accept]); return id === otherId ? joinId : null; },
+  };
+  await withServer(rooms, accounts, async (base) => {
+    const json = { 'content-type': 'application/json' };
+    assert.equal((await globalThis.fetch(`${base}/social`)).status, 401);
+    assert.equal((await globalThis.fetch(`${base}/social`, { headers: { cookie: `poker_account_token=${accountToken}` } })).status, 200);
+    const notifications = await globalThis.fetch(`${base}/social/invitations`, { headers: { cookie: `poker_account_token=${accountToken}` } });
+    assert.deepEqual(await notifications.json(), { invitations: [], pendingFriendRequests: 1 });
+    const friendRequest = await globalThis.fetch(`${base}/social/friend-requests`, { method: 'POST', headers: { ...json, cookie: `poker_account_token=${accountToken}` }, body: JSON.stringify({ username: 'OriCh4321' }) });
+    assert.equal(friendRequest.status, 201);
+    assert.deepEqual(calls.find((call) => call[0] === 'request'), ['request', account.id, 'orich4321']);
+    const wrongRecipient = await globalThis.fetch(`${base}/social/friend-requests/${requestId}`, { method: 'PUT', headers: { ...json, cookie: `poker_account_token=${accountToken}` }, body: JSON.stringify({ accept: true }) });
+    assert.equal(wrongRecipient.status, 404);
+    const accepted = await globalThis.fetch(`${base}/social/friend-requests/${requestId}`, { method: 'PUT', headers: { ...json, cookie: `poker_account_token=${'B'.repeat(43)}` }, body: JSON.stringify({ accept: true }) });
+    assert.equal(accepted.status, 204);
+    const forgedInvite = await globalThis.fetch(`${base}/rooms/${joinId}/invites`, { method: 'POST', headers: { ...json, cookie: `poker_account_token=${'B'.repeat(43)}` }, body: JSON.stringify({ friendId: otherId }) });
+    assert.equal(forgedInvite.status, 403);
+    const sentInvite = await globalThis.fetch(`${base}/rooms/${joinId}/invites`, { method: 'POST', headers: { ...json, cookie: `poker_account_token=${accountToken}` }, body: JSON.stringify({ friendId: otherId }) });
+    assert.equal(sentInvite.status, 201);
+    assert.deepEqual(calls.find((call) => call[0] === 'invite'), ['invite', joinId, account.id, otherId]);
+    const wrongInviteRecipient = await globalThis.fetch(`${base}/social/invitations/${requestId}`, { method: 'PUT', headers: { ...json, cookie: `poker_account_token=${accountToken}` }, body: JSON.stringify({ accept: true }) });
+    assert.equal(wrongInviteRecipient.status, 404);
+    const acceptedInvite = await globalThis.fetch(`${base}/social/invitations/${requestId}`, { method: 'PUT', headers: { ...json, cookie: `poker_account_token=${'B'.repeat(43)}` }, body: JSON.stringify({ accept: true }) });
+    assert.equal(acceptedInvite.status, 200);
+    assert.deepEqual(await acceptedInvite.json(), { joinPath: `/r/${joinId}` });
+  }, social);
+});
+
 test('Google OAuth uses PKCE and accepts only a verified Google identity from this Supabase project', async () => {
   const verifier = 'v'.repeat(43);
   const calls = [];
   const oauth = new GoogleOAuth('https://project.supabase.co', 'public-key', 'https://poker.example/server/auth/google/callback', async (url, init) => {
     calls.push({ url, init });
     if (url.includes('/token?')) return { ok: true, json: async () => ({ access_token: 'verified-access-token' }) };
-    return { ok: true, json: async () => ({ id: '018f7b16-690c-4d1f-9d0b-a8c4a14ae999', app_metadata: { providers: ['google'] } }) };
+    return { ok: true, json: async () => ({ id: '018f7b16-690c-4d1f-9d0b-a8c4a14ae999', email: 'orich4321@gmail.com', app_metadata: { providers: ['google'] } }) };
   });
   const authorizationUrl = new globalThis.URL(oauth.authorizationUrl(verifier));
   assert.equal(authorizationUrl.searchParams.get('provider'), 'google');
   assert.equal(authorizationUrl.searchParams.get('code_challenge'), createHash('sha256').update(verifier).digest('base64url'));
   assert.equal(authorizationUrl.searchParams.get('code_challenge_method'), 's256');
-  assert.equal(await oauth.exchangeCode('code-12345678', verifier), '018f7b16-690c-4d1f-9d0b-a8c4a14ae999');
+  assert.deepEqual(await oauth.exchangeCode('code-12345678', verifier), { id: '018f7b16-690c-4d1f-9d0b-a8c4a14ae999', email: 'orich4321@gmail.com' });
+  assert.equal(usernameBaseFromEmail('orich4321@gmail.com'), 'orich4321');
+  assert.equal(usernameBaseFromEmail('Ori.Name+foo@example.com'), 'ori.name-foo');
   assert.equal(calls[0].init.body, JSON.stringify({ auth_code: 'code-12345678', code_verifier: verifier }));
   assert.equal(calls[1].init.headers.authorization, 'Bearer verified-access-token');
 
@@ -62,6 +112,27 @@ test('Google OAuth uses PKCE and accepts only a verified Google identity from th
     ? { ok: true, json: async () => ({ access_token: 'token' }) }
     : { ok: true, json: async () => ({ id: '018f7b16-690c-4d1f-9d0b-a8c4a14ae999', app_metadata: { providers: ['email'] } }) });
   await assert.rejects(badProvider.exchangeCode('code-12345678', verifier), /Google identity required/);
+});
+
+test('OAuth username allocation adds a suffix when another Google email uses the same local part', async () => {
+  let storedUsername = null;
+  const attempts = [];
+  const db = {
+    account: {
+      async upsert() { return { id: account.id, username: null, displayName: null, avatarDataUrl: null }; },
+      async updateMany({ data }) {
+        attempts.push(data.username);
+        if (data.username === 'orich4321') throw { code: 'P2002' };
+        storedUsername = data.username;
+        return { count: 1 };
+      },
+      async findUniqueOrThrow() { return { id: account.id, username: storedUsername, displayName: null, avatarDataUrl: null }; },
+    },
+    accountSession: { async create() { return {}; } },
+  };
+  const result = await new AccountRepository(db).createSession('018f7b16-690c-4d1f-9d0b-a8c4a14ae999', 'orich4321@another.example');
+  assert.equal(result.profile.username, 'orich4321-2');
+  assert.deepEqual(attempts, ['orich4321', 'orich4321-2']);
 });
 
 test('account-linked rooms use the saved server profile and cannot be created without login', async () => {
@@ -167,5 +238,46 @@ test('OAuth callback issues only an opaque httpOnly account cookie and profile e
     });
     assert.equal(edit.status, 200);
     assert.deepEqual(updates, [[account.id, 'חדש', null]]);
+  });
+});
+
+test('saved game settings are scoped to the authenticated account and validated by the server', async () => {
+  const presetId = '018f7b16-690c-4d1f-9d0b-a8c4a14ae999';
+  const saved = [];
+  const deleted = [];
+  const accounts = {
+    async findIdentityBySession(token) {
+      return token === accountToken ? { id: account.id } : token === 'B'.repeat(43) ? { id: 'another-account' } : null;
+    },
+    async listGamePresets(accountId) { return saved.filter((item) => item.accountId === accountId); },
+    async saveGamePreset(accountId, name, initialStack, smallBlind, bigBlind) {
+      const preset = { id: presetId, name, initialStack, smallBlind, bigBlind, accountId };
+      saved.push(preset);
+      return preset;
+    },
+    async deleteGamePreset(accountId, id) {
+      deleted.push([accountId, id]);
+      return accountId === account.id && id === presetId;
+    },
+  };
+  await withServer({}, accounts, async (base) => {
+    const endpoint = `${base}/auth/game-presets`;
+    const body = JSON.stringify({ name: 'משחק קצר', initialStack: 500, smallBlind: 1, bigBlind: 2 });
+    const anonymous = await globalThis.fetch(endpoint);
+    assert.equal(anonymous.status, 401);
+    const invalid = await globalThis.fetch(endpoint, { method: 'PUT', headers: { 'content-type': 'application/json', cookie: `poker_account_token=${accountToken}` }, body: JSON.stringify({ name: 'רע', initialStack: 500, smallBlind: 5, bigBlind: 2 }) });
+    assert.equal(invalid.status, 400);
+    const created = await globalThis.fetch(endpoint, { method: 'PUT', headers: { 'content-type': 'application/json', cookie: `poker_account_token=${accountToken}` }, body });
+    assert.equal(created.status, 200);
+    assert.equal(saved.length, 1);
+    const own = await globalThis.fetch(endpoint, { headers: { cookie: `poker_account_token=${accountToken}` } });
+    assert.equal((await own.json()).presets.length, 1);
+    const other = await globalThis.fetch(endpoint, { headers: { cookie: `poker_account_token=${'B'.repeat(43)}` } });
+    assert.deepEqual((await other.json()).presets, []);
+    const forbiddenDelete = await globalThis.fetch(`${endpoint}/${presetId}`, { method: 'DELETE', headers: { cookie: `poker_account_token=${'B'.repeat(43)}` } });
+    assert.equal(forbiddenDelete.status, 404);
+    const ownDelete = await globalThis.fetch(`${endpoint}/${presetId}`, { method: 'DELETE', headers: { cookie: `poker_account_token=${accountToken}` } });
+    assert.equal(ownDelete.status, 204);
+    assert.deepEqual(deleted, [['another-account', presetId], [account.id, presetId]]);
   });
 });
