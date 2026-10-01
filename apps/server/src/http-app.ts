@@ -871,6 +871,7 @@ export function createApp({ roomRepository, accountRepository, googleOAuth, publ
         room: summary.room,
         standings: summary.standings,
         handCount: summary.hands.length,
+        recap: summary.recap,
       });
     } catch (error) {
       console.error('Final summary lookup failed', error);

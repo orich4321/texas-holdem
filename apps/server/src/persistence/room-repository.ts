@@ -1,5 +1,6 @@
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
-import { projectHandHistory } from './hand-history.js';
+import { projectHandHistory, projectHandReplay, type ReplayFrame } from './hand-history.js';
+import { buildGameRecap } from './game-recap.js';
 import type { Prisma, PrismaClient, RoomStatus } from '@prisma/client';
 import {
   createPlayerAccessToken,
@@ -1339,11 +1340,31 @@ export class RoomRepository {
       orderBy: { sequence: 'asc' }, select: { sequence: true },
     });
     const events = await this.db.gameEvent.findMany({
-      where: { roomId: room.id, sequence: { gte: start?.sequence ?? finalSequence, ...(next ? { lt: next.sequence } : {}) }, type: { in: ['PLAYER_ACTION', 'SHOWDOWN_CARD_REVEALED'] } },
+      where: { roomId: room.id, sequence: { gte: start?.sequence ?? finalSequence, ...(next ? { lt: next.sequence } : {}) }, type: { in: ['GAME_STARTED', 'HAND_STARTED', 'FINAL_HAND_STARTED', 'PLAYER_ACTION', 'ALL_IN_RUNOUT_ADVANCED', 'UNCONTESTED_RUNOUT_ADVANCED', 'SHOWDOWN_CARD_REVEALED'] } },
       orderBy: { sequence: 'asc' }, select: { sequence: true, type: true, payload: true, createdAt: true },
     });
+    const snapshots = await this.db.gameSnapshot.findMany({
+      where: { roomId: room.id, sequence: { gte: start?.sequence ?? finalSequence, ...(next ? { lt: next.sequence } : {}) } },
+      orderBy: { sequence: 'asc' }, select: { sequence: true, state: true },
+    });
+    const frames: ReplayFrame[] = snapshots.map((snapshot) => {
+      const hand = hydrateSignedPrivateHandSnapshot(snapshot.state as unknown as SignedPrivateHandSnapshot,
+        { roomId: room.id, sequence: snapshot.sequence }, this.privateSnapshotKeyring).hand;
+      const contenders = hand.seats.filter((seat) => seat.holeCards && !seat.isFolded);
+      return {
+        sequence: snapshot.sequence, street: hand.street, board: hand.communityCards.map((card) => ({ ...card })), pot: hand.pot,
+        seats: hand.seats.map((seat) => ({ playerId: seat.playerId, seatNumber: seat.seatNumber, stack: seat.stack,
+          currentBet: seat.currentBet, totalCommitted: seat.totalCommitted, isFolded: seat.isFolded === true })),
+        allInCardsPublic: contenders.length >= 2 && contenders.every((seat) => seat.stack === 0) && hand.pendingActorSeats.length === 0,
+        reveals: hand.revealedHoleCards.map((reveal) => ({
+          playerId: hand.seats.find((seat) => seat.seatNumber === reveal.seatNumber)?.playerId ?? '', cardIndexes: [...reveal.cardIndexes],
+        })),
+      };
+    });
+    const ownPlayerIds = new Set(room.players.map((player) => player.id));
     return { key: handKey, settledAt: settlement.createdAt.toISOString(),
-      ...projectHandHistory(settlement.result, new Set(room.players.map((player) => player.id)), events) };
+      ...projectHandHistory(settlement.result, ownPlayerIds, events),
+      replay: projectHandReplay(settlement.result, ownPlayerIds, events, frames) };
   }
 
   /** Returns only the public audit trail and final stacks to a room participant. */
@@ -1366,6 +1387,7 @@ export class RoomRepository {
         const addedChips = room.chipAdjustments.filter((adjustment) => adjustment.playerId === player.id).reduce((total, adjustment) => total + adjustment.amount, 0);
         const totalBuyIn = player.initialStack + addedChips;
         return Object.freeze({
+          playerId: player.id,
           displayName: player.displayName,
           ...(player.avatarDataUrl ? { avatarDataUrl: player.avatarDataUrl } : {}),
           initialStack: player.initialStack,
@@ -1376,6 +1398,7 @@ export class RoomRepository {
           leftAt: player.leftAt?.toISOString() ?? null,
         });
       }).sort((first, second) => second.net - first.net || second.finalStack - first.finalStack)),
+      recap: buildGameRecap(room.settlements, room.players.map((player) => player.id)),
       chipAdjustments: Object.freeze(room.chipAdjustments.map((adjustment) => Object.freeze({
         playerId: adjustment.playerId,
         authorizedByPlayerId: adjustment.authorizedByPlayerId,

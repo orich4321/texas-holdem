@@ -72,9 +72,10 @@ test('final accounting subtracts every applied rebuy from the player result', as
   const summary = await repository.getFinalSummaryForPlayer(roomId, guestId);
   assert.equal(summary.version, 3);
   assert.deepEqual(summary.standings[0], {
-    displayName: 'אורח', initialStack: 1000, addedChips: 500, totalBuyIn: 1500, finalStack: 1700, net: 200, leftAt: null,
+    playerId: guestId, displayName: 'אורח', initialStack: 1000, addedChips: 500, totalBuyIn: 1500, finalStack: 1700, net: 200, leftAt: null,
   });
   assert.equal(summary.chipAdjustments[0].amount, 500);
+  assert.deepEqual(summary.recap.playerStats, [{ playerId: guestId, handsPlayed: 0, handsWon: 0 }]);
 });
 
 test('final standings include profile images and rank players by net result', async () => {

@@ -46,8 +46,13 @@ type RabbitRunout = { nextStreet: 'flop' | 'turn' | 'river' };
 type FinalSummary = {
   version: number;
   room: { joinId: string; initialStack: number; smallBlind: number; bigBlind: number };
-  standings: readonly { displayName: string; avatarDataUrl?: string; initialStack: number; addedChips?: number; totalBuyIn?: number; finalStack: number; net: number }[];
+  standings: readonly { playerId?: string; displayName: string; avatarDataUrl?: string; initialStack: number; addedChips?: number; totalBuyIn?: number; finalStack: number; net: number }[];
   handCount: number;
+  recap?: {
+    largestPot: { handNumber: number; amount: number } | null;
+    biggestWin: { handNumber: number; playerId: string; amount: number } | null;
+    playerStats: readonly { playerId: string; handsPlayed: number; handsWon: number }[];
+  };
 };
 type PlayerView = {
   sequence?: number;
@@ -1248,13 +1253,18 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
       </section></div> : null}
       {finalSummary ? <div className="modal-backdrop final-summary-backdrop"><section className="final-summary" aria-live="polite" aria-label="סיכום המשחק">
         <header className="final-summary-header"><span aria-hidden="true">♠</span><div><p>המשחק הסתיים</p><h2>סיכום השולחן</h2><small>{finalSummary.handCount} ידיים שוחקו</small></div><span aria-hidden="true">♥</span></header>
+        {finalSummary.recap ? <div className="final-summary-highlights">
+          <article><span>הקופה הגדולה בערב</span><strong>{finalSummary.recap.largestPot ? finalSummary.recap.largestPot.amount.toLocaleString('he-IL') : '—'}</strong><small>{finalSummary.recap.largestPot ? `יד ${finalSummary.recap.largestPot.handNumber}` : 'אין ידיים שהסתיימו'}</small></article>
+          <article><span>הזכייה הגדולה ביד אחת</span><strong>{finalSummary.recap.biggestWin ? finalSummary.recap.biggestWin.amount.toLocaleString('he-IL') : '—'}</strong><small>{finalSummary.recap.biggestWin ? `${finalSummary.standings.find((standing) => standing.playerId === finalSummary.recap?.biggestWin?.playerId)?.displayName ?? 'שחקן'} · יד ${finalSummary.recap.biggestWin.handNumber}` : 'אין זכייה מתועדת'}</small></article>
+        </div> : null}
         <ul>{finalSummary.standings.map((standing, index) => {
           const resultClass = standing.net > 0 ? 'is-profit' : standing.net < 0 ? 'is-loss' : 'is-even';
           const resultLabel = standing.net > 0 ? 'רווח' : standing.net < 0 ? 'הפסד' : 'ללא שינוי';
+          const recapStats = finalSummary.recap?.playerStats.find((player) => player.playerId === standing.playerId);
           return <li key={`${standing.displayName}-${index}`} className={`${resultClass}${index === 0 ? ' is-leader' : ''}`}>
             <strong className="final-summary-rank" aria-label={`מקום ${index + 1}`}>{index + 1}</strong>
             <ProfileImage className="final-summary-avatar" dataUrl={standing.avatarDataUrl} fallback={standing.displayName.slice(0, 1)} />
-            <div className="final-summary-player"><strong>{standing.displayName}</strong><small>נשארו {standing.finalStack.toLocaleString('he-IL')} · כניסות {(standing.totalBuyIn ?? standing.initialStack).toLocaleString('he-IL')}</small></div>
+            <div className="final-summary-player"><strong>{standing.displayName}</strong><small>נשארו {standing.finalStack.toLocaleString('he-IL')} · כניסות {(standing.totalBuyIn ?? standing.initialStack).toLocaleString('he-IL')}</small>{recapStats ? <small>{recapStats.handsPlayed} ידיים שיחק/ה · {recapStats.handsWon} ידיים זכה/תה</small> : null}</div>
             <div className="final-summary-result"><small>{resultLabel}</small><strong dir="ltr">{standing.net > 0 ? '+' : ''}{standing.net.toLocaleString('he-IL')}</strong><span>צ׳יפים</span></div>
           </li>;
         })}</ul>

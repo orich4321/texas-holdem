@@ -1,9 +1,14 @@
 import assert from 'node:assert/strict';
+import { Buffer } from 'node:buffer';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { test } from 'node:test';
 
-import { projectHandHistory } from '../apps/server/src/persistence/hand-history.ts';
+import { projectHandHistory, projectHandReplay } from '../apps/server/src/persistence/hand-history.ts';
+import { buildGameRecap } from '../apps/server/src/persistence/game-recap.ts';
+import { RoomRepository } from '../apps/server/src/persistence/room-repository.ts';
+import { signPrivateHandSnapshot } from '../apps/server/src/persistence/private-hand-snapshot.ts';
+import { applyPreflopFold, finishUncontestedHand, startHand } from '../packages/poker-core/src/index.ts';
 import { createApp } from '../apps/server/src/http-app.ts';
 
 const card = (rank, suit) => ({ rank, suit });
@@ -34,6 +39,97 @@ test('history reveals own cards and showdown cards, but masks folded opponents u
 
   const uncontested = projectHandHistory({ ...result, players: [result.players[0], result.players[1], { ...result.players[2], folded: true }] }, new Set(['self']), []);
   assert.deepEqual(uncontested.players[1].holeCards, [null, null]);
+});
+
+test('replay opens the board after its closing action and never shows an opponent early', () => {
+  const finished = { ...result, board: [card('A', 'spades'), card('2', 'diamonds'), card('7', 'clubs')],
+    stacks: [{ playerId: 'self', stack: 90 }, { playerId: 'showdown-a', stack: 110 }, { playerId: 'showdown-b', stack: 80 }, { playerId: 'folded', stack: 100 }] };
+  const events = [
+    { sequence: 0, type: 'GAME_STARTED', payload: {}, createdAt: new Date() },
+    { sequence: 1, type: 'PLAYER_ACTION', payload: { actorPlayerId: 'self', action: { type: 'check' } }, createdAt: new Date() },
+    { sequence: 2, type: 'PLAYER_ACTION', payload: { actorPlayerId: 'showdown-a', action: { type: 'check' } }, createdAt: new Date() },
+    { sequence: 3, type: 'SHOWDOWN_CARD_REVEALED', payload: { playerId: 'folded', cardIndex: 1 }, createdAt: new Date() },
+  ];
+  const seats = [
+    { playerId: 'self', seatNumber: 1, stack: 90, currentBet: 0, totalCommitted: 10, isFolded: true },
+    { playerId: 'showdown-a', seatNumber: 2, stack: 90, currentBet: 0, totalCommitted: 10, isFolded: false },
+    { playerId: 'showdown-b', seatNumber: 3, stack: 80, currentBet: 0, totalCommitted: 20, isFolded: false },
+    { playerId: 'folded', seatNumber: 4, stack: 100, currentBet: 0, totalCommitted: 0, isFolded: true },
+  ];
+  const frame = (sequence, street, board, reveals = []) => ({ sequence, street, board, pot: 40, seats,
+    allInCardsPublic: false, reveals });
+  const replay = projectHandReplay(finished, new Set(['self']), events, [
+    frame(0, 'preflop', []), frame(1, 'preflop', []), frame(2, 'showdown', finished.board),
+    frame(3, 'showdown', finished.board, [{ playerId: 'folded', cardIndexes: [1] }]),
+  ]);
+  assert.deepEqual(replay.map((step) => step.kind), ['deal', 'action', 'action', 'showdown', 'result', 'reveal']);
+  assert.equal(replay[2].board.length, 0);
+  assert.equal(replay[3].board.length, 3);
+  assert.deepEqual(replay[0].players[1].holeCards, [null, null]);
+  assert.deepEqual(replay[4].players[1].holeCards, finished.players[1].holeCards);
+  assert.deepEqual(replay[4].players[3].holeCards, [null, null]);
+  assert.deepEqual(replay[5].players[3].holeCards, [null, finished.players[3].holeCards[1]]);
+  assert.equal(replay[4].pot, 0);
+  assert.equal(replay[4].players[1].stack, 110);
+  assert.equal(JSON.stringify(replay).includes('privateDeck'), false);
+
+  const allIn = projectHandReplay(finished, new Set(['self']), events.slice(0, 2), [
+    frame(0, 'preflop', []), { ...frame(1, 'preflop', []), allInCardsPublic: true },
+  ]);
+  assert.deepEqual(allIn[0].players[1].holeCards, [null, null]);
+  assert.deepEqual(allIn[1].players[1].holeCards, finished.players[1].holeCards);
+  assert.deepEqual(allIn[1].players[3].holeCards, [null, null]);
+});
+
+test('evening recap counts seated hands and split-pot winners without double-counting a hand', () => {
+  const recap = buildGameRecap([
+    { result: { players: [{ playerId: 'a', seatNumber: 1, holeCards: [card('A', 'spades'), card('K', 'spades')] },
+      { playerId: 'b', seatNumber: 2, holeCards: [card('Q', 'clubs'), card('J', 'clubs')] }],
+    pots: [{ amount: 60, payouts: [{ seatNumber: 1, amount: 30 }, { seatNumber: 2, amount: 30 }] },
+      { amount: 20, payouts: [{ seatNumber: 1, amount: 20 }] }] } },
+    { result: { players: [{ playerId: 'a', seatNumber: 1, holeCards: [card('2', 'spades'), card('3', 'spades')] }],
+      pots: [{ amount: 10, payouts: [{ seatNumber: 1, amount: 10 }] }] } },
+  ], ['a', 'b', 'spectator']);
+  assert.deepEqual(recap.largestPot, { handNumber: 1, amount: 80 });
+  assert.deepEqual(recap.biggestWin, { handNumber: 1, playerId: 'a', amount: 50 });
+  assert.deepEqual(recap.playerStats, [
+    { playerId: 'a', handsPlayed: 2, handsWon: 2 },
+    { playerId: 'b', handsPlayed: 1, handsWon: 1 },
+    { playerId: 'spectator', handsPlayed: 0, handsWon: 0 },
+  ]);
+});
+
+test('account history reads verified snapshots but returns only the account-visible replay', async () => {
+  const roomId = 'history-room';
+  const keyId = 'history-test';
+  const key = Buffer.from('a private signing key long enough for historical replay');
+  const initial = startHand({ seats: [{ seatNumber: 1, playerId: 'self', stack: 100 }, { seatNumber: 2, playerId: 'other', stack: 100 }],
+    dealerSeat: 1, smallBlind: 1, bigBlind: 2, randomInt: () => 0 });
+  const ended = finishUncontestedHand(applyPreflopFold(initial, 1));
+  const eventTime = new Date('2026-10-01T00:00:00Z');
+  const stored = { board: [], players: ended.seats.map((seat) => ({ playerId: seat.playerId,
+    playerName: seat.playerId, seatNumber: seat.seatNumber, folded: seat.isFolded === true, holeCards: seat.holeCards })),
+    pots: [{ amount: 3, payouts: [{ seatNumber: 2, amount: 3 }] }],
+    stacks: [{ playerId: 'self', stack: 99 }, { playerId: 'other', stack: 101 }] };
+  const db = {
+    room: { findFirst: async () => ({ id: roomId, players: [{ id: 'self' }], settlements: [{ result: stored, createdAt: eventTime }] }) },
+    gameEvent: { findFirst: async ({ where }) => where.sequence?.lte !== undefined ? { sequence: 0 } : null,
+      findMany: async () => [
+        { sequence: 0, type: 'GAME_STARTED', payload: {}, createdAt: eventTime },
+        { sequence: 1, type: 'PLAYER_ACTION', payload: { actorPlayerId: 'self', action: { type: 'fold' } }, createdAt: eventTime },
+      ] },
+    gameSnapshot: { findMany: async () => [
+      { sequence: 0, state: signPrivateHandSnapshot(initial, { roomId, sequence: 0, keyId }, key) },
+      { sequence: 1, state: signPrivateHandSnapshot(ended, { roomId, sequence: 1, keyId }, key) },
+    ] },
+  };
+  const history = await new RoomRepository(db, undefined, undefined, undefined, new Map([[keyId, key]]))
+    .getHandForAccount('account-self', '0123456789abcdef', 'hand-0');
+  assert.deepEqual(history.replay.map((step) => step.kind), ['deal', 'action', 'result']);
+  assert.deepEqual(history.replay[0].players.find((seat) => seat.playerId === 'other').holeCards, [null, null]);
+  assert.deepEqual(history.replay[2].players.find((seat) => seat.playerId === 'other').holeCards, [null, null]);
+  assert.equal(JSON.stringify(history).includes('remainingDeck'), false);
+  assert.equal(JSON.stringify(history).includes('signature'), false);
 });
 
 test('history API requires an account session and uses its account ID for every read', async () => {
