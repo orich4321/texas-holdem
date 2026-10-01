@@ -1,7 +1,9 @@
-export type ActionSound = 'own-action' | 'chips' | 'cards' | 'turn';
+export type ActionSound = 'check' | 'fold' | 'chips' | 'turn';
 
 let context: AudioContext | undefined;
 let noiseBuffer: AudioBuffer | undefined;
+let chipRecording: AudioBuffer | undefined;
+let chipRecordingLoad: Promise<void> | undefined;
 
 function audio(): AudioContext | undefined {
   if (typeof window === 'undefined' || !window.AudioContext) return undefined;
@@ -26,10 +28,24 @@ export async function unlockActionAudio(): Promise<boolean> {
     const current = audio();
     if (!current) return false;
     if (current.state !== 'running') await current.resume();
+    if (current.state === 'running') void loadChipRecording(current);
     return current.state === 'running';
   } catch {
     return false;
   }
+}
+
+function loadChipRecording(current: AudioContext): Promise<void> {
+  if (chipRecording) return Promise.resolve();
+  if (!chipRecordingLoad) {
+    chipRecordingLoad = globalThis.fetch('/sounds/poker-chips.mp3', { cache: 'force-cache' })
+      .then(async (response) => {
+        if (!response.ok) throw new Error('Chip recording unavailable');
+        chipRecording = await current.decodeAudioData(await response.arrayBuffer());
+      })
+      .catch(() => { chipRecordingLoad = undefined; });
+  }
+  return chipRecordingLoad;
 }
 
 export function actionAudioIsReady(): boolean {
@@ -80,37 +96,51 @@ function tone(current: AudioContext, frequency: number, start: number, duration:
   oscillator.stop(start + duration + 0.01);
 }
 
-function scheduleSound(current: AudioContext, action: ActionSound): void {
+function playChips(current: AudioContext, start: number, own: boolean): void {
+  if (!chipRecording) {
+    const requestedAt = performance.now();
+    void loadChipRecording(current).then(() => {
+      // A just-loaded clip may still match this action; never play it seconds late.
+      if (chipRecording && performance.now() - requestedAt < 600 && current.state === 'running' && document.visibilityState === 'visible') {
+        playChips(current, current.currentTime + 0.005, own);
+      }
+    });
+    return;
+  }
+  const source = current.createBufferSource();
+  const level = current.createGain();
+  source.buffer = chipRecording;
+  level.gain.value = own ? 0.09 : 0.35;
+  source.connect(level).connect(current.destination);
+  source.start(start);
+}
+
+function scheduleSound(current: AudioContext, action: ActionSound, own: boolean): void {
   const now = current.currentTime + 0.005;
   if (action === 'turn') {
     // A restrained two-tap alert stands apart from ordinary table sounds.
     tone(current, 523, now, 0.14, 0.085, 'sine');
     tone(current, 659, now + 0.15, 0.18, 0.08, 'sine');
-  } else if (action === 'own-action') {
-    // Your own tap should acknowledge the action without competing with the turn alert.
-    filteredNoise(current, now, 0.045, 0.012, 1200, 850, 'lowpass');
   } else if (action === 'chips') {
-    // Three dry, slightly staggered ceramic chip clicks.
-    for (const [index, pitch] of [740, 890, 680].entries()) {
-      const clickAt = now + index * 0.052;
-      filteredNoise(current, clickAt, 0.032, 0.045, 2600, 1700, 'bandpass');
-      tone(current, pitch, clickAt, 0.055, 0.025, 'triangle');
-    }
+    playChips(current, now, own);
+  } else if (action === 'fold') {
+    // Folding has a lower, firmer card toss than the light check swipe.
+    filteredNoise(current, now, 0.19, own ? 0.018 : 0.075, 2400, 650, 'bandpass');
+    filteredNoise(current, now + 0.15, 0.06, own ? 0.009 : 0.032, 700, 420, 'lowpass');
   } else {
-    // A quick card sliding across felt, followed by a soft landing.
-    filteredNoise(current, now, 0.16, 0.055, 900, 3400, 'bandpass');
-    filteredNoise(current, now + 0.115, 0.04, 0.02, 1300, 900, 'lowpass');
+    // A light swipe for checking, kept especially quiet for your own action.
+    filteredNoise(current, now, 0.12, own ? 0.012 : 0.05, 900, 3000, 'bandpass');
   }
 }
 
 /** Short table cues; no sound is queued before the player's first gesture. */
-export function playActionSound(action: ActionSound): void {
+export function playActionSound(action: ActionSound, own = false): void {
   try {
     const current = context;
     if (!current || current.state === 'closed') return;
-    if (current.state === 'running') scheduleSound(current, action);
+    if (current.state === 'running') scheduleSound(current, action, own);
     else void current.resume().then(() => {
-      if (current.state === 'running' && document.visibilityState === 'visible') scheduleSound(current, action);
+      if (current.state === 'running' && document.visibilityState === 'visible') scheduleSound(current, action, own);
     }).catch(() => undefined);
   } catch {
     // Unsupported audio devices never affect game actions.
