@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { CHIP_VALUES, breakChip, chipTotal, clearChipSelection, createChipTray, returnChip, selectAllChips, selectChip } from '../apps/web/app/betting-chips.ts';
+import { CHIP_VALUES, breakChip, chipTotal, clearChipSelection, createChipTray, displayChipCounts, returnChip, selectAllChips, selectChip } from '../apps/web/app/betting-chips.ts';
 
 const total = (tray) => chipTotal(tray.available) + chipTotal(tray.selected);
 
@@ -12,6 +12,16 @@ test('chip piles represent exactly the authoritative stack across small and larg
     assert.equal(chipTotal(tray.selected), 0);
     assert.ok(CHIP_VALUES.every((value) => Number.isInteger(tray.available[value]) && tray.available[value] >= 0));
   }
+});
+
+test('visible wagers and calls use compact denominations without changing their totals', () => {
+  for (const amount of [0, 1, 7, 25, 50, 75, 150, 1_237]) {
+    assert.equal(chipTotal(displayChipCounts(amount)), amount);
+  }
+  assert.equal(displayChipCounts(50)[50], 1);
+  assert.equal(displayChipCounts(75)[25], 1);
+  assert.equal(displayChipCounts(150)[100], 1);
+  assert.equal(displayChipCounts(150)[50], 1);
 });
 
 test('players can compose 150 and 75 with different physical chip combinations', () => {

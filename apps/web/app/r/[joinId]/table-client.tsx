@@ -1,13 +1,13 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent } from 'react';
 import Link from 'next/link';
 import { io } from 'socket.io-client';
 import { parsePositiveInteger } from '../../numeric-input';
 import { ProfileImage } from '../../profile-image';
 import { formatChipsInBigBlinds } from '../../chips-in-blinds';
 import { actionAudioIsReady, playActionSound, unlockActionAudio } from '../../action-sounds';
-import { CHIP_VALUES, breakChip, chipTotal, clearChipSelection, createChipTray, returnChip, selectAllChips, selectChip, type ChipValue } from '../../betting-chips';
+import { CHIP_VALUES, breakChip, chipTotal, clearChipSelection, createChipTray, displayChipCounts, returnChip, selectAllChips, selectChip, type ChipValue } from '../../betting-chips';
 
 declare const process: { env: { NODE_ENV?: string; NEXT_PUBLIC_GAME_URL?: string; NEXT_PUBLIC_SERVER_URL?: string } };
 
@@ -260,7 +260,18 @@ function seatPosition(index: number, count: number): CSSProperties {
     '--seat-y': `${50 + Math.sin(angle) * 42}%`,
     '--seat-mobile-x': `${50 + Math.cos(angle) * 40}%`,
     '--seat-mobile-y': `${50 + Math.sin(angle) * 42}%`,
+    '--wager-x': `${50 + Math.cos(angle) * 31}%`,
+    '--wager-y': `${50 + Math.sin(angle) * 27}%`,
+    '--wager-mobile-x': `${50 + Math.cos(angle) * 24}%`,
+    '--wager-mobile-y': `${50 + Math.sin(angle) * 22}%`,
   } as CSSProperties;
+}
+
+function ChipAmount({ amount, className = '' }: { amount: number; className?: string }) {
+  const counts = displayChipCounts(amount);
+  return <span className={`chip-amount ${className}`} role="img" aria-label={`${amount.toLocaleString('he-IL')} צ׳יפים`}>
+    {CHIP_VALUES.filter((value) => counts[value] > 0).map((value) => <span className="chip-amount-piece" key={value} aria-hidden="true"><b>×{counts[value]}</b><i className={`bet-chip bet-chip-${value}`}>{value}</i></span>)}
+  </span>;
 }
 
 function PlayingCard({ card, hidden = false, placeholder = false, highlighted = false }: { card?: Card; hidden?: boolean; placeholder?: boolean; highlighted?: boolean }) {
@@ -283,7 +294,7 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
   const [advancingRunout, setAdvancingRunout] = useState(false);
   const [advancingRabbitRunout, setAdvancingRabbitRunout] = useState(false);
   const [revealingCardIndex, setRevealingCardIndex] = useState<0 | 1>();
-  const [showRaiseControls, setShowRaiseControls] = useState(false);
+  const [cardDrag, setCardDrag] = useState<{ x: number; y: number }>();
   const [waitingForNextHand, setWaitingForNextHand] = useState(false);
   const [seatActions, setSeatActions] = useState<ReadonlyMap<string, PlayerActionNotification>>(() => new Map());
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
@@ -311,6 +322,9 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
   const socketRef = useRef<ReturnType<typeof io> | null>(null);
   const latestSequenceRef = useRef(-1);
   const actionPendingRef = useRef(false);
+  const feltRef = useRef<HTMLDivElement>(null);
+  const cardDragRef = useRef<{ pointerId: number; startX: number; startY: number; moved: boolean } | undefined>(undefined);
+  const lastTapRef = useRef<{ time: number; x: number; y: number } | undefined>(undefined);
   const actionStreamInitializedRef = useRef(false);
   const seenActionSequenceRef = useRef(-1);
   const previousStreetRef = useRef<PlayerView['street'] | undefined>(undefined);
@@ -520,6 +534,7 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
   }, [view]);
   const isTurn = Boolean(view && ownSeat && view.currentActorSeat === ownSeat.seatNumber && view.street !== 'showdown' && !view.allInRunout);
   const callIsAllIn = Boolean(isTurn && ownSeat && view && view.toCall > 0 && view.toCall >= ownSeat.stack);
+  const callAmount = Math.min(view?.toCall ?? 0, ownSeat?.stack ?? 0);
 
   useEffect(() => {
     if (!isTurn || !view || !ownSeat || ownSeat.stack <= 0 || ownSeat.isFolded || ownSeat.isSittingOut || view.holeCards.length !== 2) {
@@ -666,11 +681,12 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
   }, [joinId, networkActive, view?.gameCompleted, view?.finalSummaryVisible, view?.street]);
 
   useEffect(() => {
-    if (!isTurn || !view?.raise) {
-      setShowRaiseControls(false);
+    if (!isTurn) {
       setChipTray(createChipTray(ownSeat?.stack ?? 0));
+      cardDragRef.current = undefined;
+      setCardDrag(undefined);
     }
-  }, [isTurn, view?.raise]);
+  }, [isTurn, ownSeat?.stack]);
 
   useEffect(() => {
     if (!isCurrentHost || view?.gameCompleted) setManagementOpen(false);
@@ -692,6 +708,57 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
   useEffect(() => {
     if (isCurrentHost && view?.street === 'showdown' && !view.finalSummaryVisible) void loadManagement();
   }, [isCurrentHost, view?.street, view?.sequence, view?.finalSummaryVisible]);
+
+  function handleTablePointerUp(event: ReactPointerEvent<HTMLElement>) {
+    if (!isTurn || view?.toCall !== 0 || actionPendingRef.current || cardDragRef.current?.moved) {
+      lastTapRef.current = undefined;
+      return;
+    }
+    if (event.target instanceof Element && event.target.closest('button, a, input, select, textarea, dialog, [role="button"], [contenteditable="true"]')) {
+      lastTapRef.current = undefined;
+      return;
+    }
+    const now = performance.now();
+    const previous = lastTapRef.current;
+    if (previous && now - previous.time <= 350 && Math.hypot(event.clientX - previous.x, event.clientY - previous.y) <= 40) {
+      lastTapRef.current = undefined;
+      event.preventDefault();
+      void act({ type: 'check' });
+    } else {
+      lastTapRef.current = { time: now, x: event.clientX, y: event.clientY };
+    }
+  }
+
+  function startCardDrag(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!isTurn || pending || ownSeat?.isFolded || view?.holeCards.length !== 2 || (event.pointerType === 'mouse' && event.button !== 0)) return;
+    cardDragRef.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY, moved: false };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function moveCardDrag(event: ReactPointerEvent<HTMLDivElement>) {
+    const drag = cardDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const x = event.clientX - drag.startX;
+    const y = event.clientY - drag.startY;
+    if (Math.hypot(x, y) < 8 && !drag.moved) return;
+    drag.moved = true;
+    setCardDrag({ x, y });
+  }
+
+  function finishCardDrag(event: ReactPointerEvent<HTMLDivElement>) {
+    const drag = cardDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    cardDragRef.current = undefined;
+    setCardDrag(undefined);
+    const felt = feltRef.current?.getBoundingClientRect();
+    if (!drag.moved || !felt || !isTurn || actionPendingRef.current) return;
+    const centerX = (felt.left + felt.right) / 2;
+    const centerY = (felt.top + felt.bottom) / 2;
+    if (Math.abs(event.clientX - centerX) <= Math.min(felt.width * .22, 150)
+      && Math.abs(event.clientY - centerY) <= Math.min(felt.height * .19, 120)) {
+      void act({ type: 'fold' });
+    }
+  }
 
   async function act(action: PlayerAction) {
     if (!isTurn || actionPendingRef.current) return;
@@ -1097,7 +1164,7 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
     view.seats.find((seat) => seat.seatNumber === seatNumber)?.playerName ?? `מושב ${seatNumber}`) ?? [];
 
   return (
-    <main className="table-shell" dir="rtl">
+    <main className="table-shell" dir="rtl" onPointerUpCapture={handleTablePointerUp}>
       <header className="table-header">
         <div className="table-header-tools"><button type="button" className="table-sound-toggle" aria-label={soundEnabled ? 'השתקת צלילי המשחק' : 'הפעלת צלילי המשחק'} aria-pressed={soundEnabled} title={soundEnabled ? 'השתקת צלילים' : 'הפעלת צלילים ובדיקתם'} onClick={toggleSound}><span aria-hidden="true">{soundEnabled ? '♪' : '♪̸'}</span></button></div>
         {isCurrentHost ? <button type="button" className="table-management-button" aria-label="ניהול שולחן" title="ניהול שולחן" aria-expanded={managementOpen} onClick={() => {
@@ -1116,11 +1183,17 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
         {view.showdown!.pots.length > 1 ? <nav aria-label="מעבר בין קופות">{view.showdown!.pots.map((pot, index) => <button type="button" className={index === safeActivePotIndex ? 'is-active' : ''} aria-label={`הצגת ${showdownPotLabel(index)}, ${pot.amount.toLocaleString('he-IL')} צ׳יפים`} aria-pressed={index === safeActivePotIndex} onClick={() => setActivePotIndex(index)} key={`${pot.amount}-${index}`}>{index + 1}</button>)}</nav> : null}
       </section> : turnMessage ? <p className={`turn-banner${isTurn ? ' turn-banner-active' : ''}`} role="status" aria-live="polite"><span aria-hidden="true" />{turnMessage}</p> : null}
       <section className="poker-table" aria-label="שולחן טקסס הולדם">
-        <div className="table-felt">
+        <div className="table-felt" ref={feltRef}>
           <div className="table-pot"><span><i aria-hidden="true" /> {view.showdown ? 'סך הקופות' : 'קופה'}</span><strong>{displayedPot.toLocaleString('he-IL')}</strong></div>
+          {cardDrag ? <div className="fold-drop-zone" aria-hidden="true">שחררו כאן לפרישה</div> : null}
           <div className="community-cards" aria-label="קלפי קהילה">
             {Array.from({ length: 5 }, (_, index) => <PlayingCard key={index} card={view.communityCards[index]} placeholder={!view.communityCards[index]} highlighted={Boolean(view.communityCards[index] && winningCardKeys.has(cardKey(view.communityCards[index])))} />)}
           </div>
+          {view.street !== 'showdown' ? <div className="table-wagers" aria-label="צ׳יפים שהונחו בשולחן">
+            {orderedSeats.map((seat, seatIndex) => seat.currentBet > 0 ? <div className="seat-wager" key={seat.playerId} style={seatPosition(seatIndex, orderedSeats.length)} aria-label={`${seat.playerName} שם ${seat.currentBet.toLocaleString('he-IL')} צ׳יפים`}>
+              <ChipAmount amount={seat.currentBet} />
+            </div> : null)}
+          </div> : null}
           <div className="table-seats">
             {orderedSeats.map((seat, seatIndex) => {
               const isYou = seat.playerId === view.playerId;
@@ -1159,28 +1232,27 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
         </div>
       </section>
       <section className="player-panel" aria-label="היד שלכם">
-        <div className="your-hand"><p><span aria-hidden="true">◆</span> {view.holeCards.length ? 'הקלפים שלכם' : 'מחוץ לשולחן'}</p><div className="hole-cards">{view.holeCards.length ? <><PlayingCard card={view.holeCards[0]} /><PlayingCard card={view.holeCards[1]} /></> : <small>ממתינים להחזרה ליד הבאה</small>}</div></div>
+        <div className="your-hand"><p><span aria-hidden="true">◆</span> {view.holeCards.length ? 'הקלפים שלכם' : 'מחוץ לשולחן'}</p><div className={`hole-cards${isTurn && view.holeCards.length === 2 ? ' hole-cards-draggable' : ''}${cardDrag ? ' is-dragging' : ''}`} style={cardDrag ? { transform: `translate(${cardDrag.x}px, ${cardDrag.y}px)` } : undefined} onPointerDown={startCardDrag} onPointerMove={moveCardDrag} onPointerUp={finishCardDrag} onPointerCancel={() => { cardDragRef.current = undefined; setCardDrag(undefined); }}>{view.holeCards.length ? <><PlayingCard card={view.holeCards[0]} /><PlayingCard card={view.holeCards[1]} /></> : <small>ממתינים להחזרה ליד הבאה</small>}</div></div>
         <div className="your-stack"><span>הערימה שלכם</span><strong><i aria-hidden="true" />{ownSeat?.stack.toLocaleString('he-IL') ?? (view.isSittingOut ? '0' : '—')}</strong><small>צ׳יפים · {formatChipsInBigBlinds(ownSeat?.stack ?? 0, view.bigBlind)}</small></div>
         {status.includes('נכשל') || status.includes('לא זמינה') || status.startsWith('לא הצלחנו') ? <p className="table-status" role="alert">{status}</p> : null}
         {isTurn ? <div className="action-bar" aria-label="פעולות בתור שלכם">
           <button type="button" className="action-fold" disabled={pending} onClick={() => void act({ type: 'fold' })}><span aria-hidden="true">✕</span> פרישה</button>
-          <button type="button" className="action-primary" disabled={pending} onClick={() => void act(view.toCall === 0 ? { type: 'check' } : { type: 'call' })}><span aria-hidden="true">✓</span> {view.toCall === 0 ? 'צ׳ק' : callIsAllIn ? `אול אין · ${ownSeat!.stack.toLocaleString('he-IL')}` : `השוואה · ${view.toCall.toLocaleString('he-IL')}`}</button>
-          {view.raise ? <button type="button" className="action-raise-toggle" disabled={pending} aria-expanded={showRaiseControls} onClick={() => setShowRaiseControls((shown) => !shown)}><span aria-hidden="true">＋</span> הימור</button> : null}
+          <button type="button" className="action-primary" disabled={pending} onClick={() => void act(view.toCall === 0 ? { type: 'check' } : { type: 'call' })}><span aria-hidden="true">✓</span> {view.toCall === 0 ? 'צ׳ק' : <><b>השוואה · {callAmount.toLocaleString('he-IL')}{callIsAllIn ? ' (אול אין)' : ''}</b><ChipAmount amount={callAmount} className="chip-amount-call" /></>}</button>
         </div> : null}
-        {isTurn && view.raise && showRaiseControls ? <section className="chip-tray" aria-label="בחירת הימור בצ׳יפים">
-          <div className="chip-tray-header"><span>בחרו צ׳יפים להימור</span><strong>נבחרו {selectedChipAmount.toLocaleString('he-IL')} · הימור עד {selectedRaiseTo.toLocaleString('he-IL')}</strong></div>
+        {ownSeat && !ownSeat.isSittingOut ? <section className={`chip-tray${!isTurn || !view.raise ? ' chip-tray-waiting' : ''}`} aria-label="הערימות שלכם בצ׳יפים">
+          <div className="chip-tray-header"><span>{isTurn && view.raise ? 'בחרו צ׳יפים להימור' : 'הצ׳יפים שלכם'}</span>{isTurn && view.raise ? <strong>נבחרו {selectedChipAmount.toLocaleString('he-IL')} · הימור עד {selectedRaiseTo.toLocaleString('he-IL')}</strong> : <strong>{ownSeat.stack.toLocaleString('he-IL')} צ׳יפים</strong>}</div>
           <div className="chip-piles" aria-label="הערימות שלכם">{CHIP_VALUES.map((value) => <div className="chip-pile" key={value}>
             <strong aria-label={`${chipTray.available[value]} צ׳יפים בערך ${value}`}>×{chipTray.available[value]}</strong>
-            <button type="button" className={`bet-chip bet-chip-${value}`} disabled={pending || chipTray.available[value] === 0} onClick={() => setChipTray((current) => selectChip(current, value))} aria-label={`הוספת צ׳יפ ${chipNames[value]} בשווי ${value}`}>{value}</button>
-            {value !== 1 ? <button type="button" className="chip-break" disabled={pending || chipTray.available[value] === 0} onClick={() => setChipTray((current) => breakChip(current, value))} aria-label={`פריטת צ׳יפ ${chipNames[value]}`}>פריטה</button> : <span className="chip-break-spacer" />}
+            <button type="button" className={`bet-chip bet-chip-${value}`} disabled={!isTurn || !view.raise || pending || chipTray.available[value] === 0} onClick={() => setChipTray((current) => selectChip(current, value))} aria-label={`הוספת צ׳יפ ${chipNames[value]} בשווי ${value}`}>{value}</button>
+            {isTurn && view.raise ? value !== 1 ? <button type="button" className="chip-break" disabled={pending || chipTray.available[value] === 0} onClick={() => setChipTray((current) => breakChip(current, value))} aria-label={`פריטת צ׳יפ ${chipNames[value]}`}>פריטה</button> : <span className="chip-break-spacer" /> : null}
           </div>)}</div>
-          <div className="chip-tray-selected" aria-label="צ׳יפים שנבחרו"><span>על השולחן</span>{selectedChipAmount === 0 ? <small>הקישו על צ׳יפ כדי להוסיף אותו</small> : CHIP_VALUES.filter((value) => chipTray.selected[value] > 0).map((value) => <button type="button" key={value} className={`bet-chip bet-chip-${value}`} disabled={pending} onClick={() => setChipTray((current) => returnChip(current, value))} aria-label={`החזרת צ׳יפ ${chipNames[value]} בשווי ${value}`}><b>{value}</b><i>×{chipTray.selected[value]}</i></button>)}</div>
-          <div className="chip-tray-footer"><small>מינימום {view.raise.minRaiseTo.toLocaleString('he-IL')} · נותרו {(ownSeat?.stack ?? 0) - selectedChipAmount} צ׳יפים</small><button type="button" disabled={pending || selectedChipAmount === 0} onClick={() => setChipTray(clearChipSelection)}>איפוס</button><button type="button" disabled={pending} onClick={() => setChipTray(selectAllChips)}>אול אין</button><button type="button" className="chip-bet-submit" disabled={pending || !chipBetIsLegal} onClick={submitChipBet}>{selectedRaiseTo === view.raise.maxRaiseTo && selectedChipAmount > 0 ? 'אול אין' : 'הימור'} · {selectedRaiseTo.toLocaleString('he-IL')}</button></div>
+          {isTurn && view.raise ? <><div className="chip-tray-selected" aria-label="צ׳יפים שנבחרו"><span>על השולחן</span>{selectedChipAmount === 0 ? <small>הקישו על צ׳יפ כדי להוסיף אותו</small> : CHIP_VALUES.filter((value) => chipTray.selected[value] > 0).map((value) => <button type="button" key={value} className={`bet-chip bet-chip-${value}`} disabled={pending} onClick={() => setChipTray((current) => returnChip(current, value))} aria-label={`החזרת צ׳יפ ${chipNames[value]} בשווי ${value}`}><b>{value}</b><i>×{chipTray.selected[value]}</i></button>)}</div>
+          <div className="chip-tray-footer"><small>מינימום {view.raise.minRaiseTo.toLocaleString('he-IL')} · נותרו {(ownSeat?.stack ?? 0) - selectedChipAmount} צ׳יפים</small><button type="button" disabled={pending || selectedChipAmount === 0} onClick={() => setChipTray(clearChipSelection)}>איפוס</button><button type="button" disabled={pending} onClick={() => setChipTray(selectAllChips)}>אול אין</button><button type="button" className="chip-bet-submit" disabled={pending || !chipBetIsLegal} onClick={submitChipBet}>{selectedRaiseTo === view.raise.maxRaiseTo && selectedChipAmount > 0 ? 'אול אין' : 'הימור'} · {selectedRaiseTo.toLocaleString('he-IL')}</button></div></> : null}
         </section> : null}
         {!isTurn && view.street !== 'showdown' && !view.allInRunout && ownSeat && ownSeat.stack > 0 && !ownSeat.isFolded && !ownSeat.isSittingOut && view.holeCards.length === 2 ? <div className="pre-action-bar" aria-label="בחירת פעולה לפני התור">
           <span>לפני התור</span>
           <button type="button" aria-pressed={view.preAction?.type === 'check-fold'} className={view.preAction?.type === 'check-fold' ? 'is-selected' : ''} disabled={savingPreAction} onClick={() => void selectPreAction('check-fold')}>צ׳ק / פרישה</button>
-          {(view.waitingToCall ?? 0) > 0 ? <button type="button" aria-pressed={view.preAction?.type === 'call'} className={view.preAction?.type === 'call' ? 'is-selected' : ''} disabled={savingPreAction} onClick={() => void selectPreAction('call')}>השוואה · {(view.preAction?.type === 'call' ? view.preAction.quotedToCall ?? view.waitingToCall! : view.waitingToCall!).toLocaleString('he-IL')}</button> : null}
+          {(view.waitingToCall ?? 0) > 0 ? <button type="button" aria-pressed={view.preAction?.type === 'call'} className={view.preAction?.type === 'call' ? 'is-selected' : ''} disabled={savingPreAction} onClick={() => void selectPreAction('call')}>השוואה · {(view.preAction?.type === 'call' ? view.preAction.quotedToCall ?? view.waitingToCall! : view.waitingToCall!).toLocaleString('he-IL')}<ChipAmount amount={Math.min(view.preAction?.type === 'call' ? view.preAction.quotedToCall ?? view.waitingToCall! : view.waitingToCall!, ownSeat.stack)} className="chip-amount-call" /></button> : null}
           {view.preAction ? <small>לחיצה נוספת מבטלת</small> : null}
         </div> : null}
         {view.allInRunout ? <div className="all-in-runout-panel" role="status">

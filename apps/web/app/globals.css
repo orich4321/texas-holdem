@@ -169,7 +169,7 @@ button:disabled { cursor: wait; opacity: 0.55; }
 .lobby-status { margin: 0; color: #f2c5c1; font-size: .59rem; }
 
 /* Table */
-.table-shell { position: relative; isolation: isolate; display: grid; grid-template-rows: auto auto minmax(0,1fr) auto; width: 100%; height: 100svh; height: 100dvh; padding: max(7px, env(safe-area-inset-top)) clamp(6px, 1.4vw, 18px) max(7px, env(safe-area-inset-bottom)); overflow-x: clip; background: radial-gradient(circle at 50% 48%, rgba(39,82,61,.16), transparent 42%); gap: clamp(5px, 1vh, 10px); }
+.table-shell { position: relative; isolation: isolate; display: grid; grid-template-rows: auto auto minmax(0,1fr) auto; width: 100%; height: 100svh; height: 100dvh; padding: max(7px, env(safe-area-inset-top)) clamp(6px, 1.4vw, 18px) max(7px, env(safe-area-inset-bottom)); overflow-x: clip; background: radial-gradient(circle at 50% 48%, rgba(39,82,61,.16), transparent 42%); gap: clamp(5px, 1vh, 10px); touch-action: manipulation; }
 .table-header { display: grid; grid-row: 1; grid-template-columns: 1fr repeat(5,auto); align-items: center; width: min(100%, 1180px); min-height: 47px; margin: 0 auto; padding: 5px 10px; border: 1px solid var(--line); border-radius: 15px; background: rgba(7,14,11,.8); box-shadow: 0 8px 28px rgba(0,0,0,.16); gap: clamp(8px,2.5vw,30px); backdrop-filter: blur(15px); }
 .table-header:not(:has(.table-management-button)) { grid-template-columns: 1fr repeat(4,auto); }
 .table-header .table-header-tools { display: flex; align-items: center; min-width: 0; gap: 5px; }
@@ -256,6 +256,14 @@ button:disabled { cursor: wait; opacity: 0.55; }
 .pot-award-card nav button { display: grid; width: 22px; height: 18px; padding: 0; border: 1px solid rgba(255,255,255,.14); border-radius: 999px; color: #aab2ac; background: rgba(255,255,255,.05); cursor: pointer; place-items: center; font-size: .48rem; font-weight: 900; }
 .pot-award-card nav button.is-active { color: #17130c; border-color: rgba(197,174,122,.65); background: var(--gold); }
 .community-cards { position: absolute; z-index: 7; top: 49%; left: 50%; display: flex; direction: ltr; gap: clamp(3px,.7vw,7px); transform: translate(-50%,-50%); }
+.table-wagers { position: absolute; z-index: 5; inset: 0; pointer-events: none; }
+.seat-wager { position: absolute; top: var(--wager-y); left: var(--wager-x); display: grid; max-width: min(140px,30%); padding: 4px 6px; border: 1px solid rgba(198,177,127,.26); border-radius: 12px; background: rgba(5,30,21,.76); box-shadow: 0 3px 12px rgba(0,0,0,.24); transform: translate(-50%,-50%); transition: top 260ms ease, left 260ms ease; }
+.chip-amount { display: flex; align-items: flex-end; justify-content: center; min-width: 0; direction: ltr; gap: 3px; }
+.chip-amount-piece { display: grid; justify-items: center; min-width: 0; gap: 1px; }
+.chip-amount-piece > b { color: #eee1c3; font-size: .5rem; line-height: 1; font-variant-numeric: tabular-nums; }
+.chip-amount-piece > .bet-chip { width: 23px; height: 23px; border-width: 2px; box-shadow: 0 2px 0 #090d0a,0 3px 4px rgba(0,0,0,.36); cursor: default; font-size: .42rem; font-style: normal; }
+.chip-amount-piece > .bet-chip::after { inset: 3px; }
+.fold-drop-zone { position: absolute; z-index: 9; top: 50%; left: 50%; display: grid; width: min(44%,300px); height: min(38%,240px); border: 2px dashed #d89588; border-radius: 50%; color: #ffe5dc; background: rgba(91,27,28,.42); box-shadow: 0 0 30px rgba(99,26,26,.25); place-items: center; font-size: clamp(.66rem,2vw,.9rem); font-weight: 900; text-align: center; transform: translate(-50%,-50%); pointer-events: none; }
 .playing-card { position: relative; display: grid; width: clamp(34px, 5.1vw, 56px); aspect-ratio: .7; padding: clamp(4px,.7vw,7px); overflow: hidden; border: 1px solid rgba(255,255,255,.75); border-radius: clamp(6px,.8vw,9px); color: #171c1a; background: linear-gradient(145deg,#fffdf8,#e8e3d9); box-shadow: 0 7px 17px rgba(0,0,0,.38), inset 0 0 0 1px rgba(0,0,0,.06); animation: deal-card 280ms cubic-bezier(.2,.8,.2,1) both; }
 .playing-card b { align-self: start; font-family: Georgia,serif; font-size: clamp(.68rem,1.25vw,.92rem); line-height: 1; }
 .playing-card i { align-self: end; justify-self: end; font-style: normal; font-size: clamp(1rem,2.1vw,1.55rem); line-height: .8; }
@@ -309,6 +317,9 @@ button:disabled { cursor: wait; opacity: 0.55; }
 .your-hand > p { margin: 0 0 3px; color: #b8c2bc; font-size: .58rem; font-weight: 800; text-align: center; }
 .your-hand > p span { color: var(--emerald); }
 .hole-cards { display: flex; direction: ltr; gap: 4px; }
+.hole-cards-draggable { position: relative; z-index: 2; cursor: grab; touch-action: none; user-select: none; }
+.hole-cards.is-dragging { z-index: 50; cursor: grabbing; filter: drop-shadow(0 8px 15px rgba(0,0,0,.65)); }
+.player-panel:has(.hole-cards.is-dragging) { z-index: 25; }
 .hole-cards .playing-card { width: clamp(52px,5.2vw,66px); padding: clamp(5px,.7vw,8px); }
 .hole-cards .playing-card b { font-size: clamp(1rem,1.5vw,1.25rem); }
 .hole-cards .playing-card i { font-size: clamp(1.45rem,2.3vw,1.9rem); }
@@ -317,7 +328,7 @@ button:disabled { cursor: wait; opacity: 0.55; }
 .your-stack strong { display: flex; align-items: center; color: var(--gold-light); gap: 7px; font-family: Georgia,serif; font-size: clamp(1rem,2.5vw,1.35rem); font-variant-numeric: tabular-nums; }
 .your-stack small { color: var(--muted); font-size: .5rem; }
 .table-status { grid-column: 1/-1; margin: 0; padding: 6px; border-radius: 9px; color: #ffd8d3; background: rgba(150,45,45,.2); font-size: .62rem; text-align: center; }
-.action-bar { position: static; display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); width: 100%; gap: 5px; }
+.action-bar { position: static; display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); width: 100%; gap: 5px; }
 .pre-action-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; min-height: 40px; }
 .pre-action-bar > span, .pre-action-bar > small { color: var(--muted); font-size: .62rem; white-space: nowrap; }
 .pre-action-bar button { min-height: 36px; padding: 0 11px; border: 1px solid rgba(196,180,141,.28); border-radius: 10px; color: #d9ded8; background: rgba(255,255,255,.05); cursor: pointer; font-size: .69rem; font-weight: 800; }
@@ -327,10 +338,18 @@ button:disabled { cursor: wait; opacity: 0.55; }
 .action-bar button > span { display: grid; width: 19px; height: 19px; border-radius: 50%; background: rgba(0,0,0,.14); place-items: center; font-size: .65rem; }
 .action-bar button:active:not(:disabled) { filter: brightness(1.09); transform: scale(.985); }
 .action-bar .action-fold { color: #ffe0dc; border-color: rgba(255,150,150,.2); background: linear-gradient(135deg,rgba(150,47,57,.72),rgba(79,26,32,.9)); }
-.action-bar .action-primary { color: var(--action-ink); border: 1px solid rgba(139,162,145,.3); background: linear-gradient(135deg,var(--action-light),var(--action)); box-shadow: 0 7px 18px rgba(20,43,32,.24); }
+.action-bar .action-primary { flex-wrap: wrap; padding-block: 3px; color: var(--action-ink); border: 1px solid rgba(139,162,145,.3); background: linear-gradient(135deg,var(--action-light),var(--action)); box-shadow: 0 7px 18px rgba(20,43,32,.24); white-space: normal; }
+.action-bar button > .chip-amount { display: flex; width: auto; height: auto; border-radius: 0; background: transparent; }
+.chip-amount-call .chip-amount-piece > .bet-chip { width: 13px; height: 13px; border-width: 1px; font-size: .29rem; }
+.chip-amount-call .chip-amount-piece > b { color: inherit; font-size: .4rem; }
+.pre-action-bar button:has(.chip-amount) { display: inline-flex; align-items: center; gap: 5px; }
 .action-raise-toggle { color: #e4e9e3 !important; border-color: rgba(120,148,128,.3) !important; background: rgba(53,88,68,.5) !important; }
 .action-raise-toggle[aria-expanded="true"] { color: var(--action-ink) !important; background: var(--action-light) !important; }
 .chip-tray { grid-column: 1/-1; display: grid; min-width: 0; padding: 7px 9px; border: 1px solid rgba(159,137,97,.35); border-radius: 12px; background: linear-gradient(145deg,#20372a,#0c1b14); box-shadow: inset 0 1px rgba(255,255,255,.05); gap: 5px; animation: raise-panel-in 150ms ease both; }
+.chip-tray-waiting { padding-block: 4px; gap: 2px; animation: none; }
+.chip-tray-waiting .chip-pile { gap: 1px; }
+.chip-tray-waiting .chip-pile > .bet-chip { width: 31px; height: 31px; opacity: .85; box-shadow: 0 2px 0 #090d0a,0 3px 5px rgba(0,0,0,.3); }
+.chip-tray-waiting .chip-pile > strong { font-size: .56rem; }
 .chip-tray-header, .chip-tray-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .chip-tray-header span { color: #d8e5dc; font-size: .65rem; font-weight: 850; }
 .chip-tray-header strong { color: var(--gold-light); font-size: .69rem; font-variant-numeric: tabular-nums; }
@@ -560,6 +579,10 @@ button:disabled { cursor: wait; opacity: 0.55; }
   .pot-award-card nav button { width: 20px; height: 17px; }
   .community-cards { top: 50%; gap: 3px; }
   .community-cards .playing-card { width: clamp(31px,9.6vw,43px); }
+  .seat-wager { top: var(--wager-mobile-y); left: var(--wager-mobile-x); max-width: 30%; padding: 3px 4px; gap: 1px; }
+  .seat-wager .chip-amount { gap: 1px; }
+  .seat-wager .chip-amount-piece > .bet-chip { width: clamp(14px,4vw,19px); height: clamp(14px,4vw,19px); font-size: .34rem; }
+  .seat-wager .chip-amount-piece > b { font-size: .4rem; }
   .seat-action { bottom: -11px; min-height: 22px; padding: 2px 6px; gap: 3px; }
   .seat-action i { width: 15px; height: 15px; flex-basis: 15px; font-size: .53rem; }
   .seat-action b { font-size: .45rem; }
@@ -569,6 +592,10 @@ button:disabled { cursor: wait; opacity: 0.55; }
   .action-bar button { min-height: 42px; padding: 0 3px; border-radius: 10px; gap: 3px; font-size: clamp(.52rem,2.25vw,.65rem); }
   .action-bar button > span { width: 16px; height: 16px; font-size: .54rem; }
   .chip-tray { padding: 6px; gap: 4px; }
+  .chip-tray-waiting { padding: 3px 5px; gap: 1px; }
+  .chip-tray-waiting .chip-tray-header { line-height: 1; }
+  .chip-tray-waiting .chip-tray-header span, .chip-tray-waiting .chip-tray-header strong { font-size: .54rem; }
+  .chip-tray-waiting .chip-pile > .bet-chip { width: 27px; height: 27px; }
   .bet-chip { width: 38px; height: 38px; }
   .chip-tray-footer small { flex-basis: 100%; }
   .all-in-runout-panel { align-items: stretch; flex-direction: column; }
@@ -665,7 +692,7 @@ button:disabled { cursor: wait; opacity: 0.55; }
   .turn-banner { grid-column: 1/-1; min-height: 26px; }
   .poker-table { grid-column: 1; grid-row: 3; }
   .player-panel { grid-column: 2; grid-row: 3; align-self: stretch; grid-template-columns: auto auto minmax(0,1fr); align-content: center; width: 100%; }
-  .action-bar { grid-template-columns: repeat(3,minmax(0,1fr)); }
+  .action-bar { grid-template-columns: repeat(2,minmax(0,1fr)); }
   .chip-tray { max-height: 100%; overflow-y: auto; }
 }
 

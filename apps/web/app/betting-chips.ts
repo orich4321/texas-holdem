@@ -5,6 +5,17 @@ export type ChipTray = { available: ChipCounts; selected: ChipCounts };
 
 const emptyCounts = (): ChipCounts => ({ 100: 0, 50: 0, 25: 0, 5: 0, 1: 0 });
 
+/** Compact visual breakdown for a wager or call; the amount still comes from the server. */
+export function displayChipCounts(amount: number): ChipCounts {
+  const counts = emptyCounts();
+  let remainder = Number.isSafeInteger(amount) && amount > 0 ? amount : 0;
+  for (const value of CHIP_VALUES) {
+    counts[value] = Math.floor(remainder / value);
+    remainder %= value;
+  }
+  return counts;
+}
+
 /** A visual denomination of the authoritative stack, never a second balance. */
 export function createChipTray(stack: number): ChipTray {
   const available = emptyCounts();
