@@ -57,6 +57,11 @@ test('mobile table UI keeps the player anchored, reconnects safely, and exposes 
   assert.match(table, /isCurrentHost && !view\.finalSummaryVisible && \(view\.allInRunout \|\| view\.rabbitRunout \|\| view\.showdown\)/);
   assert.doesNotMatch(table, /className="all-in-runout-panel"/);
   assert.match(styles, /\.player-panel:has\(\.chip-tray\) \{ height: clamp/);
+  assert.match(styles, /\.player-panel:has\(\.chip-tray\) \{[^}]*grid-template-rows: minmax\(0,1fr\) auto;[^}]*overflow: visible;/);
+  assert.match(styles, /\.pre-action-bar \{ grid-column: 3; grid-row: 1;/);
+  assert.match(styles, /\.chip-tray \{ grid-column: 1\/-1; grid-row: 2;/);
+  assert.match(styles, /\.seat-wager \.chip-amount-piece > \.bet-chip \{ width: 20px; height: 20px;/);
+  assert.match(table, /'--wager-mobile-y': `\$\{50 \+ Math\.sin\(angle\) \* 34\}%`/);
   assert.match(styles, /\.table-board-actions \{ position: absolute/);
   assert.match(table, /<ChipAmount amount=\{seat\.currentBet\}/);
   assert.doesNotMatch(table, /className="action-all-in"/);

@@ -260,10 +260,10 @@ function seatPosition(index: number, count: number): CSSProperties {
     '--seat-y': `${50 + Math.sin(angle) * 42}%`,
     '--seat-mobile-x': `${50 + Math.cos(angle) * 40}%`,
     '--seat-mobile-y': `${50 + Math.sin(angle) * 42}%`,
-    '--wager-x': `${50 + Math.cos(angle) * 31}%`,
-    '--wager-y': `${50 + Math.sin(angle) * 27}%`,
-    '--wager-mobile-x': `${50 + Math.cos(angle) * 24}%`,
-    '--wager-mobile-y': `${50 + Math.sin(angle) * 22}%`,
+    '--wager-x': `${50 + Math.cos(angle) * 28}%`,
+    '--wager-y': `${50 + Math.sin(angle) * 34}%`,
+    '--wager-mobile-x': `${50 + Math.cos(angle) * 25}%`,
+    '--wager-mobile-y': `${50 + Math.sin(angle) * 34}%`,
   } as CSSProperties;
 }
 
