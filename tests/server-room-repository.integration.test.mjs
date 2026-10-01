@@ -94,6 +94,21 @@ test('presets, friendships, and invitations persist across accounts and join thr
   assert.equal(joined.kind, 'joined');
   assert.equal((await rooms.findPlayerByRoomJoinIdAndAccountId(room.joinId, b.id))?.id, guestId);
   assert.equal(await social.inviteFriend(room.joinId, a.id, b.id), 'already-playing');
+
+  await rooms.removeWaitingPlayerForHostAtomically({ joinId: room.joinId, hostPlayerId: room.hostPlayerId, targetPlayerId: guestId });
+  assert.equal(await rooms.findPlayerByRoomJoinIdAndAccountId(room.joinId, b.id), null);
+  assert.equal((await rooms.joinWaitingRoom(room.joinId, { id: randomUUID(), accountId: b.id, displayName: 'Duplicate' })).kind, 'removed', 'the old link alone cannot restore a removed account');
+  assert.equal(await social.inviteFriend(room.joinId, a.id, b.id), 'sent');
+  const secondInvite = (await social.listInvitations(b.id))[0];
+  assert.equal(await social.answerGameInvite(b.id, secondInvite.id, true), room.joinId);
+  assert.equal((await rooms.findPlayerByRoomJoinIdAndAccountId(room.joinId, b.id))?.id, guestId, 'the renewed invitation restores the original seat');
+  assert.equal(await prisma.player.count({ where: { roomId: room.id, accountId: b.id } }), 1);
+  assert.equal((await rooms.joinWaitingRoom(room.joinId, { id: randomUUID(), accountId: b.id, displayName: 'Duplicate' })).kind, 'already-joined');
+  await rooms.removeWaitingPlayerForHostAtomically({ joinId: room.joinId, hostPlayerId: room.hostPlayerId, targetPlayerId: guestId });
+  assert.deepEqual(await rooms.listRemovedWaitingPlayersForHost(room.joinId, room.hostPlayerId), [{ id: guestId, displayName: 'חבר' }]);
+  assert.equal(await rooms.listRemovedWaitingPlayersForHost(room.joinId, guestId), null);
+  assert.deepEqual(await rooms.restoreWaitingPlayerForHostAtomically({ joinId: room.joinId, hostPlayerId: room.hostPlayerId, targetPlayerId: guestId }), { restoredPlayerId: guestId });
+  assert.equal((await rooms.findPlayerByRoomJoinIdAndAccountId(room.joinId, b.id))?.id, guestId);
 });
 
 test('room repository persists a room with two players and retrieves it by join ID', { skip: !integrationEnabled }, async () => {

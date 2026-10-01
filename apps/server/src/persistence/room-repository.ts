@@ -1238,7 +1238,44 @@ export class RoomRepository {
         data: { leftAt: new Date() },
       });
       if (removed.count !== 1) throw new Error('Waiting-room removal is unavailable');
+      const removedPlayer = await tx.player.findUnique({ where: { id: targetPlayerId }, select: { accountId: true } });
+      if (removedPlayer?.accountId) {
+        await tx.gameInvite.updateMany({
+          where: { roomId: room.id, toAccountId: removedPlayer.accountId, status: 'PENDING' },
+          data: { status: 'DECLINED' },
+        });
+      }
       return { removedPlayerId: targetPlayerId };
+    });
+  }
+
+  async listRemovedWaitingPlayersForHost(joinId: string, hostPlayerId: string) {
+    const room = await this.db.room.findFirst({
+      where: { joinId, hostPlayerId, status: 'WAITING' },
+      select: { players: { where: { leftAt: { not: null } }, orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true } } },
+    });
+    return room?.players ?? null;
+  }
+
+  /** A host can explicitly re-admit the same seat, including a non-friend invited by link. */
+  async restoreWaitingPlayerForHostAtomically({ joinId, hostPlayerId, targetPlayerId }: RemovePlayerForHostInput) {
+    return this.db.$transaction(async (tx) => {
+      const room = await tx.room.findUnique({ where: { joinId }, select: { id: true, hostPlayerId: true, status: true, maxPlayers: true } });
+      if (!room || room.hostPlayerId !== hostPlayerId || room.status !== 'WAITING' || targetPlayerId === hostPlayerId) {
+        throw new Error('Waiting-room restoration is unavailable');
+      }
+      const locked = await tx.room.updateMany({
+        where: { id: room.id, hostPlayerId, status: 'WAITING' }, data: { updatedAt: new Date() },
+      });
+      if (locked.count !== 1) throw new Error('Waiting-room restoration is unavailable');
+      const activeCount = await tx.player.count({ where: { roomId: room.id, leftAt: null, isSittingOut: false } });
+      if (activeCount >= room.maxPlayers) throw new Error('Waiting room is full');
+      const restored = await tx.player.updateMany({
+        where: { id: targetPlayerId, roomId: room.id, leftAt: { not: null } },
+        data: { leftAt: null, isSittingOut: false, leaveAfterHand: false },
+      });
+      if (restored.count !== 1) throw new Error('Waiting-room restoration is unavailable');
+      return { restoredPlayerId: targetPlayerId };
     });
   }
 

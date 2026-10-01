@@ -5,8 +5,11 @@ import {
   EMPTY_NICKNAME_MESSAGE,
   type Lobby,
   loadLobby,
+  loadRemovedWaitingPlayers,
   joinLobby,
   removeWaitingPlayer,
+  restoreWaitingPlayer,
+  type RemovedLobbyPlayer,
   startLobbyGame,
 } from '../../lobby-api';
 import TableClient from './table-client';
@@ -38,6 +41,8 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
   const [joining, setJoining] = useState(false);
   const [starting, setStarting] = useState(false);
   const [removingPlayerId, setRemovingPlayerId] = useState<string>();
+  const [restoringPlayerId, setRestoringPlayerId] = useState<string>();
+  const [removedPlayers, setRemovedPlayers] = useState<RemovedLobbyPlayer[]>([]);
   const [copied, setCopied] = useState<string>();
   const [account, setAccount] = useState<AccountState>();
   const [friends, setFriends] = useState<SocialAccount[]>([]);
@@ -54,6 +59,15 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
     if (!account?.profile?.id || !lobby?.isHost || lobby.status !== 'WAITING') return;
     void loadSocial().then((overview) => setFriends(overview.friends)).catch(() => setInviteMessage('לא הצלחנו לטעון את רשימת החברים.'));
   }, [account?.profile?.id, lobby?.isHost, lobby?.status]);
+
+  const refreshRemovedPlayers = useCallback(async () => {
+    try { setRemovedPlayers(await loadRemovedWaitingPlayers(joinId, { fetch: (...args) => globalThis.fetch(...args) })); }
+    catch { setJoinMessage('לא הצלחנו לטעון שחקנים שהוסרו. נסו לרענן את הדף.'); }
+  }, [joinId]);
+
+  useEffect(() => {
+    if (lobby?.isHost && lobby.status === 'WAITING') void refreshRemovedPlayers();
+  }, [lobby?.isHost, lobby?.status, refreshRemovedPlayers]);
 
   async function sendInvite(friend: SocialAccount) {
     setInvitingFriendId(friend.id);
@@ -180,13 +194,23 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
   }
 
   async function handleRemovePlayer(playerId: string, displayName: string) {
-    if (removingPlayerId || !globalThis.confirm(`להסיר את ${displayName} מהחדר? הוא לא יוכל להצטרף מחדש עם אותו חשבון.`)) return;
+    if (removingPlayerId || !globalThis.confirm(`להסיר את ${displayName} מהחדר? תוכלו להזמין אותו מחדש בהמשך.`)) return;
     setRemovingPlayerId(playerId);
     setJoinMessage(undefined);
     const result = await removeWaitingPlayer(joinId, playerId, { fetch: (...args) => globalThis.fetch(...args) });
-    if (result.ok) await refreshLobby();
+    if (result.ok) { await refreshLobby(); await refreshRemovedPlayers(); }
     else setJoinMessage(result.message);
     setRemovingPlayerId(undefined);
+  }
+
+  async function handleRestorePlayer(playerId: string) {
+    if (restoringPlayerId) return;
+    setRestoringPlayerId(playerId);
+    setJoinMessage(undefined);
+    const restored = await restoreWaitingPlayer(joinId, playerId, { fetch: (...args) => globalThis.fetch(...args) });
+    if (restored) { await refreshLobby(); await refreshRemovedPlayers(); }
+    else setJoinMessage('לא הצלחנו להחזיר את השחקן. בדקו שיש מקום בשולחן ונסו שוב.');
+    setRestoringPlayerId(undefined);
   }
 
   if (loading && !lobby) {
@@ -285,6 +309,15 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
                 ))}
               </ul>
             </section>
+            {lobby.isHost && removedPlayers.length > 0 ? <section className="lobby-roster" aria-label="שחקנים שהוסרו מהחדר">
+              <div className="lobby-roster-heading"><h2>שחקנים שהוסרו</h2></div>
+              <ul>{removedPlayers.map((player) => <li key={player.id}>
+                <ProfileImage className="lobby-player-avatar" fallback={player.displayName.slice(0, 1)} />
+                <strong>{player.displayName}</strong>
+                <button type="button" className="lobby-remove-player" disabled={Boolean(restoringPlayerId) || starting} onClick={() => void handleRestorePlayer(player.id)}>{restoringPlayerId === player.id ? 'מחזירים…' : 'אפשר חזרה'}</button>
+              </li>)}</ul>
+              <p>החזרת שחקן שומרת על אותו חשבון ומושב. אפשר לשלוח לו שוב קישור או הזמנה דרך האתר.</p>
+            </section> : null}
             {joinMessage ? <p className="lobby-status" role="status">{joinMessage}</p> : null}
           </div>
 

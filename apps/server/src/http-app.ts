@@ -849,6 +849,31 @@ export function createApp({ roomRepository, accountRepository, socialRepository,
     }
   });
 
+  routes.get('/rooms/:joinId/lobby/removed-players', async (request, response) => {
+    const host = await findAuthenticatedHost(request.params.joinId, request.headers.cookie);
+    if (!host) { response.status(403).json({ error: { code: 'HOST_FORBIDDEN' } }); return; }
+    const players = await roomRepository.listRemovedWaitingPlayersForHost(request.params.joinId, host.id);
+    if (!players) { response.status(409).json({ error: { code: 'LOBBY_UNAVAILABLE' } }); return; }
+    response.json({ players });
+  });
+
+  routes.post('/rooms/:joinId/lobby/players/:playerId/restore', async (request, response) => {
+    if (!PLAYER_ID_PATTERN.test(request.params.playerId)) {
+      response.status(400).json({ error: { code: 'INVALID_REQUEST' } }); return;
+    }
+    try {
+      const host = await findAuthenticatedHost(request.params.joinId, request.headers.cookie);
+      if (!host) { response.status(403).json({ error: { code: 'HOST_FORBIDDEN' } }); return; }
+      const result = await roomRepository.restoreWaitingPlayerForHostAtomically({
+        joinId: request.params.joinId, hostPlayerId: host.id, targetPlayerId: request.params.playerId,
+      });
+      response.status(200).json(result);
+    } catch (error) {
+      console.error('Waiting-room player restoration failed', error);
+      response.status(409).json({ error: { code: 'PLAYER_RESTORATION_UNAVAILABLE' } });
+    }
+  });
+
   routes.get('/rooms/:joinId/management', async (request, response) => {
     const player = await findAuthenticatedHost(request.params.joinId, request.headers.cookie);
     if (!player) {

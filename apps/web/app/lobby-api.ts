@@ -51,6 +51,29 @@ export async function removeWaitingPlayer(joinId: string, playerId: string, boun
   }
 }
 
+export type RemovedLobbyPlayer = { id: string; displayName: string };
+
+export async function loadRemovedWaitingPlayers(joinId: string, boundaries: Boundaries): Promise<RemovedLobbyPlayer[]> {
+  const response = await boundaries.fetch(`${SERVER_URL}/rooms/${encodeURIComponent(joinId)}/lobby/removed-players`, {
+    credentials: 'include', cache: 'no-store',
+  });
+  if (response.status !== 200) throw new Error('Removed players are unavailable');
+  const body = await response.json() as { players?: unknown };
+  if (!Array.isArray(body.players) || !body.players.every((player) => player && typeof player.id === 'string' && typeof player.displayName === 'string')) {
+    throw new Error('Invalid removed-player list');
+  }
+  return body.players as RemovedLobbyPlayer[];
+}
+
+export async function restoreWaitingPlayer(joinId: string, playerId: string, boundaries: Boundaries): Promise<boolean> {
+  try {
+    const response = await boundaries.fetch(`${SERVER_URL}/rooms/${encodeURIComponent(joinId)}/lobby/players/${encodeURIComponent(playerId)}/restore`, {
+      method: 'POST', credentials: 'include',
+    });
+    return response.status === 200;
+  } catch { return false; }
+}
+
 function isLobby(value: unknown, expectedJoinId: string): value is Lobby {
   if (value === null || typeof value !== 'object') return false;
   const lobby = value as Record<string, unknown>;

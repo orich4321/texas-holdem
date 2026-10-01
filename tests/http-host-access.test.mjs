@@ -78,6 +78,7 @@ test('a second authenticated player cannot invoke host-only HTTP controls by cal
       `/rooms/${joinId}/game/runout/uncontested`,
       `/rooms/${joinId}/players/${targetPlayerId}/remove`,
       `/rooms/${joinId}/lobby/players/${targetPlayerId}/remove`,
+      `/rooms/${joinId}/lobby/players/${targetPlayerId}/restore`,
       `/rooms/${joinId}/management/blinds`,
       `/rooms/${joinId}/management/players/${targetPlayerId}/removal`,
       `/rooms/${joinId}/management/players/${targetPlayerId}/chips`,
@@ -111,6 +112,43 @@ test('waiting-room removal resolves the host from their session and rejects inva
     assert.deepEqual(await removed.json(), { removedPlayerId: targetPlayerId });
   });
   assert.deepEqual(calls, [{ joinId, hostPlayerId: 'host-id', targetPlayerId }]);
+});
+
+test('only the host can list and restore removed waiting-room seats', async () => {
+  const calls = [];
+  const repository = {
+    async findPlayerByRoomJoinIdAndAccessToken(requestedJoinId, token) {
+      if (requestedJoinId !== joinId) return null;
+      if (token === hostToken) return { id: 'host-id', roomId: room.id };
+      if (token === guestToken) return { id: 'guest-id', roomId: room.id };
+      return null;
+    },
+    async findRoomByJoinId() { return room; },
+    async listRemovedWaitingPlayersForHost(requestedJoinId, hostId) {
+      calls.push(['list', requestedJoinId, hostId]);
+      return [{ id: targetPlayerId, displayName: 'אורח' }];
+    },
+    async restoreWaitingPlayerForHostAtomically(input) {
+      calls.push(['restore', input]);
+      return { restoredPlayerId: input.targetPlayerId };
+    },
+  };
+  await withServer(repository, async (baseUrl) => {
+    const listUrl = `${baseUrl}/rooms/${joinId}/lobby/removed-players`;
+    const restoreUrl = `${baseUrl}/rooms/${joinId}/lobby/players/${targetPlayerId}/restore`;
+    assert.equal((await globalThis.fetch(listUrl, { headers: { cookie: `poker_player_token=${guestToken}` } })).status, 403);
+    assert.equal((await globalThis.fetch(restoreUrl, { method: 'POST', headers: { cookie: `poker_player_token=${guestToken}` } })).status, 403);
+    const listed = await globalThis.fetch(listUrl, { headers: { cookie: `poker_player_token=${hostToken}` } });
+    assert.equal(listed.status, 200);
+    assert.deepEqual(await listed.json(), { players: [{ id: targetPlayerId, displayName: 'אורח' }] });
+    const restored = await globalThis.fetch(restoreUrl, { method: 'POST', headers: { cookie: `poker_player_token=${hostToken}` } });
+    assert.equal(restored.status, 200);
+    assert.deepEqual(await restored.json(), { restoredPlayerId: targetPlayerId });
+  });
+  assert.deepEqual(calls, [
+    ['list', joinId, 'host-id'],
+    ['restore', { joinId, hostPlayerId: 'host-id', targetPlayerId }],
+  ]);
 });
 
 test('participants see final standings, but only the authenticated host can download the detailed JSON', async () => {
