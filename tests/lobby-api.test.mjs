@@ -10,11 +10,19 @@ async function lobbyApi() {
   return import(pathToFileURL(resolve(root, 'apps/web/app/lobby-api.ts')).href);
 }
 
-test('lobby shell preserves vertical scrolling for a full nine-player mobile table', async () => {
+test('lobby scrolls to its start button on narrow and short screens', async () => {
   const styles = await readFile(resolve(root, 'apps/web/app/globals.css'), 'utf8');
   const shellRule = styles.match(/\.lobby-shell\s*\{([^}]*)\}/)?.[1] ?? '';
   assert.doesNotMatch(shellRule, /overflow\s*:\s*hidden/);
   assert.doesNotMatch(shellRule, /overflow-y\s*:\s*(?:hidden|clip)/);
+  const mobile = styles.split('@media (max-width: 760px) {')[1]?.split('@media (max-height: 740px) {')[0] ?? '';
+  const shortLandscape = styles.split('@media (orientation: landscape) and (max-height: 560px) {')[1]?.split('@media (min-width: 1180px)')[0] ?? '';
+  for (const responsiveRules of [mobile, shortLandscape]) {
+    assert.match(responsiveRules, /\.lobby-shell\s*\{[^}]*overflow-y:\s*auto/);
+    assert.match(responsiveRules, /\.lobby-card\s*\{[^}]*min-height:\s*max-content/);
+    assert.match(responsiveRules, /\.lobby-roster ul\s*\{[^}]*overflow-y:\s*visible/);
+  }
+  assert.match(mobile, /\.lobby-content\s*\{[^}]*grid-template-rows:\s*auto auto/);
 });
 
 test('mobile table UI keeps the player anchored, reconnects safely, and exposes chip-based thumb-sized actions', async () => {
