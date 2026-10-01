@@ -1002,8 +1002,10 @@ export function createApp({ roomRepository, accountRepository, socialRepository,
         response.status(403).json({ error: { code: 'HOST_FORBIDDEN' } });
         return;
       }
-      await roomRepository.advanceAllInRunoutForHostAtomically({ joinId: request.params.joinId, hostPlayerId: player.id });
-      response.status(201).json({ roomId: request.params.joinId, status: 'IN_PROGRESS' });
+      const result = await roomRepository.advanceAllInRunoutForHostAtomically({ joinId: request.params.joinId, hostPlayerId: player.id });
+      const view = result.views.find((candidate) => candidate.playerId === player.id);
+      if (!view) throw new Error('All-in board is unavailable');
+      response.status(201).json(view);
     } catch (error) {
       console.error('All-in board advance failed', error);
       response.status(409).json({ error: { code: 'ALL_IN_RUNOUT_UNAVAILABLE' } });

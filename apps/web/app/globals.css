@@ -234,7 +234,8 @@ button:disabled { cursor: wait; opacity: 0.55; }
 @media (max-width: 520px) { .history-panel { padding: 12px; }.history-hand-players { grid-template-columns: repeat(2,minmax(0,1fr)); }.history-timeline button { padding: 0 7px; font-size: .58rem; }.history-game strong { font-size: .8rem; } }
 .table-header-pot strong { display: flex; align-items: center; justify-content: center; gap: 5px; }
 .table-header-pot i, .table-pot i, .your-stack i, .table-seat small i { display: inline-block; width: 9px; height: 9px; border: 2px dashed rgba(255,255,255,.58); border-radius: 50%; background: #bc3f48; box-shadow: 0 0 0 2px #79252d; }
-.turn-banner { display: flex; grid-row: 2; align-items: center; justify-content: center; width: min(100%, 720px); min-height: 31px; margin: 0 auto; padding: 4px 13px; border: 1px solid var(--line); border-radius: 999px; color: #bdc7c1; background: rgba(255,255,255,.025); gap: 8px; font-size: clamp(.62rem, 1.2vw, .74rem); font-weight: 750; text-align: center; }
+.turn-banner { display: flex; grid-row: 2; align-items: center; justify-content: center; width: min(100%, 720px); height: 31px; min-height: 31px; margin: 0 auto; padding: 4px 13px; overflow: hidden; border: 1px solid var(--line); border-radius: 999px; color: #bdc7c1; background: rgba(255,255,255,.025); gap: 8px; font-size: clamp(.62rem, 1.2vw, .74rem); font-weight: 750; text-align: center; white-space: nowrap; }
+.turn-banner-spacer { grid-row: 2; height: 31px; }
 .turn-banner > span { width: 6px; height: 6px; border-radius: 50%; background: #76817a; box-shadow: 0 0 0 4px rgba(118,129,122,.09); }
 .turn-banner-active { border-color: rgba(230,189,105,.55); color: #fff0c6; background: rgba(121,87,27,.24); box-shadow: 0 0 0 2px rgba(230,189,105,.09), 0 0 18px rgba(230,189,105,.12); animation: turn-attention 700ms ease-out 2; }
 .turn-banner-active > span { background: var(--gold); box-shadow: 0 0 0 4px rgba(230,189,105,.11), 0 0 12px var(--gold); animation: turn-pulse 1.7s ease-in-out infinite; }
@@ -256,6 +257,11 @@ button:disabled { cursor: wait; opacity: 0.55; }
 .pot-award-card nav button { display: grid; width: 22px; height: 18px; padding: 0; border: 1px solid rgba(255,255,255,.14); border-radius: 999px; color: #aab2ac; background: rgba(255,255,255,.05); cursor: pointer; place-items: center; font-size: .48rem; font-weight: 900; }
 .pot-award-card nav button.is-active { color: #17130c; border-color: rgba(197,174,122,.65); background: var(--gold); }
 .community-cards { position: absolute; z-index: 7; top: 49%; left: 50%; display: flex; direction: ltr; gap: clamp(3px,.7vw,7px); transform: translate(-50%,-50%); }
+.table-board-actions { position: absolute; z-index: 9; top: calc(49% + clamp(32px,5.5vh,50px)); left: 50%; display: grid; width: max-content; max-width: min(66%,280px); gap: 4px; transform: translateX(-50%); }
+.table-board-actions button { min-height: 35px; padding: 4px 12px; border: 1px solid rgba(187,169,128,.44); border-radius: 10px; color: #f0e8d8; background: rgba(17,35,25,.94); box-shadow: 0 5px 17px rgba(0,0,0,.4); cursor: pointer; font-size: .67rem; font-weight: 900; line-height: 1.2; white-space: normal; }
+.table-board-actions button:disabled { opacity: .62; cursor: default; }
+.table-board-actions .next-hand-button, .table-board-final-actions button:first-child { color: var(--action-ink); background: linear-gradient(135deg,var(--action-light),var(--action)); }
+.table-board-final-actions { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 4px; }
 .table-wagers { position: absolute; z-index: 5; inset: 0; pointer-events: none; }
 .seat-wager { position: absolute; top: var(--wager-y); left: var(--wager-x); display: grid; max-width: min(140px,30%); padding: 4px 6px; border: 1px solid rgba(198,177,127,.26); border-radius: 12px; background: rgba(5,30,21,.76); box-shadow: 0 3px 12px rgba(0,0,0,.24); transform: translate(-50%,-50%); transition: top 260ms ease, left 260ms ease; }
 .chip-amount { display: flex; align-items: flex-end; justify-content: center; min-width: 0; direction: ltr; gap: 3px; }
@@ -314,12 +320,13 @@ button:disabled { cursor: wait; opacity: 0.55; }
 .table-seat-self .seat-rebuy-actions { top: auto; bottom: calc(100% + 4px); }
 
 .player-panel { position: sticky; z-index: 10; grid-row: 4; bottom: max(5px, env(safe-area-inset-bottom)); display: grid; grid-template-columns: auto auto minmax(0,1fr); align-items: center; width: min(100%, 940px); margin: 0 auto; padding: 6px 8px; border: 1px solid rgba(255,255,255,.13); border-radius: 16px; background: rgba(7,15,12,.96); box-shadow: 0 14px 38px rgba(0,0,0,.48); gap: 7px 10px; backdrop-filter: blur(18px); }
+.player-panel:has(.chip-tray) { height: clamp(176px,24dvh,215px); align-content: center; overflow-y: auto; overscroll-behavior: contain; }
 .your-hand > p { margin: 0 0 3px; color: #b8c2bc; font-size: .58rem; font-weight: 800; text-align: center; }
 .your-hand > p span { color: var(--emerald); }
 .hole-cards { display: flex; direction: ltr; gap: 4px; }
 .hole-cards-draggable { position: relative; z-index: 2; cursor: grab; touch-action: none; user-select: none; }
 .hole-cards.is-dragging { z-index: 50; cursor: grabbing; filter: drop-shadow(0 8px 15px rgba(0,0,0,.65)); }
-.player-panel:has(.hole-cards.is-dragging) { z-index: 25; }
+.player-panel:has(.hole-cards.is-dragging) { z-index: 25; overflow: visible; }
 .hole-cards .playing-card { width: clamp(52px,5.2vw,66px); padding: clamp(5px,.7vw,8px); }
 .hole-cards .playing-card b { font-size: clamp(1rem,1.5vw,1.25rem); }
 .hole-cards .playing-card i { font-size: clamp(1.45rem,2.3vw,1.9rem); }
@@ -381,13 +388,6 @@ button:disabled { cursor: wait; opacity: 0.55; }
 .chip-tray-footer button { min-height: 30px; padding: 0 9px; border: 1px solid rgba(196,180,141,.3); border-radius: 8px; color: #e8ece4; background: #334739; cursor: pointer; font-size: .58rem; font-weight: 800; }
 .chip-tray-footer button:disabled { opacity: .4; cursor: default; }
 .chip-tray-footer .chip-bet-submit { color: var(--action-ink); background: var(--action-light); }
-.all-in-runout-panel { grid-column: 1/-1; display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; border: 1px solid var(--gold-line); border-radius: 12px; background: rgba(112,73,16,.19); gap: 10px; }
-.all-in-runout-panel > div { display: flex; align-items: center; gap: 8px; }
-.all-in-runout-panel > div > span { display: grid; width: 28px; height: 28px; border-radius: 9px; color: #342200; background: var(--gold); place-items: center; }
-.all-in-runout-panel p { display: grid; margin: 0; gap: 2px; }
-.all-in-runout-panel p strong { font-size: .68rem; }
-.all-in-runout-panel p small, .all-in-runout-panel > small { color: #c6d0ca; font-size: .56rem; }
-.all-in-runout-panel button { min-height: 38px; padding: 0 12px; border: 1px solid rgba(196,171,119,.28); border-radius: 10px; color: #17140e; background: linear-gradient(135deg,var(--brass-button-light),var(--brass-button)); cursor: pointer; font-size: .66rem; font-weight: 900; white-space: nowrap; }
 
 /* Between-hand controls and the end-of-game overlay */
 .modal-backdrop { position: fixed; z-index: 50; inset: 0; display: grid; padding: max(12px,env(safe-area-inset-top)) 12px max(12px,env(safe-area-inset-bottom)); background: rgba(2,6,4,.74); backdrop-filter: blur(8px); place-items: center; animation: fade-in 180ms ease both; }
@@ -434,10 +434,6 @@ button:disabled { cursor: wait; opacity: 0.55; }
 .reveal-card-picker .playing-card b { font-size: .54rem; }
 .reveal-card-picker .playing-card i { font-size: .72rem; }
 .reveal-card-picker button small { font-size: .54rem; font-weight: 900; }
-.between-hands-controls > .next-hand-button { min-height: 43px; border: 1px solid rgba(139,162,145,.3); border-radius: 11px; color: var(--action-ink); background: linear-gradient(135deg,var(--action-light),var(--action)); cursor: pointer; font-weight: 950; }
-.final-hand-decisions { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 6px; }
-.final-hand-decisions button { min-height: 43px; padding: 5px; border: 1px solid var(--gold-line); border-radius: 11px; color: #f8e8c3; background: rgba(126,89,31,.24); cursor: pointer; font-size: .68rem; font-weight: 900; }
-.final-hand-decisions button:last-child { border: 1px solid rgba(139,162,145,.3); color: var(--action-ink); background: linear-gradient(135deg,var(--action-light),var(--action)); }
 .continue-hand-dialog { display: grid; width: min(100%,420px); padding: clamp(16px,3vw,24px); border: 1px solid var(--gold-line); border-radius: 20px; background: linear-gradient(145deg,#123527,#081a13); box-shadow: 0 28px 90px rgba(0,0,0,.64); gap: 12px; text-align: center; }
 .continue-hand-dialog p { margin: 0; color: var(--gold); font-size: .62rem; font-weight: 900; }
 .continue-hand-dialog h2 { margin: 0; font-family: Georgia,serif; font-size: clamp(1.1rem,4vw,1.5rem); }
@@ -564,7 +560,8 @@ button:disabled { cursor: wait; opacity: 0.55; }
   .table-shell { gap: 4px; }
   .table-header { min-height: 43px; padding: 4px 7px; border-radius: 12px; gap: 8px; }
   .table-header > div { min-width: 61px; }
-  .turn-banner { min-height: 28px; }
+  .turn-banner { height: 28px; min-height: 28px; }
+  .turn-banner-spacer { height: 28px; }
   .poker-table { border-radius: 46% / 44%; }
   .table-felt::after { inset: 18% 8%; }
   .table-seat { width: clamp(82px,25.5vw,104px); min-height: 52px; padding: 7px 5px; border-radius: 12px; }
@@ -580,6 +577,8 @@ button:disabled { cursor: wait; opacity: 0.55; }
   .pot-award-card > small { font-size: clamp(.44rem,1.8vw,.52rem); }
   .pot-award-card nav button { width: 20px; height: 17px; }
   .community-cards { top: 50%; gap: 3px; }
+  .table-board-actions { top: calc(50% + 34px); max-width: 62%; }
+  .table-board-actions button { min-height: 32px; padding: 4px 8px; font-size: .58rem; }
   .community-cards .playing-card { width: clamp(31px,9.6vw,43px); }
   .seat-wager { top: var(--wager-mobile-y); left: var(--wager-mobile-x); max-width: 30%; padding: 3px 4px; gap: 1px; }
   .seat-wager .chip-amount { gap: 1px; }
@@ -589,6 +588,7 @@ button:disabled { cursor: wait; opacity: 0.55; }
   .seat-action i { width: 15px; height: 15px; flex-basis: 15px; font-size: .53rem; }
   .seat-action b { font-size: .45rem; }
   .player-panel { grid-template-columns: auto auto minmax(0,1fr); padding: 4px 5px; border-radius: 13px; gap: 3px 5px; }
+  .player-panel:has(.chip-tray) { height: clamp(168px,22dvh,192px); }
   .hole-cards .playing-card { width: clamp(42px,11.5vw,52px); }
   .your-stack strong { font-size: clamp(.9rem,3.5vw,1.1rem); }
   .turn-gesture-hint { font-size: .54rem; }
@@ -613,8 +613,6 @@ button:disabled { cursor: wait; opacity: 0.55; }
   .chip-tray-waiting .chip-pile > .bet-chip { width: 27px; height: 27px; }
   .bet-chip { width: 38px; height: 38px; }
   .chip-tray-footer small { flex-basis: 100%; }
-  .all-in-runout-panel { align-items: stretch; flex-direction: column; }
-  .all-in-runout-panel button { width: 100%; }
   .final-summary-backdrop { padding: max(8px,env(safe-area-inset-top)) 8px max(8px,env(safe-area-inset-bottom)); }
   .final-summary { padding: 14px 11px; border-radius: 22px; gap: 8px; }
   .final-summary-header { grid-template-columns: 30px 1fr 30px; gap: 6px; }
@@ -670,6 +668,8 @@ button:disabled { cursor: wait; opacity: 0.55; }
 }
 
 @media (max-height: 600px) and (orientation: portrait) {
+  .table-board-actions { top: calc(50% + 24px); }
+  .table-board-actions button { min-height: 27px; padding-block: 2px; }
   .home-topbar .app-brand-cards { width: 30px; height: 27px; }
   .home-topbar .app-brand-cards i { width: 20px; height: 26px; }
   .home-topbar .app-brand > span:last-child { display: none; }
@@ -704,8 +704,10 @@ button:disabled { cursor: wait; opacity: 0.55; }
   .table-shell { grid-template-rows: 39px 26px minmax(0,1fr); grid-template-columns: minmax(0,1fr) clamp(270px,34vw,380px); }
   .table-header { grid-column: 1/-1; min-height: 39px; }
   .turn-banner { grid-column: 1/-1; min-height: 26px; }
+  .turn-banner-spacer { grid-column: 1/-1; height: 26px; }
   .poker-table { grid-column: 1; grid-row: 3; }
   .player-panel { grid-column: 2; grid-row: 3; align-self: stretch; grid-template-columns: auto auto minmax(0,1fr); align-content: center; width: 100%; }
+  .player-panel:has(.chip-tray) { height: 100%; }
   .action-bar { grid-template-columns: minmax(0,1fr); }
   .chip-tray { max-height: 100%; overflow-y: auto; }
 }

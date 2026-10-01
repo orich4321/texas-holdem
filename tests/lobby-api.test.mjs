@@ -53,6 +53,11 @@ test('mobile table UI keeps the player anchored, reconnects safely, and exposes 
   assert.match(table, /isTurn && view\.toCall > 0 \? <div className="action-bar"/);
   assert.match(table, /isTurn && view\.raise && selectedChipAmount > 0 \? <div className="chip-tray-actions"/);
   assert.match(table, /className="table-wagers"/);
+  assert.match(table, /className="table-board-actions"/);
+  assert.match(table, /isCurrentHost && !view\.finalSummaryVisible && \(view\.allInRunout \|\| view\.rabbitRunout \|\| view\.showdown\)/);
+  assert.doesNotMatch(table, /className="all-in-runout-panel"/);
+  assert.match(styles, /\.player-panel:has\(\.chip-tray\) \{ height: clamp/);
+  assert.match(styles, /\.table-board-actions \{ position: absolute/);
   assert.match(table, /<ChipAmount amount=\{seat\.currentBet\}/);
   assert.doesNotMatch(table, /className="action-all-in"/);
   assert.match(table, /onClick=\{\(\) => setChipTray\(selectAllChips\)\}>אול אין/);

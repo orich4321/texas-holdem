@@ -218,6 +218,92 @@ test('a settled preflop all-in exposes contenders and advances one board street 
   assert.equal(showdown.exposedHands.filter((hand) => hand.reason === 'all-in').length, 3, 'all-in cards remain visible through showdown');
 });
 
+test('a covered heads-up all-in needs a call, then reveals each street without pointless checks', () => {
+  const game = new ServerGameLifecycle({
+    seats: [
+      { seatNumber: 1, playerId: 'deep', playerName: 'עמוק', stack: 100 },
+      { seatNumber: 2, playerId: 'short', playerName: 'קצר', stack: 30 },
+    ],
+    dealerSeat: 1,
+    smallBlind: 1,
+    bigBlind: 2,
+  });
+  game.start();
+  game.applyAction(game.currentActorPlayerId(), { type: 'raise', raiseTo: 30 });
+  assert.equal(game.viewFor('deep').allInRunout, undefined, 'the short stack still has a call-or-fold decision');
+  const waiting = game.applyAction(game.currentActorPlayerId(), { type: 'call' });
+  assert.equal(waiting.street, 'preflop');
+  assert.equal(waiting.allInRunout?.nextStreet, 'flop');
+  assert.equal(waiting.exposedHands.length, 2);
+  assert.equal(waiting.seats.find((seat) => seat.playerId === 'deep').stack, 70);
+  assert.throws(() => game.applyAction('deep', { type: 'check' }), /advance the all-in board/i);
+  for (const [street, count, nextStreet] of [
+    ['flop', 3, 'turn'], ['turn', 4, 'river'], ['river', 5, 'showdown'], ['showdown', 5, undefined],
+  ]) {
+    game.advanceAllInRunout();
+    const view = game.viewFor('deep');
+    assert.equal(view.street, street);
+    assert.equal(view.communityCards.length, count);
+    assert.equal(view.allInRunout?.nextStreet, nextStreet);
+  }
+  const settled = game.showdownSettlement();
+  assert.equal(settled.seats.reduce((total, seat) => total + seat.stack, 0), 130);
+});
+
+test('the covering player must still call an all-in, but never check when no call is owed', () => {
+  const game = new ServerGameLifecycle({
+    seats: [
+      { seatNumber: 1, playerId: 'short', playerName: 'קצר', stack: 30 },
+      { seatNumber: 2, playerId: 'deep', playerName: 'עמוק', stack: 100 },
+    ],
+    dealerSeat: 1,
+    smallBlind: 1,
+    bigBlind: 2,
+  });
+  game.start();
+  const decision = game.applyAction('short', { type: 'all-in' });
+  assert.equal(decision.allInRunout, undefined);
+  assert.equal(game.viewFor('deep').toCall, 28);
+  const matched = game.applyAction('deep', { type: 'call' });
+  assert.equal(matched.allInRunout?.nextStreet, 'flop');
+
+  const blindAllIn = new ServerGameLifecycle({
+    seats: [
+      { seatNumber: 1, playerId: 'short', playerName: 'קצר', stack: 1 },
+      { seatNumber: 2, playerId: 'deep', playerName: 'עמוק', stack: 100 },
+    ],
+    dealerSeat: 1,
+    smallBlind: 1,
+    bigBlind: 2,
+  });
+  const opened = blindAllIn.start();
+  assert.equal(opened.allInRunout?.nextStreet, 'flop');
+  assert.equal(opened.exposedHands.length, 2);
+});
+
+test('one covering stack against two all-in opponents also uses staged runout and preserves side pots', () => {
+  const game = new ServerGameLifecycle({
+    seats: [
+      { seatNumber: 1, playerId: 'deep', playerName: 'עמוק', stack: 100 },
+      { seatNumber: 2, playerId: 'short', playerName: 'קצר', stack: 30 },
+      { seatNumber: 3, playerId: 'mid', playerName: 'בינוני', stack: 50 },
+    ],
+    dealerSeat: 1,
+    smallBlind: 1,
+    bigBlind: 2,
+  });
+  game.start();
+  game.applyAction('deep', { type: 'raise', raiseTo: 50 });
+  game.applyAction('short', { type: 'call' });
+  const waiting = game.applyAction('mid', { type: 'call' });
+  assert.equal(waiting.allInRunout?.nextStreet, 'flop');
+  assert.equal(waiting.exposedHands.length, 3);
+  for (let index = 0; index < 4; index += 1) game.advanceAllInRunout();
+  const settled = game.showdownSettlement();
+  assert.equal(settled.seats.reduce((total, seat) => total + seat.stack, 0), 180);
+  assert.equal(game.viewFor('deep').showdown.pots.length, 2);
+});
+
 test('showdown view pays only matched chips to a short-stack winner and exposes the unmatched return', () => {
   const unequalSeats = [
     { seatNumber: 1, playerId: 'deep', playerName: 'עמוק', stack: 1_500 },

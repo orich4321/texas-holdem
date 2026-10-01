@@ -528,12 +528,13 @@ export function startHand(input: StartHandInput): StartedHand {
     { length: eligibleIndexes.length },
     (_, offset) => eligibleIndexes[(bigBlindEligiblePosition + 1 + offset) % eligibleIndexes.length],
   );
+  const pendingPreflopSeats = preflopActionOrder.filter((index) => seats[index].stack > 0).map((index) => input.seats[index].seatNumber);
 
   return attachPrivateHandState({
     dealerSeat: input.seats[activeDealerIndex].seatNumber,
     smallBlindSeat: input.seats[smallBlindIndex].seatNumber,
     bigBlindSeat: input.seats[bigBlindIndex].seatNumber,
-    currentActorSeat: input.seats[preflopActionOrder[0]].seatNumber,
+    currentActorSeat: pendingPreflopSeats[0] ?? input.seats[preflopActionOrder[0]].seatNumber,
     currentBet: input.bigBlind,
     minimumRaiseIncrement: input.bigBlind,
     pot: input.smallBlind + input.bigBlind,
@@ -546,7 +547,7 @@ export function startHand(input: StartHandInput): StartedHand {
     smallBlindAmount: input.smallBlind,
     bigBlindAmount: input.bigBlind,
     streetPot: input.smallBlind + input.bigBlind,
-    pendingActorSeats: preflopActionOrder.filter((index) => seats[index].stack > 0).map((index) => input.seats[index].seatNumber),
+    pendingActorSeats: pendingPreflopSeats,
   });
 }
 
@@ -624,13 +625,9 @@ export function applyPreflopCheck(hand: StartedHand, actorSeat: number): Started
   const wrappedActorIndex = nextActorIndex === -1
     ? hand.seats.findIndex((seat, index) => index < actorIndex && seat.holeCards && seat.stack > 0 && !seat.isFolded)
     : nextActorIndex;
-  if (wrappedActorIndex === -1) {
-    throw new Error('A preflop check requires another eligible actor');
-  }
-
   return preservePrivateHandState(hand, {
     ...hand,
-    currentActorSeat: hand.seats[wrappedActorIndex].seatNumber,
+    currentActorSeat: wrappedActorIndex === -1 ? actorSeat : hand.seats[wrappedActorIndex].seatNumber,
     seats: hand.seats.map((seat) => ({
       ...seat,
       holeCards: seat.holeCards && [{ ...seat.holeCards[0] }, { ...seat.holeCards[1] }] as [Card, Card],
@@ -919,7 +916,10 @@ export function advancePreflopToFlop(hand: StartedHand): StartedHand {
     smallBlindAmount: hand.smallBlindAmount,
     bigBlindAmount: hand.bigBlindAmount,
     streetPot: hand.pot,
-    pendingActorSeats: hand.seats.filter((seat) => seat.holeCards && !seat.isFolded && seat.stack > 0).map((seat) => seat.seatNumber),
+    // A lone player with chips cannot make another wager against all-in opponents.
+    pendingActorSeats: contestingSeats.filter((seat) => seat.stack > 0).length > 1
+      ? contestingSeats.filter((seat) => seat.stack > 0).map((seat) => seat.seatNumber)
+      : [],
   });
 }
 
@@ -1074,7 +1074,8 @@ function advancePostflopToNext(hand: StartedHand, street: 'flop' | 'turn'): Star
     if (seat.holeCards && !seat.isFolded && seat.stack > 0) { currentActorSeat = seat.seatNumber; break; }
   }
   const [turnBurn, turnCard, ...remainingDeck] = hand.remainingDeck;
-  const pendingActorSeats = hand.seats.filter((seat) => seat.holeCards && !seat.isFolded && seat.stack > 0).map((seat) => seat.seatNumber);
+  const bettingSeats = contestingSeats.filter((seat) => seat.stack > 0);
+  const pendingActorSeats = bettingSeats.length > 1 ? bettingSeats.map((seat) => seat.seatNumber) : [];
   return attachPrivateHandState({
     ...hand, currentActorSeat, currentBet: 0, minimumRaiseIncrement: hand.bigBlindAmount,
     seats: hand.seats.map((seat) => ({ ...seat, currentBet: 0, holeCards: seat.holeCards && [cloneCard(seat.holeCards[0]), cloneCard(seat.holeCards[1])] as [Card, Card] })),

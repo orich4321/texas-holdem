@@ -259,7 +259,7 @@ export class ServerGameLifecycle {
 
   start(): ServerPlayerView {
     if (this.hand) throw new Error('Game has already started');
-    this.hand = startServerHand(this.startInput);
+    this.hand = this.advanceIfSettled(startServerHand(this.startInput));
     return this.viewFor(this.playerIdBySeat.get(this.hand.currentActorSeat)!);
   }
 
@@ -406,7 +406,9 @@ export class ServerGameLifecycle {
         ? advanceFlopToTurn(hand)
         : hand.street === 'turn'
           ? advanceTurnToRiver(hand)
-          : runOutAllInToShowdown(hand);
+          : hand.seats.some((seat) => seat.holeCards && !seat.isFolded && seat.stack > 0)
+            ? advanceRiverToShowdown(hand)
+            : runOutAllInToShowdown(hand);
   }
 
   /** Host-only repository callers use this to reveal one hypothetical street after folds. */
@@ -475,7 +477,17 @@ export class ServerGameLifecycle {
     if (hand.street === 'showdown') return hand;
     const contestingSeats = hand.seats.filter((seat) => seat.holeCards && !seat.isFolded);
     if (contestingSeats.length === 1) return finishUncontestedHand(hand);
-    if (hand.pendingActorSeats.length > 0) return hand;
+    if (hand.pendingActorSeats.length > 0) {
+      const playersWhoCanStillBet = contestingSeats.filter((seat) => seat.stack > 0);
+      const loneActor = playersWhoCanStillBet.length === 1 ? playersWhoCanStillBet[0] : undefined;
+      if (loneActor && hand.pendingActorSeats.length === 1 && hand.pendingActorSeats[0] === loneActor.seatNumber
+        && hand.currentActorSeat === loneActor.seatNumber && loneActor.currentBet === hand.currentBet) {
+        // The only funded player owes nothing and has no opponent who can call.
+        // Close the inert betting round without asking them for a useless check.
+        return this.advanceIfSettled(this.apply(hand, loneActor.seatNumber, { type: 'check' }));
+      }
+      return hand;
+    }
     if (this.allInRunoutNextStreet(hand)) return hand;
     if (hand.street === 'preflop') return this.advanceIfSettled(advancePreflopToFlop(hand));
     if (hand.street === 'flop') return advanceFlopToTurn(hand);
@@ -486,7 +498,9 @@ export class ServerGameLifecycle {
   private allInRunoutNextStreet(hand: StartedHand): 'flop' | 'turn' | 'river' | 'showdown' | undefined {
     if (hand.street === 'showdown' || hand.pendingActorSeats.length > 0) return undefined;
     const contestingSeats = hand.seats.filter((seat) => seat.holeCards && !seat.isFolded);
-    if (contestingSeats.length < 2 || !contestingSeats.every((seat) => seat.stack === 0)) return undefined;
+    // Once at most one contestant can still bet, no further betting round is
+    // meaningful. Any outstanding call must be resolved first (pending > 0).
+    if (contestingSeats.length < 2 || contestingSeats.filter((seat) => seat.stack > 0).length > 1) return undefined;
     if (hand.street === 'preflop') return 'flop';
     if (hand.street === 'flop') return 'turn';
     if (hand.street === 'turn') return 'river';

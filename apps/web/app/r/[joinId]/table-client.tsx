@@ -1080,10 +1080,13 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
       const response = await globalThis.fetch(`${SERVER_URL}/rooms/${encodeURIComponent(joinId)}/game/runout/next`, {
         method: 'POST', credentials: 'include', headers: { 'content-type': 'application/json' },
       });
-      if (!response.ok) throw new Error('All-in board unavailable');
+      const next = await response.json();
+      if (!response.ok || !isPlayerView(next)) throw new Error('All-in board unavailable');
+      latestSequenceRef.current = Math.max(latestSequenceRef.current, next.sequence ?? 0);
+      setView((current) => ({ ...next, gameStartedAt: next.gameStartedAt ?? current?.gameStartedAt }));
       setStatus(`נחשף ${streetNames[view.allInRunout.nextStreet]}…`);
     } catch {
-      setStatus('לא הצלחנו לחשוף את שלב ה־all-in. נסו שוב.');
+      setStatus('לא הצלחנו לחשוף את השלב הבא. נסו שוב.');
     } finally {
       setAdvancingRunout(false);
     }
@@ -1152,7 +1155,7 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
     : view.isSittingOut && !ownSeat
       ? 'אתם מחוץ לשולחן · המארח יכול להחזיר אתכם עם ז׳יטונים ליד הבאה'
     : view.allInRunout
-      ? `כולם באול אין — ממתינים לחשיפת ${streetNames[view.allInRunout.nextStreet]}`
+      ? `ההימורים הסתיימו — ממתינים לחשיפת ${streetNames[view.allInRunout.nextStreet]}`
     : isTurn
       ? `התור שלכם${view.toCall ? ` · צריך להשוות ${view.toCall.toLocaleString('he-IL')}` : ' · אפשר לעשות צ׳ק'}`
       : undefined;
@@ -1181,7 +1184,7 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
         <p>{activePotPayouts.map((payout) => <span key={payout.seatNumber}><b>{payout.playerName}</b> זוכה ב־{payout.amount.toLocaleString('he-IL')} צ׳יפים</span>)}</p>
         <small>זכאים לקופה: {activePotEligibleNames.join(' · ')}</small>
         {view.showdown!.pots.length > 1 ? <nav aria-label="מעבר בין קופות">{view.showdown!.pots.map((pot, index) => <button type="button" className={index === safeActivePotIndex ? 'is-active' : ''} aria-label={`הצגת ${showdownPotLabel(index)}, ${pot.amount.toLocaleString('he-IL')} צ׳יפים`} aria-pressed={index === safeActivePotIndex} onClick={() => setActivePotIndex(index)} key={`${pot.amount}-${index}`}>{index + 1}</button>)}</nav> : null}
-      </section> : turnMessage ? <p className={`turn-banner${isTurn ? ' turn-banner-active' : ''}`} role="status" aria-live="polite"><span aria-hidden="true" />{turnMessage}</p> : null}
+      </section> : turnMessage ? <p className={`turn-banner${isTurn ? ' turn-banner-active' : ''}`} role="status" aria-live="polite"><span aria-hidden="true" />{turnMessage}</p> : <div className="turn-banner-spacer" aria-hidden="true" />}
       <section className="poker-table" aria-label="שולחן טקסס הולדם">
         <div className="table-felt" ref={feltRef}>
           <div className="table-pot"><span><i aria-hidden="true" /> {view.showdown ? 'סך הקופות' : 'קופה'}</span><strong>{displayedPot.toLocaleString('he-IL')}</strong></div>
@@ -1189,6 +1192,11 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
           <div className="community-cards" aria-label="קלפי קהילה">
             {Array.from({ length: 5 }, (_, index) => <PlayingCard key={index} card={view.communityCards[index]} placeholder={!view.communityCards[index]} highlighted={Boolean(view.communityCards[index] && winningCardKeys.has(cardKey(view.communityCards[index])))} />)}
           </div>
+          {isCurrentHost && !view.finalSummaryVisible && (view.allInRunout || view.rabbitRunout || view.showdown) ? <div className="table-board-actions" aria-label="פעולות המארח על השולחן">
+            {view.allInRunout ? <button type="button" disabled={advancingRunout} onClick={() => void advanceAllInRunout()}>{advancingRunout ? 'חושפים…' : `חשיפת ${streetNames[view.allInRunout.nextStreet]}`}</button> : null}
+            {view.rabbitRunout ? <button type="button" title="לוח דמיוני — החשיפה לא משנה את תוצאת היד" disabled={advancingRabbitRunout} onClick={() => void advanceRabbitRunout()}>{advancingRabbitRunout ? 'חושפים…' : `מה היה יוצא? חשיפת ${streetNames[view.rabbitRunout.nextStreet]}`}</button> : null}
+            {view.showdown && (view.gameCompleted ? <div className="table-board-final-actions"><button type="button" disabled={revealingSummary || continuingHand} onClick={() => void revealFinalSummary()}>{revealingSummary ? 'מציגים…' : 'הצגת הסיכום'}</button><button type="button" disabled={revealingSummary || continuingHand} onClick={() => setContinueDialogOpen(true)}>עוד יד</button></div> : <button type="button" className="next-hand-button" disabled={startingNextHand || bustedPlayers.length > 0} onClick={() => void startNextHand()}>{startingNextHand ? 'מחלקים…' : bustedPlayers.length ? 'קודם מחליטים על חידוש צ׳יפים' : management?.nextHandIsFinal ? 'התחלת היד האחרונה' : 'היד הבאה'}</button>) }
+          </div> : null}
           {view.street !== 'showdown' ? <div className="table-wagers" aria-label="צ׳יפים שהונחו בשולחן">
             {orderedSeats.map((seat, seatIndex) => seat.currentBet > 0 ? <div className="seat-wager" key={seat.playerId} style={seatPosition(seatIndex, orderedSeats.length)} aria-label={`${seat.playerName} שם ${seat.currentBet.toLocaleString('he-IL')} צ׳יפים`}>
               <ChipAmount amount={seat.currentBet} />
@@ -1254,23 +1262,12 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
           {(view.waitingToCall ?? 0) > 0 ? <button type="button" aria-pressed={view.preAction?.type === 'call'} className={view.preAction?.type === 'call' ? 'is-selected' : ''} disabled={savingPreAction} onClick={() => void selectPreAction('call')}>השוואה · {(view.preAction?.type === 'call' ? view.preAction.quotedToCall ?? view.waitingToCall! : view.waitingToCall!).toLocaleString('he-IL')}<ChipAmount amount={Math.min(view.preAction?.type === 'call' ? view.preAction.quotedToCall ?? view.waitingToCall! : view.waitingToCall!, ownSeat.stack)} className="chip-amount-call" /></button> : null}
           {view.preAction ? <small>לחיצה נוספת מבטלת</small> : null}
         </div> : null}
-        {view.allInRunout ? <div className="all-in-runout-panel" role="status">
-          <div><span aria-hidden="true">⚡</span><p><strong>כולם באול אין</strong><small>הקלפים של המשתתפים פתוחים. המארח חושף את {streetNames[view.allInRunout.nextStreet]}.</small></p></div>
-          {isCurrentHost ? <button type="button" disabled={advancingRunout} onClick={() => void advanceAllInRunout()}>{advancingRunout ? 'חושפים…' : `חשיפת ${streetNames[view.allInRunout.nextStreet]}`}</button> : <small>ממתינים למארח.</small>}
-        </div> : null}
-        {view.rabbitRunout ? <div className="all-in-runout-panel rabbit-runout-panel" role="status">
-          <div><span aria-hidden="true">♠</span><p><strong>רוצים לראות מה היה יוצא?</strong><small>היד כבר הוכרעה. פתיחת הלוח לא תשנה את הזוכה או את הקופה.</small></p></div>
-          {isCurrentHost ? <button type="button" disabled={advancingRabbitRunout} onClick={() => void advanceRabbitRunout()}>{advancingRabbitRunout ? 'חושפים…' : `חשיפת ${streetNames[view.rabbitRunout.nextStreet]}`}</button> : <small>המארח יכול לחשוף את המשך הלוח.</small>}
-        </div> : null}
-        {view.showdown && (!view.gameCompleted || !view.finalSummaryVisible) ? <div className="between-hands-controls" aria-label="פעולות בין ידיים">
-          {canRevealAtShowdown && ownHoleCards ? <div className="reveal-card-picker"><span>בחרו קלף לחשיפה</span><div>{ownHoleCards.map((card, index) => {
+        {view.showdown && (!view.gameCompleted || !view.finalSummaryVisible) && canRevealAtShowdown && ownHoleCards ? <div className="between-hands-controls" aria-label="חשיפת קלפים בין ידיים">
+          <div className="reveal-card-picker"><span>בחרו קלף לחשיפה</span><div>{ownHoleCards.map((card, index) => {
             const cardIndex = index as 0 | 1;
             const alreadyExposed = ownExposedCardIndexes.has(cardIndex);
             return <button type="button" key={cardIndex} disabled={alreadyExposed || revealingCardIndex !== undefined} aria-label={alreadyExposed ? `קלף ${index + 1} כבר חשוף` : `חשיפת קלף ${index + 1}`} onClick={() => void revealCard(cardIndex)}><PlayingCard card={card} /><small>{alreadyExposed ? 'נחשף' : revealingCardIndex === cardIndex ? 'חושפים…' : 'חשיפה'}</small></button>;
-          })}</div></div> : null}
-          {view.gameCompleted
-            ? isCurrentHost ? <div className="final-hand-decisions"><button type="button" disabled={revealingSummary || continuingHand} onClick={() => void revealFinalSummary()}>{revealingSummary ? 'מציגים…' : 'הצגת הסיכום'}</button><button type="button" disabled={revealingSummary || continuingHand} onClick={() => setContinueDialogOpen(true)}>עוד יד</button></div> : <small>היד האחרונה הסתיימה. ממתינים להחלטת המארח.</small>
-            : isCurrentHost ? <button type="button" className="next-hand-button" disabled={startingNextHand || bustedPlayers.length > 0} onClick={() => void startNextHand()}>{startingNextHand ? 'מחלקים…' : bustedPlayers.length ? 'קודם מחליטים לגבי שחקנים שהתרוקנו' : management?.nextHandIsFinal ? 'התחלת היד האחרונה' : 'היד הבאה'}</button> : <small>המארח יכול להתחיל את היד הבאה.</small>}
+          })}</div></div>
         </div> : null}
       </section>
       {isCurrentHost && view.street === 'showdown' && !view.finalSummaryVisible && selectedRebuyPlayer ? <div className="rebuy-amount-backdrop" role="presentation" onMouseDown={(event) => {
