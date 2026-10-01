@@ -74,6 +74,7 @@ model Account {
   displayName    String?
   avatarDataUrl  String?
   username       String? @unique
+  directoryVisibleToAccountId String? @db.Uuid
   sessions       AccountSession[]
   players        Player[]
   gamePresets    GamePreset[]
@@ -85,6 +86,8 @@ model Account {
   receivedGameInvites GameInvite[] @relation("GameInviteRecipient")
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
+
+  @@index([directoryVisibleToAccountId])
 }
 
 model FriendRequest {

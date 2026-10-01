@@ -2,6 +2,10 @@ import type { PrismaClient } from '@prisma/client';
 
 const publicAccount = { id: true, username: true, displayName: true, avatarDataUrl: true } as const;
 
+const visibleTo = (accountId: string) => ({
+  OR: [{ directoryVisibleToAccountId: null }, { directoryVisibleToAccountId: accountId }],
+});
+
 function pair(a: string, b: string) {
   return a < b ? { accountAId: a, accountBId: b } : { accountAId: b, accountBId: a };
 }
@@ -12,7 +16,12 @@ export class SocialRepository {
   /** A bounded, account-only directory; never return email or auth metadata. */
   async listUsers(accountId: string, after?: string) {
     const users = await this.db.account.findMany({
-      where: { id: { not: accountId }, displayName: { not: null }, username: { not: null, ...(after ? { gt: after } : {}) } },
+      where: {
+        id: { not: accountId },
+        displayName: { not: null },
+        username: { not: null, ...(after ? { gt: after } : {}) },
+        ...visibleTo(accountId),
+      },
       orderBy: { username: 'asc' },
       take: 21,
       select: publicAccount,
@@ -23,9 +32,12 @@ export class SocialRepository {
 
   async overview(accountId: string) {
     const [friends, incoming, outgoing, invitations] = await Promise.all([
-      this.db.friend.findMany({ where: { OR: [{ accountAId: accountId }, { accountBId: accountId }] }, include: { accountA: { select: publicAccount }, accountB: { select: publicAccount } } }),
-      this.db.friendRequest.findMany({ where: { toAccountId: accountId }, include: { fromAccount: { select: publicAccount } }, orderBy: { createdAt: 'desc' } }),
-      this.db.friendRequest.findMany({ where: { fromAccountId: accountId }, include: { toAccount: { select: publicAccount } }, orderBy: { createdAt: 'desc' } }),
+      this.db.friend.findMany({ where: { OR: [
+        { accountAId: accountId, accountB: { is: visibleTo(accountId) } },
+        { accountBId: accountId, accountA: { is: visibleTo(accountId) } },
+      ] }, include: { accountA: { select: publicAccount }, accountB: { select: publicAccount } } }),
+      this.db.friendRequest.findMany({ where: { toAccountId: accountId, fromAccount: { is: visibleTo(accountId) } }, include: { fromAccount: { select: publicAccount } }, orderBy: { createdAt: 'desc' } }),
+      this.db.friendRequest.findMany({ where: { fromAccountId: accountId, toAccount: { is: visibleTo(accountId) } }, include: { toAccount: { select: publicAccount } }, orderBy: { createdAt: 'desc' } }),
       this.listInvitations(accountId),
     ]);
     return {
@@ -49,14 +61,14 @@ export class SocialRepository {
   async notificationSnapshot(accountId: string) {
     const [invitations, pendingFriendRequests] = await Promise.all([
       this.listInvitations(accountId),
-      this.db.friendRequest.count({ where: { toAccountId: accountId } }),
+      this.db.friendRequest.count({ where: { toAccountId: accountId, fromAccount: { is: visibleTo(accountId) } } }),
     ]);
     return { invitations, pendingFriendRequests };
   }
 
   async requestFriend(accountId: string, username: string): Promise<'sent' | 'not-found' | 'self' | 'already-friends' | 'pending'> {
-    const recipient = await this.db.account.findUnique({ where: { username }, select: { id: true } });
-    if (!recipient) return 'not-found';
+    const recipient = await this.db.account.findUnique({ where: { username }, select: { id: true, directoryVisibleToAccountId: true } });
+    if (!recipient || (recipient.directoryVisibleToAccountId && recipient.directoryVisibleToAccountId !== accountId)) return 'not-found';
     if (recipient.id === accountId) return 'self';
     const ids = pair(accountId, recipient.id);
     if (await this.db.friend.findUnique({ where: { accountAId_accountBId: ids } })) return 'already-friends';

@@ -107,11 +107,59 @@ test('user directory is bounded, ordered, excludes the requester, and selects no
   assert.equal(first.users.length, 20);
   assert.equal(first.nextCursor, 'user19');
   await repository.listUsers(account.id, first.nextCursor);
-  assert.deepEqual(queries[0].where, { id: { not: account.id }, displayName: { not: null }, username: { not: null } });
+  assert.deepEqual(queries[0].where, {
+    id: { not: account.id },
+    displayName: { not: null },
+    username: { not: null },
+    OR: [{ directoryVisibleToAccountId: null }, { directoryVisibleToAccountId: account.id }],
+  });
   assert.deepEqual(queries[1].where.username, { not: null, gt: 'user19' });
   assert.deepEqual(queries[0].orderBy, { username: 'asc' });
   assert.equal(queries[0].take, 21);
   assert.deepEqual(queries[0].select, { id: true, username: true, displayName: true, avatarDataUrl: true });
+});
+
+test('private test accounts are listed only for their designated account', async () => {
+  const ownerId = '018f7b16-690c-4d1f-9d0b-a8c4a14ae999';
+  const otherId = '018f7b16-690c-4d1f-9d0b-a8c4a14ae998';
+  const records = [
+    { id: 'test-1', username: 'orich4320', displayName: 'טסט', avatarDataUrl: null, directoryVisibleToAccountId: ownerId },
+    { id: 'test-2', username: 'orich4322', displayName: 'בדיקה', avatarDataUrl: null, directoryVisibleToAccountId: ownerId },
+    { id: 'public', username: 'public', displayName: 'שחקן', avatarDataUrl: null, directoryVisibleToAccountId: null },
+  ];
+  const repository = new SocialRepository({ account: { async findMany({ where, select }) {
+    return records.filter((record) => record.id !== where.id.not
+      && where.OR.some((condition) => condition.directoryVisibleToAccountId === record.directoryVisibleToAccountId))
+      .map((record) => Object.fromEntries(Object.keys(select).map((key) => [key, record[key]])));
+  } } });
+  assert.deepEqual((await repository.listUsers(ownerId)).users.map((user) => user.username), ['orich4320', 'orich4322', 'public']);
+  assert.deepEqual((await repository.listUsers(otherId)).users.map((user) => user.username), ['public']);
+});
+
+test('private accounts are also excluded from friend lists, request counts, and direct friend requests', async () => {
+  const ownerId = '018f7b16-690c-4d1f-9d0b-a8c4a14ae999';
+  const otherId = '018f7b16-690c-4d1f-9d0b-a8c4a14ae998';
+  const queries = {};
+  const repository = new SocialRepository({
+    account: { async findUnique() { return { id: 'private', directoryVisibleToAccountId: ownerId }; } },
+    friend: { async findMany(query) { queries.friends = query; return []; } },
+    friendRequest: {
+      async findMany(query) { (queries.requests ??= []).push(query); return []; },
+      async count(query) { queries.count = query; return 0; },
+    },
+    gameInvite: { async findMany() { return []; } },
+  });
+  assert.equal(await repository.requestFriend(otherId, 'orich4320'), 'not-found');
+  await repository.overview(otherId);
+  await repository.notificationSnapshot(otherId);
+  const visible = { OR: [{ directoryVisibleToAccountId: null }, { directoryVisibleToAccountId: otherId }] };
+  assert.deepEqual(queries.friends.where.OR, [
+    { accountAId: otherId, accountB: { is: visible } },
+    { accountBId: otherId, accountA: { is: visible } },
+  ]);
+  assert.deepEqual(queries.requests[0].where, { toAccountId: otherId, fromAccount: { is: visible } });
+  assert.deepEqual(queries.requests[1].where, { fromAccountId: otherId, toAccount: { is: visible } });
+  assert.deepEqual(queries.count.where, { toAccountId: otherId, fromAccount: { is: visible } });
 });
 
 test('Google OAuth uses PKCE and accepts only a verified Google identity from this Supabase project', async () => {
