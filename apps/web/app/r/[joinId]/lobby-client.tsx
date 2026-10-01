@@ -309,9 +309,9 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
                 ))}
               </ul>
             </section>
-            {lobby.isHost && removedPlayers.length > 0 ? <section className="lobby-roster" aria-label="שחקנים שהוסרו מהחדר">
+            {lobby.isHost && removedPlayers.some((player) => !lobby.players.some((active) => active.id === player.id)) ? <section className="lobby-roster" aria-label="שחקנים שהוסרו מהחדר">
               <div className="lobby-roster-heading"><h2>שחקנים שהוסרו</h2></div>
-              <ul>{removedPlayers.map((player) => <li key={player.id}>
+              <ul>{removedPlayers.filter((player) => !lobby.players.some((active) => active.id === player.id)).map((player) => <li key={player.id}>
                 <ProfileImage className="lobby-player-avatar" fallback={player.displayName.slice(0, 1)} />
                 <strong>{player.displayName}</strong>
                 <button type="button" className="lobby-remove-player" disabled={Boolean(restoringPlayerId) || starting} onClick={() => void handleRestorePlayer(player.id)}>{restoringPlayerId === player.id ? 'מחזירים…' : 'אפשר חזרה'}</button>
