@@ -41,6 +41,16 @@ export class AccountRepository {
     return session && session.expiresAt > new Date() ? session.account : null;
   }
 
+  /** Hot-path identity lookup for table polling; profile images stay out of the query. */
+  async findIdentityBySession(token: unknown): Promise<{ id: string } | null> {
+    if (typeof token !== 'string' || !TOKEN_PATTERN.test(token)) return null;
+    const session = await this.db.accountSession.findUnique({
+      where: { tokenHash: createHash('sha256').update(token).digest('hex') },
+      select: { accountId: true, expiresAt: true },
+    });
+    return session && session.expiresAt > new Date() ? { id: session.accountId } : null;
+  }
+
   async updateProfile(accountId: string, displayName: string, avatarDataUrl: string | null): Promise<AccountProfile> {
     return this.db.$transaction(async (tx) => {
       const profile = await tx.account.update({

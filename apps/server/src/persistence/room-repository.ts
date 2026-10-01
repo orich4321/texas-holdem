@@ -1,4 +1,4 @@
-import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import type { Prisma, PrismaClient, RoomStatus } from '@prisma/client';
 import {
   createPlayerAccessToken,
@@ -84,6 +84,8 @@ const publicPlayerSelect = {
   createdAt: true,
   updatedAt: true,
 } satisfies Prisma.PlayerSelect;
+
+const identityPlayerSelect = { id: true, roomId: true, displayName: true } satisfies Prisma.PlayerSelect;
 
 const roomWithPlayers = {
   players: { where: { leftAt: null }, orderBy: { createdAt: 'asc' }, select: publicPlayerSelect },
@@ -420,11 +422,10 @@ export class RoomRepository {
 
   /** An authenticated account always resumes its existing player, regardless of another room's cookie. */
   async findPlayerByRoomJoinIdAndAccountId(joinId: string, accountId: string) {
-    const room = await this.db.room.findUnique({
-      where: { joinId },
-      select: { players: { where: { accountId, leftAt: null }, select: publicPlayerSelect } },
+    return this.db.player.findFirst({
+      where: { accountId, leftAt: null, room: { joinId } },
+      select: identityPlayerSelect,
     });
-    return room?.players[0] ?? null;
   }
 
   /** Opt-in migration of an already authenticated legacy seat to its Google account. */
@@ -438,37 +439,12 @@ export class RoomRepository {
 
   async findPlayerByRoomJoinIdAndAccessToken(joinId: string, accessToken: unknown) {
     if (!isValidPlayerAccessToken(accessToken)) return null;
-
-    const accessTokenHash = this.hashAccessToken(accessToken);
-    const room = await this.db.room.findUnique({
-      where: { joinId },
-      select: {
-        hostPlayerId: true,
-        players: {
-          select: { ...publicPlayerSelect, accountId: true, accessTokenHash: true },
-        },
-      },
+    // The token hash is unique. Resolve exactly one seat without reading every
+    // other player's profile image on each table refresh.
+    return this.db.player.findFirst({
+      where: { accessTokenHash: this.hashAccessToken(accessToken).toString('hex'), leftAt: null, accountId: null, room: { joinId } },
+      select: identityPlayerSelect,
     });
-    if (!room) return null;
-
-    const player = room.players.find((candidate) => {
-      const candidateHash = Buffer.from(candidate.accessTokenHash, 'hex');
-      return candidateHash.length === accessTokenHash.length && timingSafeEqual(candidateHash, accessTokenHash);
-    });
-    // Google-linked seats must be recovered through the account session, not
-    // a stale per-room cookie after that account signs out.
-    if (!player || player.leftAt || player.accountId) return null;
-
-    return {
-      id: player.id,
-      roomId: player.roomId,
-      displayName: player.displayName,
-      avatarDataUrl: player.avatarDataUrl,
-      initialStack: player.initialStack,
-      currentStack: player.currentStack,
-      createdAt: player.createdAt,
-      updatedAt: player.updatedAt,
-    };
   }
 
   /** A removed device cannot silently create a second seat by reusing its old cookie. */
@@ -606,6 +582,25 @@ export class RoomRepository {
       sequence: snapshot.sequence,
       recovery: hydrateSignedPrivateHandSnapshot(snapshot.state, { roomId, sequence: snapshot.sequence }, this.privateSnapshotKeyring),
     };
+  }
+
+  /** Small change marker for frequent conditional reads; no snapshot or images leave PostgreSQL. */
+  async findGameRefreshTag(roomId: string, playerId: string): Promise<string | null> {
+    const room = await this.db.room.findFirst({
+      where: { id: roomId, status: { in: ['IN_PROGRESS', 'COMPLETED'] }, players: { some: { id: playerId, leftAt: null } } },
+      select: {
+        status: true,
+        updatedAt: true,
+        players: { select: { id: true, updatedAt: true }, orderBy: { id: 'asc' } },
+        snapshots: { select: { sequence: true }, orderBy: { sequence: 'desc' }, take: 1 },
+      },
+    });
+    if (!room?.snapshots[0]) return null;
+    const revision = JSON.stringify([
+      playerId, room.status, room.updatedAt.getTime(), room.snapshots[0].sequence,
+      room.players.map((player) => [player.id, player.updatedAt.getTime()]),
+    ]);
+    return `"poker-${createHash('sha256').update(revision).digest('base64url').slice(0, 22)}"`;
   }
 
   /**

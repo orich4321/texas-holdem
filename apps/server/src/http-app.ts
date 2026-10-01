@@ -162,7 +162,7 @@ function createHttpCorsMiddleware(isOriginAllowed: OriginPolicy): RequestHandler
     response.setHeader('Access-Control-Allow-Origin', origin);
     response.setHeader('Access-Control-Allow-Credentials', 'true');
     response.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT');
-    response.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    response.setHeader('Access-Control-Allow-Headers', 'Content-Type, If-None-Match');
     response.setHeader('Vary', 'Origin');
 
     if (request.method === 'OPTIONS') {
@@ -195,9 +195,13 @@ export function createApp({ roomRepository, accountRepository, googleOAuth, publ
   const routes = express.Router();
 
   const findAccount = (cookieHeader: unknown) => accountRepository?.findBySession(parseCookieHeader(cookieHeader).poker_account_token) ?? Promise.resolve(null);
+  const findAccountIdentity = (cookieHeader: unknown) => {
+    const token = parseCookieHeader(cookieHeader).poker_account_token;
+    return accountRepository?.findIdentityBySession?.(token) ?? accountRepository?.findBySession(token) ?? Promise.resolve(null);
+  };
 
   const findAuthenticatedPlayer = async (joinId: string, cookieHeader: unknown) => {
-    const account = await findAccount(cookieHeader);
+    const account = await findAccountIdentity(cookieHeader);
     if (account) {
       const linkedPlayer = await roomRepository.findPlayerByRoomJoinIdAndAccountId(joinId, account.id);
       if (linkedPlayer) return linkedPlayer;
@@ -468,12 +472,21 @@ export function createApp({ roomRepository, accountRepository, googleOAuth, publ
         response.status(401).json({ error: { code: 'UNAUTHORIZED' } });
         return;
       }
+      response.setHeader('Cache-Control', 'private, no-store');
+      const refreshTag = await roomRepository.findGameRefreshTag?.(player.roomId, player.id);
+      if (refreshTag && request.headers['if-none-match'] === refreshTag) {
+        response.setHeader('ETag', refreshTag);
+        response.status(304).end();
+        return;
+      }
       await roomRepository.drainPreActionsForRoom(player.roomId);
       const view = await roomRepository.recoverLatestPlayerViewForPlayer(player.roomId, player.id);
       if (!view) {
         response.status(409).json({ error: { code: 'GAME_NOT_AVAILABLE' } });
         return;
       }
+      const currentTag = await roomRepository.findGameRefreshTag?.(player.roomId, player.id);
+      if (currentTag) response.setHeader('ETag', currentTag);
       response.json(view);
     } catch (error) {
       console.error('Game state lookup failed', error);

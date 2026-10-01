@@ -367,11 +367,17 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
 
   useEffect(() => {
     let active = true;
+    let refreshTag: string | undefined;
     const refresh = async () => {
       try {
-        const response = await globalThis.fetch(`${SERVER_URL}/rooms/${encodeURIComponent(joinId)}/game`, { credentials: 'include', cache: 'no-store' });
+        const response = await globalThis.fetch(`${SERVER_URL}/rooms/${encodeURIComponent(joinId)}/game`, {
+          credentials: 'include', cache: 'no-store',
+          ...(refreshTag ? { headers: { 'If-None-Match': refreshTag } } : {}),
+        });
+        if (response.status === 304) return;
         const next = await response.json();
         if (response.status === 409 && (next as { error?: { code?: string } })?.error?.code === 'GAME_NOT_AVAILABLE') {
+          refreshTag = undefined;
           if (active) {
             setWaitingForNextHand(true);
             setStatus('הצטרפתם בין ידיים — ממתינים למארח שיתחיל את היד הבאה…');
@@ -380,6 +386,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
         }
         if (!response.ok || !isPlayerView(next)) throw new Error('Invalid player view');
         if (!active) return;
+        refreshTag = response.headers.get('etag') ?? undefined;
         if ((next.sequence ?? 0) < latestSequenceRef.current) return;
         latestSequenceRef.current = next.sequence ?? latestSequenceRef.current;
         setWaitingForNextHand(false);
