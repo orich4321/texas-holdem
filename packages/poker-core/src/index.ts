@@ -584,7 +584,7 @@ export function getPreflopLegalActions(hand: StartedHand): PreflopLegalActions {
     throw new Error('Preflop raise targets must be safe integers');
   }
   const canRaise = maxRaiseTo >= minRaiseTo;
-  const otherEligiblePlayers = hand.seats.filter((seat) => seat.seatNumber !== actor.seatNumber && seat.holeCards && seat.stack > 0 && !seat.isFolded).length;
+  const otherContestingPlayers = hand.seats.filter((seat) => seat.seatNumber !== actor.seatNumber && seat.holeCards && !seat.isFolded).length;
   return Object.freeze({
     actorSeat: actor.seatNumber,
     toCall,
@@ -592,7 +592,7 @@ export function getPreflopLegalActions(hand: StartedHand): PreflopLegalActions {
     canCall: toCall > 0 && callAmount > 0,
     // Heads-up players must be allowed to fold: that action immediately
     // awards the pot to the sole remaining opponent.
-    canFold: otherEligiblePlayers > 0,
+    canFold: otherContestingPlayers > 0,
     callAmount,
     canRaise,
     minRaiseTo: canRaise ? minRaiseTo : null,
@@ -722,15 +722,22 @@ export function applyPreflopFold(hand: StartedHand, actorSeat: number): StartedH
   const wrappedActorIndex = nextActorIndex === -1
     ? seats.findIndex((seat, index) => index < actorIndex && seat.holeCards && seat.stack > 0 && !seat.isFolded)
     : nextActorIndex;
-  if (wrappedActorIndex === -1) {
+  const pending = pendingAfterAction(hand, actorSeat);
+  if (wrappedActorIndex === -1 && pending.length > 0) {
     throw new Error('A preflop fold requires another eligible actor');
+  }
+  // The sole survivor can already be all-in. They cannot take another turn,
+  // but this fold must still reach the uncontested settlement immediately.
+  const survivorSeat = seats.find((seat) => seat.holeCards && !seat.isFolded)?.seatNumber;
+  if (wrappedActorIndex === -1 && survivorSeat === undefined) {
+    throw new Error('A preflop fold requires a remaining contestant');
   }
 
   return preservePrivateHandState(hand, {
     ...hand,
-    currentActorSeat: seats[wrappedActorIndex].seatNumber,
+    currentActorSeat: wrappedActorIndex === -1 ? survivorSeat! : seats[wrappedActorIndex].seatNumber,
     seats,
-  }, pendingAfterAction(hand, actorSeat));
+  }, pending);
 }
 
 /** Applies a legal full preflop raise to a total committed-bet target and advances action. */

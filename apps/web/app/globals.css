@@ -330,20 +330,36 @@ button:disabled { cursor: wait; opacity: 0.55; }
 .action-bar .action-primary { color: var(--action-ink); border: 1px solid rgba(139,162,145,.3); background: linear-gradient(135deg,var(--action-light),var(--action)); box-shadow: 0 7px 18px rgba(20,43,32,.24); }
 .action-raise-toggle { color: #e4e9e3 !important; border-color: rgba(120,148,128,.3) !important; background: rgba(53,88,68,.5) !important; }
 .action-raise-toggle[aria-expanded="true"] { color: var(--action-ink) !important; background: var(--action-light) !important; }
-.raise-control { position: absolute; right: 0; bottom: calc(100% + 9px); left: 0; z-index: 20; display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: center; padding: 9px 10px; border: 1px solid rgba(120,148,128,.3); border-radius: 15px; background: linear-gradient(145deg,rgba(33,57,44,.99),rgba(9,18,14,.99)); box-shadow: 0 18px 42px rgba(0,0,0,.58), inset 0 1px rgba(255,255,255,.05); gap: 6px 12px; animation: raise-panel-in 150ms ease both; }
-.raise-amount { display: grid; min-width: 90px; text-align: center; }
-.raise-amount > span { color: #b7c6be; font-size: .55rem; }
-.raise-amount strong { color: var(--gold-light); font-size: 1.05rem; font-variant-numeric: tabular-nums; }
-.raise-amount small { color: var(--muted); font-size: .5rem; }
-.raise-control input[type="range"] { width: 100%; height: 32px; margin: 0; accent-color: var(--emerald); cursor: pointer; direction: ltr; touch-action: pan-x; }
-.raise-control input[type="range"]::-webkit-slider-runnable-track { height: 7px; border-radius: 99px; background: linear-gradient(90deg,#315241,#6f8d75); }
-.raise-control input[type="range"]::-webkit-slider-thumb { width: 25px; height: 25px; margin-top: -9px; border: 3px solid #effff8; border-radius: 50%; background: var(--gold); box-shadow: 0 3px 10px rgba(0,0,0,.5); -webkit-appearance: none; }
-.raise-control input[type="range"]::-moz-range-track { height: 7px; border-radius: 99px; background: #557461; }
-.raise-control input[type="range"]::-moz-range-thumb { width: 20px; height: 20px; border: 3px solid #effff8; border-radius: 50%; background: var(--gold); }
-.raise-bounds { grid-column: 2; display: flex; justify-content: space-between; color: var(--muted); font-size: .5rem; font-variant-numeric: tabular-nums; }
-.raise-quick-actions { grid-column: 1/-1; display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 5px; }
-.action-bar .raise-quick-actions button { min-height: 35px; border-color: rgba(157,230,203,.15); border-radius: 9px; color: #def8ee; background: rgba(255,255,255,.05); font-size: .59rem; }
-.action-bar .raise-submit { grid-row: 1/3; grid-column: 3; min-width: 126px; color: var(--action-ink); border: 1px solid rgba(139,162,145,.3); background: linear-gradient(135deg,var(--action-light),var(--action)); }
+.chip-tray { grid-column: 1/-1; display: grid; min-width: 0; padding: 7px 9px; border: 1px solid rgba(159,137,97,.35); border-radius: 12px; background: linear-gradient(145deg,#20372a,#0c1b14); box-shadow: inset 0 1px rgba(255,255,255,.05); gap: 5px; animation: raise-panel-in 150ms ease both; }
+.chip-tray-header, .chip-tray-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.chip-tray-header span { color: #d8e5dc; font-size: .65rem; font-weight: 850; }
+.chip-tray-header strong { color: var(--gold-light); font-size: .69rem; font-variant-numeric: tabular-nums; }
+.chip-piles { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 5px; }
+.chip-pile { display: grid; justify-items: center; min-width: 0; gap: 2px; }
+.chip-pile > strong { color: #e2e8e1; font-size: .67rem; font-variant-numeric: tabular-nums; }
+.bet-chip { position: relative; display: grid; width: 43px; height: 43px; padding: 0; border: 3px dashed rgba(255,255,255,.48); border-radius: 50%; color: #f6f4e9; background: #1b2521; box-shadow: 0 2px 0 #090d0a, 0 4px 0 #6c6452, 0 6px 0 #090d0a, 0 8px 8px rgba(0,0,0,.4), inset 0 0 0 3px rgba(0,0,0,.22); cursor: pointer; font-size: .7rem; font-weight: 900; font-variant-numeric: tabular-nums; place-items: center; touch-action: manipulation; }
+.bet-chip::after { position: absolute; inset: 6px; border: 1px solid currentColor; border-radius: 50%; content: ''; opacity: .48; pointer-events: none; }
+.bet-chip-1 { color: #29352e; background: #ede9dc; border-color: #8c978b; }
+.bet-chip-5 { background: #9d4743; border-color: #d9aba2; }
+.bet-chip-25 { background: #386d51; border-color: #a8c3a6; }
+.bet-chip-50 { background: #385c78; border-color: #9db9cc; }
+.bet-chip-100 { background: #232b2a; border-color: #a9aaa3; }
+.bet-chip:disabled { opacity: .35; cursor: default; }
+.bet-chip:active:not(:disabled) { transform: translateY(2px); box-shadow: 0 1px 4px rgba(0,0,0,.35); }
+.chip-break, .chip-break-spacer { min-height: 20px; }
+.chip-break { padding: 0 4px; border: 0; color: #c6d2c8; background: transparent; cursor: pointer; font-size: .54rem; text-decoration: underline; }
+.chip-break:disabled { opacity: .3; cursor: default; }
+.chip-tray-selected { display: flex; align-items: center; min-height: 29px; padding: 2px 5px; border: 1px solid rgba(255,255,255,.1); border-radius: 8px; background: rgba(0,0,0,.15); gap: 5px; }
+.chip-tray-selected > span { color: #d4dfd6; font-size: .56rem; font-weight: 800; white-space: nowrap; }
+.chip-tray-selected > small { color: var(--muted); font-size: .55rem; }
+.chip-tray-selected .bet-chip { display: flex; width: auto; min-width: 35px; height: 25px; padding: 0 5px; border-width: 2px; border-radius: 14px; box-shadow: none; gap: 2px; font-size: .55rem; }
+.chip-tray-selected .bet-chip::after { display: none; }
+.chip-tray-selected .bet-chip i { font-style: normal; font-size: .5rem; }
+.chip-tray-footer { flex-wrap: wrap; }
+.chip-tray-footer small { margin-inline-end: auto; color: #c0cfc3; font-size: .56rem; }
+.chip-tray-footer button { min-height: 30px; padding: 0 9px; border: 1px solid rgba(196,180,141,.3); border-radius: 8px; color: #e8ece4; background: #334739; cursor: pointer; font-size: .58rem; font-weight: 800; }
+.chip-tray-footer button:disabled { opacity: .4; cursor: default; }
+.chip-tray-footer .chip-bet-submit { color: var(--action-ink); background: var(--action-light); }
 .all-in-runout-panel { grid-column: 1/-1; display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; border: 1px solid var(--gold-line); border-radius: 12px; background: rgba(112,73,16,.19); gap: 10px; }
 .all-in-runout-panel > div { display: flex; align-items: center; gap: 8px; }
 .all-in-runout-panel > div > span { display: grid; width: 28px; height: 28px; border-radius: 9px; color: #342200; background: var(--gold); place-items: center; }
@@ -546,11 +562,9 @@ button:disabled { cursor: wait; opacity: 0.55; }
   .action-bar { gap: 4px; }
   .action-bar button { min-height: 42px; padding: 0 3px; border-radius: 10px; gap: 3px; font-size: clamp(.52rem,2.25vw,.65rem); }
   .action-bar button > span { width: 16px; height: 16px; font-size: .54rem; }
-  .raise-control { grid-template-columns: 1fr; padding: 8px; gap: 5px; }
-  .raise-amount { display: flex; align-items: baseline; justify-content: center; min-width: 0; gap: 5px; }
-  .raise-bounds { grid-column: 1; }
-  .raise-quick-actions { grid-column: 1; }
-  .action-bar .raise-submit { grid-row: auto; grid-column: 1; min-width: 0; min-height: 40px; }
+  .chip-tray { padding: 6px; gap: 4px; }
+  .bet-chip { width: 38px; height: 38px; }
+  .chip-tray-footer small { flex-basis: 100%; }
   .all-in-runout-panel { align-items: stretch; flex-direction: column; }
   .all-in-runout-panel button { width: 100%; }
   .final-summary-backdrop { padding: max(8px,env(safe-area-inset-top)) 8px max(8px,env(safe-area-inset-bottom)); }
@@ -644,7 +658,7 @@ button:disabled { cursor: wait; opacity: 0.55; }
   .poker-table { grid-column: 1; grid-row: 3; }
   .player-panel { grid-column: 2; grid-row: 3; align-self: stretch; grid-template-columns: auto auto minmax(0,1fr); align-content: center; width: 100%; }
   .action-bar { grid-template-columns: repeat(3,minmax(0,1fr)); }
-  .raise-control { max-height: 100%; overflow-y: auto; }
+  .chip-tray { max-height: 100%; overflow-y: auto; }
 }
 
 @media (min-width: 1180px) and (min-height: 780px) {

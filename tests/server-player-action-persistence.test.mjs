@@ -265,6 +265,24 @@ test('the last fold atomically persists the uncontested winner and updated chip 
   assert.deepEqual(persistedResult.board, []);
 });
 
+test('a fold against the last all-in player settles and persists the award', async () => {
+  const players = room.players.map((player) => player.id === 'player-1' ? { ...player, currentStack: 10 } : player);
+  const hand = startHand({
+    seats: players.slice(0, 2).map((player, index) => ({ seatNumber: index + 1, playerId: player.id, stack: player.currentStack })),
+    dealerSeat: 1, smallBlind: 5, bigBlind: 10, randomInt: () => 0,
+  });
+  const snapshot = signPrivateHandSnapshot(hand, { roomId: room.id, sequence: 0, keyId }, key);
+  const db = createDb({ latest: { sequence: 0, state: snapshot }, players });
+  const repository = new RoomRepository(db, undefined, undefined, undefined, keyring);
+
+  const result = await repository.persistPlayerActionAtomically({ roomId: room.id, playerId: 'host-id', action: { type: 'fold' } });
+  assert.equal(result.view.street, 'showdown');
+  assert.deepEqual(result.view.showdown?.winners.map((winner) => winner.playerId), ['player-1']);
+  assert.deepEqual(db.calls.filter(([name]) => name === 'player.update').map(([, args]) => args.data.currentStack).sort((a, b) => a - b), [15, 95]);
+  assert.equal(db.calls.filter(([name]) => name === 'settlement.create').length, 1);
+  assert.equal(db.calls.filter(([name]) => name === 'gameSnapshot.create').length, 1);
+});
+
 test('settling the signed final hand completes the room atomically', async () => {
   const db = createDb({ latest: { sequence: 1, state: raisedSnapshot }, currentHandStart: 'FINAL_HAND_STARTED' });
   const repository = new RoomRepository(db, undefined, undefined, undefined, keyring);

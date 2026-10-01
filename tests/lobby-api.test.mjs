@@ -17,7 +17,7 @@ test('lobby shell preserves vertical scrolling for a full nine-player mobile tab
   assert.doesNotMatch(shellRule, /overflow-y\s*:\s*(?:hidden|clip)/);
 });
 
-test('mobile table UI keeps the player anchored, reconnects safely, and exposes slider-based thumb-sized actions', async () => {
+test('mobile table UI keeps the player anchored, reconnects safely, and exposes chip-based thumb-sized actions', async () => {
   const [table, lobby, styles] = await Promise.all([
     readFile(resolve(root, 'apps/web/app/r/[joinId]/table-client.tsx'), 'utf8'),
     readFile(resolve(root, 'apps/web/app/r/[joinId]/lobby-client.tsx'), 'utf8'),
@@ -27,18 +27,18 @@ test('mobile table UI keeps the player anchored, reconnects safely, and exposes 
   assert.match(table, /const orderedSeats = useMemo/);
   assert.match(table, /playing-card-slot/);
   assert.match(table, /className="action-primary"/);
-  assert.match(table, /socket\.on\('game:state'/);
+  assert.match(table, /socket\?\.on\('game:state'/);
   assert.match(table, /reconnectionDelayMax:\s*10_000/);
   assert.match(table, /document\.addEventListener\('visibilitychange'/);
-  assert.match(table, /type="range"/);
-  assert.match(table, /step=\{view\.raise\.minimumIncrement\}/);
-  assert.match(table, /raise-quick-actions/);
-  assert.doesNotMatch(table.match(/<div className="raise-control"[\s\S]*?<\/div> : null\}/)?.[0] ?? '', /inputMode="numeric"/);
+  assert.match(table, /CHIP_VALUES\.map\(\(value\)/);
+  assert.match(table, /className="chip-tray"/);
+  assert.match(table, /className="chip-piles"/);
+  assert.doesNotMatch(table, /type="range"/);
   assert.match(table, /useState\(false\).*showRaiseControls|showRaiseControls.*useState\(false\)/s);
-  assert.match(table, /view\.raise && showRaiseControls \? <div className="raise-control"/);
+  assert.match(table, /view\.raise && showRaiseControls \? <section className="chip-tray"/);
   assert.match(table, /onClick=\{\(\) => setShowRaiseControls\(\(shown\) => !shown\)\}/);
   assert.doesNotMatch(table, /className="action-all-in"/);
-  assert.match(table, /onClick=\{\(\) => setRaiseTo\(view\.raise!\.maxRaiseTo\)\}>אול אין/);
+  assert.match(table, /onClick=\{\(\) => setChipTray\(selectAllChips\)\}>אול אין/);
   assert.match(table, /game\/final-hand/);
   assert.match(table, /className="table-management-button"/);
   assert.match(table, /management\/transfer-host/);
@@ -82,7 +82,7 @@ test('mobile table UI keeps the player anchored, reconnects safely, and exposes 
   assert.match(styles, /\.pot-award-card\s*\{[^}]*grid-row:\s*2/s);
   assert.doesNotMatch(styles, /\.pot-award-card\s*\{[^}]*position:\s*absolute/s);
   assert.match(styles, /\.table-seat-pot-eligible\s*\{/);
-  assert.match(table, /raiseTo === view\.raise\.maxRaiseTo \? \{ type: 'all-in' \}/);
+  assert.match(table, /selectedRaiseTo === view\.raise\.maxRaiseTo \? \{ type: 'all-in' \}/);
   assert.match(table, /seat\.seatNumber === view\.smallBlindSeat/);
   assert.match(table, /seat\.seatNumber === view\.bigBlindSeat/);
   assert.match(table, /table-seat-sitting-out/);

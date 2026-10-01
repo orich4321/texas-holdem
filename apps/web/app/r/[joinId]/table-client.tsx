@@ -7,6 +7,7 @@ import { parsePositiveInteger } from '../../numeric-input';
 import { ProfileImage } from '../../profile-image';
 import { formatChipsInBigBlinds } from '../../chips-in-blinds';
 import { actionAudioIsReady, playActionSound, unlockActionAudio } from '../../action-sounds';
+import { CHIP_VALUES, breakChip, chipTotal, clearChipSelection, createChipTray, returnChip, selectAllChips, selectChip, type ChipValue } from '../../betting-chips';
 
 declare const process: { env: { NODE_ENV?: string; NEXT_PUBLIC_GAME_URL?: string; NEXT_PUBLIC_SERVER_URL?: string } };
 
@@ -97,6 +98,7 @@ const streetNames: Record<PlayerView['street'], string> = {
   preflop: 'לפני הפלופ', flop: 'פלופ', turn: 'טרן', river: 'ריבר', showdown: 'חשיפה',
 };
 const suits: Record<string, string> = { spades: '♠', hearts: '♥', diamonds: '♦', clubs: '♣' };
+const chipNames: Record<ChipValue, string> = { 100: 'שחור', 50: 'כחול', 25: 'ירוק', 5: 'אדום', 1: 'לבן' };
 
 function isCard(value: unknown): value is Card {
   return value !== null && typeof value === 'object'
@@ -272,7 +274,7 @@ function PlayingCard({ card, hidden = false, placeholder = false, highlighted = 
 export default function TableClient({ joinId, isHost, networkActive = true }: { joinId: string; isHost: boolean; networkActive?: boolean }) {
   const [view, setView] = useState<PlayerView>();
   const [status, setStatus] = useState('מתחברים לשולחן…');
-  const [raiseTo, setRaiseTo] = useState<number>();
+  const [chipTray, setChipTray] = useState(() => createChipTray(0));
   const [pending, setPending] = useState(false);
   const [startingNextHand, setStartingNextHand] = useState(false);
   const [revealingSummary, setRevealingSummary] = useState(false);
@@ -407,9 +409,9 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
       }
     };
 
-    // Socket.IO is the low-latency path. The authenticated HTTP refresh below
-    // remains the recovery path for suspended mobile browsers and serverless
-    // environments where a WebSocket cannot stay open indefinitely.
+    // Socket.IO is available for a standalone server. Vercel's same-origin
+    // function cannot keep a WebSocket open; avoid repeated failed handshakes.
+    // Authenticated conditional HTTP reads remain its live/reconnect path.
     const socketOptions = {
       path: SERVER_URL.startsWith('http') ? '/socket.io' : '/server/socket.io',
       withCredentials: true,
@@ -421,20 +423,18 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
       randomizationFactor: 0.35,
       timeout: 8_000,
     };
-    const socket = SERVER_URL.startsWith('http')
-      ? io(SERVER_URL, socketOptions)
-      : io(socketOptions);
+    const socket = SERVER_URL.startsWith('http') ? io(SERVER_URL, socketOptions) : null;
     socketRef.current = socket;
-    socket.on('connect', () => { void refresh(); });
-    socket.on('game:state', (next: unknown) => {
+    socket?.on('connect', () => { void refresh(); });
+    socket?.on('game:state', (next: unknown) => {
       if (!active || !isPlayerView(next)) return;
       if ((next.sequence ?? 0) < latestSequenceRef.current) return;
       latestSequenceRef.current = next.sequence ?? latestSequenceRef.current;
       setView((current) => ({ ...next, gameStartedAt: next.gameStartedAt ?? current?.gameStartedAt }));
       setStatus(next.street === 'showdown' ? 'היד הסתיימה' : 'מחוברים לשולחן');
     });
-    socket.on('game:error', () => { void refresh(); });
-    socket.on('disconnect', () => {
+    socket?.on('game:error', () => { void refresh(); });
+    socket?.on('disconnect', () => {
       if (active) setStatus('החיבור נותק זמנית — מתחברים מחדש…');
     });
 
@@ -448,7 +448,7 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
     let pollTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
     const poll = async () => {
       if (globalThis.document.visibilityState === 'visible') await refresh();
-      if (active) pollTimer = globalThis.setTimeout(() => { void poll(); }, 250);
+      if (active) pollTimer = globalThis.setTimeout(() => { void poll(); }, 750);
     };
     void poll();
     globalThis.addEventListener('focus', restoreAfterResume);
@@ -457,7 +457,7 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
     return () => {
       active = false;
       controller.abort();
-      socket.close();
+      socket?.close();
       socketRef.current = null;
       if (pollTimer !== undefined) globalThis.clearTimeout(pollTimer);
       globalThis.removeEventListener('focus', restoreAfterResume);
@@ -505,6 +505,11 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
   }, [view?.gameStartedAt]);
 
   const ownSeat = useMemo(() => view?.seats.find((seat) => seat.playerId === view.playerId), [view]);
+  const selectedChipAmount = chipTotal(chipTray.selected);
+  const selectedRaiseTo = (ownSeat?.currentBet ?? 0) + selectedChipAmount;
+  const chipBetIsLegal = Boolean(view?.raise && ownSeat && selectedChipAmount > 0
+    && selectedRaiseTo >= view.raise.minRaiseTo && selectedRaiseTo <= view.raise.maxRaiseTo
+    && selectedChipAmount <= ownSeat.stack);
   const bustedPlayers = management?.players.filter((player) => player.rebuyDecisionPending) ?? [];
   const selectedRebuyPlayer = bustedPlayers.find((player) => player.id === rebuyPlayerId);
   const orderedSeats = useMemo(() => {
@@ -631,14 +636,8 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
   }, [showdownPotSignature, activePotIndex, view?.showdown?.pots.length]);
 
   useEffect(() => {
-    if (!view?.raise) {
-      setRaiseTo(undefined);
-      return;
-    }
-    setRaiseTo((current) => current !== undefined && current >= view.raise!.minRaiseTo && current <= view.raise!.maxRaiseTo
-      ? current
-      : view.raise!.minRaiseTo);
-  }, [view?.raise?.minRaiseTo, view?.raise?.maxRaiseTo]);
+    setChipTray(createChipTray(ownSeat?.stack ?? 0));
+  }, [ownSeat?.stack, view?.street]);
 
   useEffect(() => {
     if (!networkActive || view?.street !== 'showdown' || !view.gameCompleted || !view.finalSummaryVisible) return;
@@ -667,7 +666,10 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
   }, [joinId, networkActive, view?.gameCompleted, view?.finalSummaryVisible, view?.street]);
 
   useEffect(() => {
-    if (!isTurn || !view?.raise) setShowRaiseControls(false);
+    if (!isTurn || !view?.raise) {
+      setShowRaiseControls(false);
+      setChipTray(createChipTray(ownSeat?.stack ?? 0));
+    }
   }, [isTurn, view?.raise]);
 
   useEffect(() => {
@@ -795,18 +797,9 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
     });
   }
 
-  function submitRaise() {
-    if (!view?.raise || raiseTo === undefined) return;
-    void act(raiseTo === view.raise.maxRaiseTo ? { type: 'all-in' } : { type: 'raise', raiseTo });
-  }
-
-  function selectQuickRaise(fraction: number) {
-    if (!view?.raise || !ownSeat) return;
-    const afterCalling = ownSeat.currentBet + view.toCall;
-    const target = afterCalling + Math.ceil(view.pot * fraction);
-    const steps = Math.ceil((target - view.raise.minRaiseTo) / view.raise.minimumIncrement);
-    const legalTarget = view.raise.minRaiseTo + Math.max(0, steps) * view.raise.minimumIncrement;
-    setRaiseTo(Math.max(view.raise.minRaiseTo, Math.min(view.raise.maxRaiseTo, legalTarget)));
+  function submitChipBet() {
+    if (!view?.raise || !chipBetIsLegal) return;
+    void act(selectedRaiseTo === view.raise.maxRaiseTo ? { type: 'all-in' } : { type: 'raise', raiseTo: selectedRaiseTo });
   }
 
   async function startNextHand() {
@@ -1173,28 +1166,17 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
           <button type="button" className="action-fold" disabled={pending} onClick={() => void act({ type: 'fold' })}><span aria-hidden="true">✕</span> פרישה</button>
           <button type="button" className="action-primary" disabled={pending} onClick={() => void act(view.toCall === 0 ? { type: 'check' } : { type: 'call' })}><span aria-hidden="true">✓</span> {view.toCall === 0 ? 'צ׳ק' : callIsAllIn ? `אול אין · ${ownSeat!.stack.toLocaleString('he-IL')}` : `השוואה · ${view.toCall.toLocaleString('he-IL')}`}</button>
           {view.raise ? <button type="button" className="action-raise-toggle" disabled={pending} aria-expanded={showRaiseControls} onClick={() => setShowRaiseControls((shown) => !shown)}><span aria-hidden="true">＋</span> הימור</button> : null}
-          {view.raise && showRaiseControls ? <div className="raise-control" aria-label="בחירת סכום העלאה">
-            <div className="raise-amount"><span>העלאה עד</span><strong>{(raiseTo ?? view.raise.minRaiseTo).toLocaleString('he-IL')}</strong><small>צ׳יפים</small></div>
-            <input
-              type="range"
-              aria-label="בחירת סכום העלאה"
-              min={view.raise.minRaiseTo}
-              max={view.raise.maxRaiseTo}
-              step={view.raise.minimumIncrement}
-              value={raiseTo ?? view.raise.minRaiseTo}
-              onChange={(event) => setRaiseTo(Number(event.target.value))}
-              disabled={pending}
-            />
-            <div className="raise-bounds"><span>{view.raise.minRaiseTo.toLocaleString('he-IL')}</span><span>אול אין {view.raise.maxRaiseTo.toLocaleString('he-IL')}</span></div>
-            <div className="raise-quick-actions" aria-label="סכומי העלאה מהירים">
-              <button type="button" disabled={pending} onClick={() => selectQuickRaise(0.5)}>½ קופה</button>
-              <button type="button" disabled={pending} onClick={() => selectQuickRaise(0.75)}>¾ קופה</button>
-              <button type="button" disabled={pending} onClick={() => selectQuickRaise(1)}>קופה</button>
-              <button type="button" disabled={pending} onClick={() => setRaiseTo(view.raise!.maxRaiseTo)}>אול אין</button>
-            </div>
-            <button type="button" className="raise-submit" disabled={pending} onClick={submitRaise}><span aria-hidden="true">+</span> {(raiseTo ?? view.raise.minRaiseTo) === view.raise.maxRaiseTo ? 'אול אין' : 'העלאה לסכום שנבחר'}</button>
-          </div> : null}
         </div> : null}
+        {isTurn && view.raise && showRaiseControls ? <section className="chip-tray" aria-label="בחירת הימור בצ׳יפים">
+          <div className="chip-tray-header"><span>בחרו צ׳יפים להימור</span><strong>נבחרו {selectedChipAmount.toLocaleString('he-IL')} · הימור עד {selectedRaiseTo.toLocaleString('he-IL')}</strong></div>
+          <div className="chip-piles" aria-label="הערימות שלכם">{CHIP_VALUES.map((value) => <div className="chip-pile" key={value}>
+            <strong aria-label={`${chipTray.available[value]} צ׳יפים בערך ${value}`}>×{chipTray.available[value]}</strong>
+            <button type="button" className={`bet-chip bet-chip-${value}`} disabled={pending || chipTray.available[value] === 0} onClick={() => setChipTray((current) => selectChip(current, value))} aria-label={`הוספת צ׳יפ ${chipNames[value]} בשווי ${value}`}>{value}</button>
+            {value !== 1 ? <button type="button" className="chip-break" disabled={pending || chipTray.available[value] === 0} onClick={() => setChipTray((current) => breakChip(current, value))} aria-label={`פריטת צ׳יפ ${chipNames[value]}`}>פריטה</button> : <span className="chip-break-spacer" />}
+          </div>)}</div>
+          <div className="chip-tray-selected" aria-label="צ׳יפים שנבחרו"><span>על השולחן</span>{selectedChipAmount === 0 ? <small>הקישו על צ׳יפ כדי להוסיף אותו</small> : CHIP_VALUES.filter((value) => chipTray.selected[value] > 0).map((value) => <button type="button" key={value} className={`bet-chip bet-chip-${value}`} disabled={pending} onClick={() => setChipTray((current) => returnChip(current, value))} aria-label={`החזרת צ׳יפ ${chipNames[value]} בשווי ${value}`}><b>{value}</b><i>×{chipTray.selected[value]}</i></button>)}</div>
+          <div className="chip-tray-footer"><small>מינימום {view.raise.minRaiseTo.toLocaleString('he-IL')} · נותרו {(ownSeat?.stack ?? 0) - selectedChipAmount} צ׳יפים</small><button type="button" disabled={pending || selectedChipAmount === 0} onClick={() => setChipTray(clearChipSelection)}>איפוס</button><button type="button" disabled={pending} onClick={() => setChipTray(selectAllChips)}>אול אין</button><button type="button" className="chip-bet-submit" disabled={pending || !chipBetIsLegal} onClick={submitChipBet}>{selectedRaiseTo === view.raise.maxRaiseTo && selectedChipAmount > 0 ? 'אול אין' : 'הימור'} · {selectedRaiseTo.toLocaleString('he-IL')}</button></div>
+        </section> : null}
         {!isTurn && view.street !== 'showdown' && !view.allInRunout && ownSeat && ownSeat.stack > 0 && !ownSeat.isFolded && !ownSeat.isSittingOut && view.holeCards.length === 2 ? <div className="pre-action-bar" aria-label="בחירת פעולה לפני התור">
           <span>לפני התור</span>
           <button type="button" aria-pressed={view.preAction?.type === 'check-fold'} className={view.preAction?.type === 'check-fold' ? 'is-selected' : ''} disabled={savingPreAction} onClick={() => void selectPreAction('check-fold')}>צ׳ק / פרישה</button>

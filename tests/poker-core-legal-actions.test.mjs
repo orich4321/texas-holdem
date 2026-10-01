@@ -252,6 +252,24 @@ test('heads-up preflop fold is advertised because it can immediately concede the
   assert.equal(folded.currentActorSeat, 2);
 });
 
+test('fold can end preflop when the sole survivor is already all-in', () => {
+  const hand = startHand({
+    seats: [
+      { seatNumber: 1, playerId: 'ada', stack: 100 },
+      { seatNumber: 2, playerId: 'ben', stack: 10 },
+    ],
+    dealerSeat: 1, smallBlind: 5, bigBlind: 10, randomInt: unshuffledRandomInt,
+  });
+  assert.equal(hand.seats[1].stack, 0);
+  assert.deepEqual(hand.pendingActorSeats, [1]);
+
+  const folded = applyPreflopFold(hand, 1);
+  assert.equal(folded.currentActorSeat, 2);
+  assert.deepEqual(folded.pendingActorSeats, []);
+  assert.equal(folded.seats[0].isFolded, true);
+  assert.equal(folded.pot, 15);
+});
+
 test('preflop full raise commits to its total target, updates the current bet, and advances action', () => {
   const hand = startedThreePlayerHand();
 

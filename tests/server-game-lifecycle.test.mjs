@@ -38,6 +38,24 @@ test('server lifecycle starts only through the server CSPRNG boundary and expose
   assert.throws(() => game.viewFor('outsider'), /not seated/i);
 });
 
+test('fold against an all-in sole survivor immediately awards the pot', () => {
+  const game = new ServerGameLifecycle({
+    seats: [
+      { seatNumber: 1, playerId: 'ada', playerName: 'Ada', stack: 100 },
+      { seatNumber: 2, playerId: 'ben', playerName: 'Ben', stack: 10 },
+    ],
+    dealerSeat: 1, smallBlind: 5, bigBlind: 10,
+  });
+  game.start();
+  const result = game.applyAction('ada', { type: 'fold' });
+  assert.equal(result.street, 'showdown');
+  assert.equal(result.currentActorSeat, 2);
+  assert.equal(result.turnDeadlineAt, undefined);
+  assert.deepEqual(result.showdown?.winners.map((winner) => winner.playerId), ['ben']);
+  assert.deepEqual(result.seats.map((seat) => seat.stack), [95, 15]);
+  assert.equal(game.showdownSettlement().pots[0].amount, 15);
+});
+
 test('server lifecycle accepts only the active player action, advances the authoritative hand, and keeps opponent cards private', () => {
   const game = new ServerGameLifecycle({ seats, dealerSeat: 1, smallBlind: 5, bigBlind: 10 });
   game.start();
