@@ -8,6 +8,15 @@ export interface SocketSessionRepository {
     roomId: string;
     displayName: string;
   } | null>;
+  findPlayerByRoomJoinIdAndAccountId?(joinId: string, accountId: string): Promise<{
+    id: string;
+    roomId: string;
+    displayName: string;
+  } | null>;
+}
+
+export interface SocketAccountRepository {
+  findBySession(token: unknown): Promise<{ id: string } | null>;
 }
 
 export interface SocketHandshakeSource {
@@ -50,16 +59,22 @@ function unauthorized(): never {
 }
 
 /**
- * Resolves socket identity only from the invite join ID and the httpOnly player
- * cookie. Client-provided player IDs, tokens, cards, seeds, and RNG are ignored.
+ * Resolves socket identity only from the invite join ID and a verified httpOnly
+ * account or legacy player cookie. Client-provided IDs and tokens are ignored.
  */
-export async function authenticateSocketSession(repository: SocketSessionRepository, socket: SocketHandshakeSource): Promise<SocketSessionIdentity> {
+export async function authenticateSocketSession(repository: SocketSessionRepository, socket: SocketHandshakeSource, accounts?: SocketAccountRepository): Promise<SocketSessionIdentity> {
   const auth = socket?.handshake?.auth;
   if (!auth || typeof auth !== 'object' || Array.isArray(auth)) unauthorized();
   const roomJoinId = (auth as { roomJoinId?: unknown }).roomJoinId;
   if (typeof roomJoinId !== 'string' || !ROOM_JOIN_ID_PATTERN.test(roomJoinId)) unauthorized();
 
   const cookies = parseCookieHeader(socket?.handshake?.headers?.cookie);
+  if (accounts && cookies.poker_account_token) {
+    const account = await accounts.findBySession(cookies.poker_account_token);
+    if (!account) unauthorized();
+    const player = await repository.findPlayerByRoomJoinIdAndAccountId?.(roomJoinId, account.id);
+    if (player) return Object.freeze({ roomJoinId, roomId: player.roomId, playerId: player.id, displayName: player.displayName });
+  }
   const accessToken = cookies.poker_player_token;
   if (!isValidPlayerAccessToken(accessToken)) unauthorized();
 

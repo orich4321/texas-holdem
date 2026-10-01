@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import express, { type ErrorRequestHandler, type RequestHandler } from 'express';
 import type { PlayerAction } from './game-lifecycle.js';
 import { createOriginPolicy, isAllowedRequestOrigin } from './origin-policy.js';
+import { GoogleOAuth, newCodeVerifier, safeAuthDestination } from './google-oauth.js';
+import type { AccountRepository } from './persistence/account-repository.js';
 import type { RoomRepository } from './persistence/room-repository.js';
 import { parseCookieHeader } from './socket-session.js';
 
@@ -24,6 +26,9 @@ type OriginPolicy = (origin: string | undefined) => boolean;
 
 type CreateAppDependencies = {
   roomRepository: RoomRepository;
+  accountRepository?: AccountRepository;
+  googleOAuth?: GoogleOAuth;
+  publicAppOrigin?: string;
   isOriginAllowed?: OriginPolicy;
   /**
    * Optional public prefix for a same-origin deployment.  Keeping the router
@@ -185,15 +190,33 @@ function setPlayerSessionCookie(response: express.Response, accessToken: string)
 }
 
 /** Builds the HTTP API independently from the Socket.IO transport. */
-export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy(), basePath }: CreateAppDependencies) {
+export function createApp({ roomRepository, accountRepository, googleOAuth, publicAppOrigin, isOriginAllowed = createOriginPolicy(), basePath }: CreateAppDependencies) {
   const app = express();
   const routes = express.Router();
 
+  const findAccount = (cookieHeader: unknown) => accountRepository?.findBySession(parseCookieHeader(cookieHeader).poker_account_token) ?? Promise.resolve(null);
+
+  const findAuthenticatedPlayer = async (joinId: string, cookieHeader: unknown) => {
+    const account = await findAccount(cookieHeader);
+    if (account) {
+      const linkedPlayer = await roomRepository.findPlayerByRoomJoinIdAndAccountId(joinId, account.id);
+      if (linkedPlayer) return linkedPlayer;
+    }
+    const legacyPlayer = await roomRepository.findPlayerByRoomJoinIdAndAccessToken(joinId, parseCookieHeader(cookieHeader).poker_player_token);
+    if (legacyPlayer && account) {
+      try {
+        if (!await roomRepository.linkLegacyPlayerToAccount(legacyPlayer.id, account.id)) {
+          return roomRepository.findPlayerByRoomJoinIdAndAccountId(joinId, account.id);
+        }
+      } catch {
+        return roomRepository.findPlayerByRoomJoinIdAndAccountId(joinId, account.id);
+      }
+    }
+    return legacyPlayer;
+  };
+
   const findAuthenticatedHost = async (joinId: string, cookieHeader: unknown) => {
-    const player = await roomRepository.findPlayerByRoomJoinIdAndAccessToken(
-      joinId,
-      parseCookieHeader(cookieHeader).poker_player_token,
-    );
+    const player = await findAuthenticatedPlayer(joinId, cookieHeader);
     if (!player) return null;
     const room = await roomRepository.findRoomByJoinId(joinId);
     return room?.hostPlayerId === player.id ? player : null;
@@ -209,20 +232,116 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
   app.use(routes);
   if (basePath) app.use(basePath, routes);
 
-  routes.post('/rooms', async (request, response) => {
-    const input = validateCreateRoomInput(request.body);
-    if (!input) {
-      response.status(400).json({ error: { code: 'INVALID_REQUEST' } });
+  const authReady = Boolean(accountRepository && googleOAuth);
+  const appRedirect = (path: string) => publicAppOrigin ? new URL(path, publicAppOrigin).toString() : path;
+  const oauthCookieOptions = { httpOnly: true, sameSite: 'lax' as const, secure: process.env.NODE_ENV === 'production', path: '/', maxAge: 10 * 60 * 1_000 };
+
+  routes.get('/auth/me', async (request, response) => {
+    if (!authReady) {
+      response.json({ enabled: false });
       return;
     }
-
     try {
+      const profile = await findAccount(request.headers.cookie);
+      response.json({ enabled: true, profile });
+    } catch {
+      response.status(500).json({ error: { code: 'INTERNAL_ERROR' } });
+    }
+  });
+
+  routes.get('/auth/google/start', (request, response) => {
+    if (!googleOAuth || !accountRepository) {
+      response.status(503).json({ error: { code: 'AUTH_NOT_CONFIGURED' } });
+      return;
+    }
+    const verifier = newCodeVerifier();
+    const next = safeAuthDestination(request.query.next);
+    response.cookie('poker_oauth_verifier', verifier, oauthCookieOptions);
+    response.cookie('poker_oauth_next', Buffer.from(next).toString('base64url'), oauthCookieOptions);
+    response.redirect(302, googleOAuth.authorizationUrl(verifier));
+  });
+
+  routes.get('/auth/google/callback', async (request, response) => {
+    const cookies = parseCookieHeader(request.headers.cookie);
+    response.clearCookie('poker_oauth_verifier', { path: '/' });
+    response.clearCookie('poker_oauth_next', { path: '/' });
+    if (!googleOAuth || !accountRepository || typeof request.query.code !== 'string') {
+      response.redirect(303, appRedirect('/?auth_error=google'));
+      return;
+    }
+    try {
+      const supabaseUserId = await googleOAuth.exchangeCode(request.query.code, cookies.poker_oauth_verifier);
+      const { token, profile } = await accountRepository.createSession(supabaseUserId);
+      response.cookie('poker_account_token', token, {
+        httpOnly: true, sameSite: 'lax', secure: process.env.NODE_ENV === 'production', path: '/', maxAge: PLAYER_SESSION_MAX_AGE_MS,
+      });
+      const requestedNext = cookies.poker_oauth_next
+        ? Buffer.from(cookies.poker_oauth_next, 'base64url').toString('utf8') : '/';
+      const next = safeAuthDestination(requestedNext);
+      response.redirect(303, appRedirect(profile.displayName ? next : `/profile?next=${encodeURIComponent(next)}`));
+    } catch {
+      response.redirect(303, appRedirect('/?auth_error=google'));
+    }
+  });
+
+  routes.put('/auth/profile', async (request, response) => {
+    if (!authReady || !accountRepository) {
+      response.status(503).json({ error: { code: 'AUTH_NOT_CONFIGURED' } });
+      return;
+    }
+    const displayName = validateDisplayName(request.body);
+    const avatarDataUrl = validateAvatarDataUrl(request.body?.avatarDataUrl);
+    if (!displayName || avatarDataUrl === false) {
+      response.status(400).json({ error: { code: 'INVALID_PROFILE' } });
+      return;
+    }
+    try {
+      const account = await findAccount(request.headers.cookie);
+      if (!account) {
+        response.status(401).json({ error: { code: 'AUTH_REQUIRED' } });
+        return;
+      }
+      const profile = await accountRepository.updateProfile(account.id, displayName, avatarDataUrl ?? null);
+      response.json({ profile });
+    } catch {
+      response.status(500).json({ error: { code: 'INTERNAL_ERROR' } });
+    }
+  });
+
+  routes.post('/auth/logout', async (request, response) => {
+    try {
+      await accountRepository?.revokeSession(parseCookieHeader(request.headers.cookie).poker_account_token);
+    } finally {
+      response.clearCookie('poker_account_token', { path: '/' });
+      response.clearCookie('poker_player_token', { path: '/' });
+      response.status(204).end();
+    }
+  });
+
+  routes.post('/rooms', async (request, response) => {
+    try {
+      const account = authReady ? await findAccount(request.headers.cookie) : null;
+      if (authReady && !account) {
+        response.status(401).json({ error: { code: 'AUTH_REQUIRED' } });
+        return;
+      }
+      if (account && !account.displayName) {
+        response.status(409).json({ error: { code: 'PROFILE_REQUIRED' } });
+        return;
+      }
+      const input = validateCreateRoomInput(account
+        ? { ...request.body, displayName: account.displayName, avatarDataUrl: account.avatarDataUrl }
+        : request.body);
+      if (!input) {
+        response.status(400).json({ error: { code: 'INVALID_REQUEST' } });
+        return;
+      }
       const room = await roomRepository.createRoom({
         status: 'WAITING',
-        host: { id: randomUUID(), displayName: input.displayName, avatarDataUrl: input.avatarDataUrl, initialStack: input.initialStack },
+        host: { id: randomUUID(), ...(account ? { accountId: account.id } : {}), displayName: input.displayName, avatarDataUrl: input.avatarDataUrl, initialStack: input.initialStack },
         settings: { initialStack: input.initialStack, smallBlind: input.smallBlind, bigBlind: input.bigBlind, maxPlayers: input.maxPlayers },
       });
-      setPlayerSessionCookie(response, room.hostAccessToken);
+      if (!account) setPlayerSessionCookie(response, room.hostAccessToken);
       response.status(201).json({
         roomId: room.joinId,
         // This is a distinct host route, not an authorization secret. Host
@@ -237,25 +356,34 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
   });
 
   routes.post('/rooms/:joinId/join', async (request, response) => {
-    const input = validateJoinRoomInput(request.body);
-    if (!input) {
-      response.status(400).json({ error: { code: 'INVALID_REQUEST' } });
-      return;
-    }
-
     try {
+      const account = authReady ? await findAccount(request.headers.cookie) : null;
+      if (authReady && !account) {
+        response.status(401).json({ error: { code: 'AUTH_REQUIRED' } });
+        return;
+      }
+      if (account && !account.displayName) {
+        response.status(409).json({ error: { code: 'PROFILE_REQUIRED' } });
+        return;
+      }
+      const input = validateJoinRoomInput(account
+        ? { displayName: account.displayName, avatarDataUrl: account.avatarDataUrl }
+        : request.body);
+      if (!input) {
+        response.status(400).json({ error: { code: 'INVALID_REQUEST' } });
+        return;
+      }
       // A player session is the device's one seat at this room. Do this on
       // the server as well as hiding the form in the UI: a repeated request
       // must not turn one person into multiple players.
-      const existingPlayer = await roomRepository.findPlayerByRoomJoinIdAndAccessToken(
-        request.params.joinId,
-        parseCookieHeader(request.headers.cookie).poker_player_token,
-      );
+      const existingPlayer = await findAuthenticatedPlayer(request.params.joinId, request.headers.cookie);
       if (existingPlayer) {
-        response.status(409).json({ error: { code: 'ALREADY_JOINED' } });
+        response.status(account ? 200 : 409).json(account
+          ? { roomId: request.params.joinId, invitePath: `/r/${request.params.joinId}` }
+          : { error: { code: 'ALREADY_JOINED' } });
         return;
       }
-      if (await roomRepository.hasExistingPlayerSessionInRoom(
+      if (!account && await roomRepository.hasExistingPlayerSessionInRoom(
         request.params.joinId,
         parseCookieHeader(request.headers.cookie).poker_player_token,
       )) {
@@ -264,6 +392,7 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
       }
       const result = await roomRepository.joinWaitingRoom(request.params.joinId, {
         id: randomUUID(),
+        ...(account ? { accountId: account.id } : {}),
         ...input,
       });
       if (result.kind === 'not-found') {
@@ -278,7 +407,15 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
         response.status(409).json({ error: { code: 'ROOM_FULL' } });
         return;
       }
-      setPlayerSessionCookie(response, result.playerAccessToken);
+      if (result.kind === 'already-joined') {
+        response.status(200).json({ roomId: request.params.joinId, invitePath: `/r/${request.params.joinId}` });
+        return;
+      }
+      if (result.kind === 'removed') {
+        response.status(403).json({ error: { code: 'PLAYER_REMOVED' } });
+        return;
+      }
+      if (!account) setPlayerSessionCookie(response, result.playerAccessToken);
       response.status(201).json({ roomId: result.room.joinId, invitePath: `/r/${result.room.joinId}` });
     } catch {
       console.error('Room join failed');
@@ -326,10 +463,7 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
   // exposes another player's hole cards.
   routes.get('/rooms/:joinId/game', async (request, response) => {
     try {
-      const player = await roomRepository.findPlayerByRoomJoinIdAndAccessToken(
-        request.params.joinId,
-        parseCookieHeader(request.headers.cookie).poker_player_token,
-      );
+      const player = await findAuthenticatedPlayer(request.params.joinId, request.headers.cookie);
       if (!player) {
         response.status(401).json({ error: { code: 'UNAUTHORIZED' } });
         return;
@@ -354,9 +488,7 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
       return;
     }
     try {
-      const player = await roomRepository.findPlayerByRoomJoinIdAndAccessToken(
-        request.params.joinId, parseCookieHeader(request.headers.cookie).poker_player_token,
-      );
+      const player = await findAuthenticatedPlayer(request.params.joinId, request.headers.cookie);
       if (!player) {
         response.status(401).json({ error: { code: 'UNAUTHORIZED' } });
         return;
@@ -376,10 +508,7 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
       return;
     }
     try {
-      const player = await roomRepository.findPlayerByRoomJoinIdAndAccessToken(
-        request.params.joinId,
-        parseCookieHeader(request.headers.cookie).poker_player_token,
-      );
+      const player = await findAuthenticatedPlayer(request.params.joinId, request.headers.cookie);
       if (!player) {
         response.status(401).json({ error: { code: 'UNAUTHORIZED' } });
         return;
@@ -399,10 +528,7 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
 
   routes.post('/rooms/:joinId/game/turn/time-card', async (request, response) => {
     try {
-      const player = await roomRepository.findPlayerByRoomJoinIdAndAccessToken(
-        request.params.joinId,
-        parseCookieHeader(request.headers.cookie).poker_player_token,
-      );
+      const player = await findAuthenticatedPlayer(request.params.joinId, request.headers.cookie);
       if (!player) {
         response.status(401).json({ error: { code: 'UNAUTHORIZED' } });
         return;
@@ -418,10 +544,7 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
 
   routes.post('/rooms/:joinId/game/turn/expire', async (request, response) => {
     try {
-      const player = await roomRepository.findPlayerByRoomJoinIdAndAccessToken(
-        request.params.joinId,
-        parseCookieHeader(request.headers.cookie).poker_player_token,
-      );
+      const player = await findAuthenticatedPlayer(request.params.joinId, request.headers.cookie);
       if (!player) {
         response.status(401).json({ error: { code: 'UNAUTHORIZED' } });
         return;
@@ -674,10 +797,7 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
         response.status(400).json({ error: { code: 'INVALID_SHOWDOWN_CARD' } });
         return;
       }
-      const player = await roomRepository.findPlayerByRoomJoinIdAndAccessToken(
-        request.params.joinId,
-        parseCookieHeader(request.headers.cookie).poker_player_token,
-      );
+      const player = await findAuthenticatedPlayer(request.params.joinId, request.headers.cookie);
       if (!player) {
         response.status(401).json({ error: { code: 'UNAUTHORIZED' } });
         return;
@@ -692,10 +812,7 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
 
   routes.get('/rooms/:joinId/final-summary', async (request, response) => {
     try {
-      const player = await roomRepository.findPlayerByRoomJoinIdAndAccessToken(
-        request.params.joinId,
-        parseCookieHeader(request.headers.cookie).poker_player_token,
-      );
+      const player = await findAuthenticatedPlayer(request.params.joinId, request.headers.cookie);
       if (!player) {
         response.status(401).json({ error: { code: 'UNAUTHORIZED' } });
         return;
@@ -749,10 +866,7 @@ export function createApp({ roomRepository, isOriginAllowed = createOriginPolicy
         response.status(404).json({ error: { code: 'ROOM_NOT_FOUND' } });
         return;
       }
-      const sessionPlayer = await roomRepository.findPlayerByRoomJoinIdAndAccessToken(
-        room.joinId,
-        parseCookieHeader(request.headers.cookie).poker_player_token,
-      );
+      const sessionPlayer = await findAuthenticatedPlayer(room.joinId, request.headers.cookie);
       const isHost = sessionPlayer?.id === room.hostPlayerId;
       response.json({
         joinId: room.joinId,

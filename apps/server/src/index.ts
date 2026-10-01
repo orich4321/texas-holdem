@@ -5,6 +5,8 @@ import { createApp } from './http-app.js';
 import { createOriginPolicy, isAllowedRequestOrigin } from './origin-policy.js';
 import { prisma } from './persistence/prisma.js';
 import { RoomRepository } from './persistence/room-repository.js';
+import { AccountRepository } from './persistence/account-repository.js';
+import { GoogleOAuth } from './google-oauth.js';
 import { createPrivateSnapshotKeyring } from './persistence/private-snapshot-keyring.js';
 import { attachSocketSessionTransport } from './socket-transport.js';
 
@@ -14,8 +16,21 @@ void express;
 const isOriginAllowed = createOriginPolicy();
 const serviceBasePath = process.env.SERVICE_BASE_PATH;
 const roomRepository = new RoomRepository(prisma, undefined, undefined, undefined, createPrivateSnapshotKeyring());
+const supabaseUrl = process.env.SUPABASE_URL;
+const publishableKey = process.env.SUPABASE_PUBLISHABLE_KEY;
+const appOrigin = process.env.PUBLIC_APP_ORIGIN;
+const accountRepository = supabaseUrl && publishableKey && appOrigin ? new AccountRepository(prisma) : undefined;
+const googleOAuth = accountRepository ? new GoogleOAuth(
+  supabaseUrl!, publishableKey!,
+  process.env.NODE_ENV === 'production'
+    ? `${appOrigin!.replace(/\/$/, '')}/server/auth/google/callback`
+    : `${process.env.LOCAL_SERVER_ORIGIN ?? 'http://localhost:3001'}/auth/google/callback`,
+) : undefined;
 const app = createApp({
   roomRepository,
+  accountRepository,
+  googleOAuth,
+  publicAppOrigin: appOrigin,
   isOriginAllowed,
   basePath: serviceBasePath,
 });
@@ -41,7 +56,7 @@ const health = (_request: express.Request, response: express.Response) => {
 app.get('/health', health);
 if (serviceBasePath) app.get(`${serviceBasePath}/health`, health);
 
-attachSocketSessionTransport(io, roomRepository);
+attachSocketSessionTransport(io, roomRepository, accountRepository);
 
 // Vercel invokes the exported HTTP server. Local development retains a normal
 // listener so the Socket.IO transport can be exercised outside its runtime.

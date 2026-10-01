@@ -1,4 +1,4 @@
-import { authenticateSocketSession, type SocketSessionIdentity, type SocketSessionRepository } from './socket-session.js';
+import { authenticateSocketSession, type SocketAccountRepository, type SocketSessionIdentity, type SocketSessionRepository } from './socket-session.js';
 import type { PlayerAction, ServerPlayerView } from './game-lifecycle.js';
 
 export interface SessionSocket {
@@ -33,11 +33,11 @@ function emitGameError(socket: SessionSocket): void {
  * ignored. Player-safe game projections are emitted only to matching
  * authenticated sockets; room broadcasts never carry a player's hole cards.
  */
-export function attachSocketSessionTransport(io: SessionIo, repository: GameSocketRepository): void {
+export function attachSocketSessionTransport(io: SessionIo, repository: GameSocketRepository, accounts?: SocketAccountRepository): void {
   const socketsByRoom = new Map<string, Set<SessionSocket>>();
 
   io.use((socket, next) => {
-    void authenticateSocketSession(repository, socket)
+    void authenticateSocketSession(repository, socket, accounts)
       .then((identity) => {
         socket.data.session = identity;
         next();

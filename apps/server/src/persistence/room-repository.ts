@@ -20,6 +20,7 @@ import { startServerHand } from '../hand-start.js';
 
 type PlayerInput = {
   id: string;
+  accountId?: string;
   displayName: string;
   avatarDataUrl?: string;
   initialStack: number;
@@ -345,6 +346,7 @@ export class RoomRepository {
         const persistedPlayer = await db.player.create({
           data: {
             id: player.id,
+            accountId: player.accountId,
             displayName: player.displayName,
             avatarDataUrl: player.avatarDataUrl,
             initialStack: player.initialStack,
@@ -387,6 +389,12 @@ export class RoomRepository {
       });
       if (lockedRoom.count !== 1) return { kind: 'not-joinable' as const };
 
+      const previousSeat = player.accountId
+        ? await tx.player.findFirst({ where: { roomId: room.id, accountId: player.accountId }, select: { leftAt: true } })
+        : null;
+      if (previousSeat?.leftAt) return { kind: 'removed' as const };
+      if (previousSeat) return { kind: 'already-joined' as const };
+
       // Joining never mutates the signed roster of the hand in progress. A
       // late player receives a durable seat now, waits on GAME_NOT_AVAILABLE,
       // and is included only when the host deals the next hand.
@@ -410,6 +418,24 @@ export class RoomRepository {
     });
   }
 
+  /** An authenticated account always resumes its existing player, regardless of another room's cookie. */
+  async findPlayerByRoomJoinIdAndAccountId(joinId: string, accountId: string) {
+    const room = await this.db.room.findUnique({
+      where: { joinId },
+      select: { players: { where: { accountId, leftAt: null }, select: publicPlayerSelect } },
+    });
+    return room?.players[0] ?? null;
+  }
+
+  /** Opt-in migration of an already authenticated legacy seat to its Google account. */
+  async linkLegacyPlayerToAccount(playerId: string, accountId: string): Promise<boolean> {
+    const result = await this.db.player.updateMany({
+      where: { id: playerId, accountId: null, leftAt: null },
+      data: { accountId },
+    });
+    return result.count === 1;
+  }
+
   async findPlayerByRoomJoinIdAndAccessToken(joinId: string, accessToken: unknown) {
     if (!isValidPlayerAccessToken(accessToken)) return null;
 
@@ -419,7 +445,7 @@ export class RoomRepository {
       select: {
         hostPlayerId: true,
         players: {
-          select: { ...publicPlayerSelect, accessTokenHash: true },
+          select: { ...publicPlayerSelect, accountId: true, accessTokenHash: true },
         },
       },
     });
@@ -429,7 +455,9 @@ export class RoomRepository {
       const candidateHash = Buffer.from(candidate.accessTokenHash, 'hex');
       return candidateHash.length === accessTokenHash.length && timingSafeEqual(candidateHash, accessTokenHash);
     });
-    if (!player || player.leftAt) return null;
+    // Google-linked seats must be recovered through the account session, not
+    // a stale per-room cookie after that account signs out.
+    if (!player || player.leftAt || player.accountId) return null;
 
     return {
       id: player.id,

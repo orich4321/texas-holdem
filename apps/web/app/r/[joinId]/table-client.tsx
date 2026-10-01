@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { io } from 'socket.io-client';
 import { parsePositiveInteger } from '../../numeric-input';
 import { ProfileImage } from '../../profile-image';
+import { AccountLink } from '../../account-link';
 import { actionAudioIsReady, playActionSound, unlockActionAudio } from '../../action-sounds';
 
 declare const process: { env: { NODE_ENV?: string; NEXT_PUBLIC_GAME_URL?: string; NEXT_PUBLIC_SERVER_URL?: string } };
@@ -1085,7 +1086,7 @@ export default function TableClient({ joinId, isHost }: { joinId: string; isHost
   return (
     <main className="table-shell" dir="rtl">
       <header className="table-header">
-        <div className="table-header-tools"><button type="button" className="table-sound-toggle" aria-label={soundEnabled ? 'השתקת צלילי המשחק' : 'הפעלת צלילי המשחק'} aria-pressed={soundEnabled} title={soundEnabled ? 'השתקת צלילים' : 'הפעלת צלילים ובדיקתם'} onClick={toggleSound}><span aria-hidden="true">{soundEnabled ? '♪' : '♪̸'}</span></button></div>
+        <div className="table-header-tools"><AccountLink next={`/r/${joinId}${isHost ? '/host' : ''}`} /><button type="button" className="table-sound-toggle" aria-label={soundEnabled ? 'השתקת צלילי המשחק' : 'הפעלת צלילי המשחק'} aria-pressed={soundEnabled} title={soundEnabled ? 'השתקת צלילים' : 'הפעלת צלילים ובדיקתם'} onClick={toggleSound}><span aria-hidden="true">{soundEnabled ? '♪' : '♪̸'}</span></button></div>
         {isCurrentHost ? <button type="button" className="table-management-button" aria-label="ניהול שולחן" title="ניהול שולחן" aria-expanded={managementOpen} onClick={() => {
           setManagementOpen(true);
           void loadManagement();

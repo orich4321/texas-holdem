@@ -9,6 +9,7 @@ export const LOBBY_LOAD_ERROR_MESSAGE = 'לא הצלחנו לטעון את הח�
 export const LOBBY_JOIN_ERROR_MESSAGE = 'לא הצלחנו להצטרף לחדר. נסו שוב.';
 export const ROOM_FULL_MESSAGE = 'השולחן כבר מלא. נסו חדר אחר.';
 export const ROOM_NOT_JOINABLE_MESSAGE = 'המשחק בחדר הזה כבר הסתיים.';
+export const PLAYER_REMOVED_MESSAGE = 'הוסרתם מהשולחן. פנו למארח אם תרצו לחזור.';
 
 export type Lobby = {
   joinId: string;
@@ -111,11 +112,12 @@ export async function joinLobby(
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ displayName, ...(avatarDataUrl ? { avatarDataUrl } : {}) }),
     });
-    if (response.status === 201) return { ok: true };
+    if (response.status === 201 || response.status === 200) return { ok: true };
     if (response.status === 409) {
       const body = await response.json().catch(() => undefined) as { error?: { code?: string } } | undefined;
       return { ok: false, message: body?.error?.code === 'ROOM_NOT_JOINABLE' ? ROOM_NOT_JOINABLE_MESSAGE : ROOM_FULL_MESSAGE };
     }
+    if (response.status === 403) return { ok: false, message: PLAYER_REMOVED_MESSAGE };
     return { ok: false, message: LOBBY_JOIN_ERROR_MESSAGE };
   } catch {
     return { ok: false, message: LOBBY_JOIN_ERROR_MESSAGE };

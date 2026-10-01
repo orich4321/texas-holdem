@@ -12,6 +12,9 @@ const { prisma } = integrationEnabled
 const { RoomRepository } = integrationEnabled
   ? await import('../apps/server/src/persistence/room-repository.ts')
   : { RoomRepository: undefined };
+const { AccountRepository } = integrationEnabled
+  ? await import('../apps/server/src/persistence/account-repository.ts')
+  : { AccountRepository: undefined };
 
 const snapshotKeyring = new Map([['integration-current', Buffer.from('integration snapshot signing key that is safely over 32 bytes', 'utf8')]]);
 
@@ -32,8 +35,27 @@ if (integrationEnabled) {
     await prisma.room.updateMany({ data: { hostPlayerId: null } });
     await prisma.player.deleteMany();
     await prisma.room.deleteMany();
+    await prisma.accountSession.deleteMany();
+    await prisma.account.deleteMany();
   });
 }
+
+test('a Google-linked account resumes its durable seat across room-cookie changes', { skip: !integrationEnabled }, async () => {
+  const accounts = new AccountRepository(prisma);
+  const rooms = new RoomRepository(prisma);
+  const { token, profile } = await accounts.createSession(randomUUID());
+  const updated = await accounts.updateProfile(profile.id, 'אורי', null);
+  assert.equal(updated.displayName, 'אורי');
+  assert.equal((await accounts.findBySession(token))?.id, profile.id);
+  const room = await rooms.createRoom({
+    status: 'WAITING',
+    host: { id: randomUUID(), accountId: profile.id, displayName: 'אורי', initialStack: 500 },
+  });
+  assert.equal((await rooms.findPlayerByRoomJoinIdAndAccountId(room.joinId, profile.id))?.id, room.hostPlayerId);
+  assert.equal(await rooms.findPlayerByRoomJoinIdAndAccessToken(room.joinId, room.hostAccessToken), null);
+  await accounts.revokeSession(token);
+  assert.equal(await accounts.findBySession(token), null);
+});
 
 test('room repository persists a room with two players and retrieves it by join ID', { skip: !integrationEnabled }, async () => {
   const repository = new RoomRepository(prisma);

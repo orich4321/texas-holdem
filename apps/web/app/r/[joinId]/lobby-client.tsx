@@ -1,6 +1,6 @@
 'use client';
 
-import { type FormEvent, useCallback, useEffect, useState } from 'react';
+import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import {
   EMPTY_NICKNAME_MESSAGE,
   type Lobby,
@@ -13,6 +13,8 @@ import { AppBrand, StateScreen } from '../../ui';
 import { AvatarPicker } from '../../avatar-picker';
 import { ProfileImage } from '../../profile-image';
 import { unlockActionAudio } from '../../action-sounds';
+import { googleLoginPath, loadAccount, profilePath, type AccountState } from '../../account-api';
+import { AccountLink } from '../../account-link';
 
 type LobbyClientProps = { joinId: string; isHostRoute?: boolean };
 
@@ -33,6 +35,12 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
   const [joining, setJoining] = useState(false);
   const [starting, setStarting] = useState(false);
   const [copied, setCopied] = useState<string>();
+  const [account, setAccount] = useState<AccountState>();
+  const autoJoinAttempted = useRef(false);
+
+  useEffect(() => {
+    void loadAccount().then(setAccount).catch(() => setJoinMessage('לא הצלחנו לבדוק את החשבון. נסו לרענן את הדף.'));
+  }, []);
 
   const refreshLobby = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -69,6 +77,18 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
       globalThis.location.replace(`/r/${encodeURIComponent(joinId)}`);
     }
   }, [isHostRoute, joinId, lobby]);
+
+  useEffect(() => {
+    if (!account?.enabled || !account.profile?.displayName || !lobby || lobby.isParticipant || lobby.status === 'COMPLETED' || (isHostRoute && !lobby.isHost) || autoJoinAttempted.current) return;
+    autoJoinAttempted.current = true;
+    setJoining(true);
+    void joinLobby(joinId, account.profile.displayName, { fetch: (...args) => globalThis.fetch(...args) }, account.profile.avatarDataUrl ?? undefined)
+      .then(async (result) => {
+        if (result.ok) await refreshLobby();
+        else setJoinMessage(result.message);
+      })
+      .finally(() => setJoining(false));
+  }, [account, isHostRoute, joinId, lobby, refreshLobby]);
 
   async function handleJoin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -169,13 +189,16 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
               <h1 id="join-title">מצטרפים למשחק</h1>
               <span>{lobby.settings.initialStack.toLocaleString('he-IL')} צ׳יפים · בליינדים {lobby.settings.smallBlind}/{lobby.settings.bigBlind}</span>
             </div>
-            <form className="entry-form join-entry-form" onSubmit={handleJoin}>
+            {account?.enabled && !account.profile ? <a className="entry-primary" href={googleLoginPath(`/r/${joinId}`)}>התחברות עם Google והצטרפות</a> : null}
+            {account?.enabled && account.profile && !account.profile.displayName ? <a className="entry-primary" href={profilePath(`/r/${joinId}`)}>השלמת פרופיל והצטרפות</a> : null}
+            {account?.enabled && account.profile?.displayName ? <div className="join-account-status" role="status">{joining ? 'מצרפים אתכם לשולחן…' : joinMessage ?? 'מכינים את המקום שלכם בשולחן…'}{joinMessage ? <button type="button" onClick={() => { autoJoinAttempted.current = false; setJoinMessage(undefined); void refreshLobby(); }}>נסו שוב</button> : null}</div> : null}
+            {account && !account.enabled ? <form className="entry-form join-entry-form" onSubmit={handleJoin}>
               <label htmlFor="lobby-nickname">השם שלכם בשולחן</label>
               <input id="lobby-nickname" name="nickname" type="text" autoComplete="nickname" maxLength={24} placeholder="איך לקרוא לכם?" value={nickname} onChange={(event) => setNickname(event.target.value)} disabled={joining} aria-describedby={joinMessage ? 'join-status' : undefined} />
               <AvatarPicker value={avatarDataUrl} onChange={setAvatarDataUrl} disabled={joining} />
               <button className="entry-primary" type="submit" disabled={joining}>{joining ? 'מצטרפים…' : 'כניסה לשולחן'}</button>
               {joinMessage ? <p id="join-status" className="entry-status" role="status" aria-live="polite">{joinMessage}</p> : null}
-            </form>
+            </form> : null}
           </div>
         </section>
       </main>
@@ -188,6 +211,7 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
       <header className="lobby-topbar"><AppBrand compact /><span className="private-pill"><i /> שולחן פרטי</span></header>
       <section className="lobby-card" aria-labelledby="lobby-title">
         <header className="lobby-header">
+          <AccountLink next={`/r/${joinId}${lobby.isHost ? '/host' : ''}`} className="lobby-profile-button" />
           <p className="lobby-kicker">LOBBY · {joinId.slice(0, 6).toUpperCase()}</p>
           <h1 id="lobby-title">מחכים לשחקנים</h1>
           <p>הצטרפו, שתפו את הקישור, וכשהחברים כאן — מתחילים.</p>

@@ -78,7 +78,7 @@ test('entry page and host controls expose the room code without changing join or
     readFile(resolve(root, 'apps/web/app/r/[joinId]/table-client.tsx'), 'utf8'),
   ]);
   assert.match(page, /enterRoomWithCode/);
-  assert.match(page, /המשך לבחירת שם ותמונה/);
+  assert.match(page, /המשך לחדר/);
   assert.match(lobbyClient, /קוד החדר/);
   assert.match(tableClient, /קוד החדר/);
   assert.match(lobbyClient, /joinLobby\(joinId, nickname/);

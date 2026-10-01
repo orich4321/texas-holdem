@@ -33,13 +33,13 @@ export default function EnterRoomPage() {
           <div className="entry-intro">
             <p>הוזמנתם לשולחן?</p>
             <h1 id="enter-room-title">כניסה לחדר</h1>
-            <span>בקשו מהמארח את קוד החדר. אחרי הזנתו תוכלו לבחור שם ותמונת פרופיל.</span>
+            <span>בקשו מהמארח את קוד החדר. עם חשבון שחקן פעיל תצטרפו אוטומטית.</span>
           </div>
           <form className="entry-form enter-room-form" onSubmit={handleSubmit}>
             <label htmlFor="room-code">קוד החדר</label>
             <input id="room-code" name="room-code" type="text" inputMode="text" autoComplete="off" autoCapitalize="off" spellCheck={false} maxLength={23} placeholder="לדוגמה: A1B2C3D4E5F60708" value={code} onChange={(event) => setCode(event.target.value)} disabled={pending} aria-describedby={status ? 'enter-room-status' : 'room-code-help'} dir="ltr" />
             <small id="room-code-help">16 תווים · אפשר להזין גם אותיות גדולות</small>
-            <button className="entry-primary" type="submit" disabled={pending}>{pending ? 'מחפשים חדר…' : 'המשך לבחירת שם ותמונה'}</button>
+            <button className="entry-primary" type="submit" disabled={pending}>{pending ? 'מחפשים חדר…' : 'המשך לחדר'}</button>
             {status ? <p id="enter-room-status" className="entry-status" role="status" aria-live="polite">{status}</p> : null}
           </form>
           <Link className="entry-secondary-link" href="/">רוצים לפתוח שולחן משלכם?</Link>

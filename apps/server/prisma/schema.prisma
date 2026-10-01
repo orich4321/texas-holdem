@@ -41,6 +41,7 @@ model Room {
 model Player {
   id           String   @id @db.Uuid
   roomId       String   @db.Uuid
+  accountId    String?  @db.Uuid
   displayName  String
   avatarDataUrl String?
   initialStack Int
@@ -52,6 +53,7 @@ model Player {
   rebuyDecisionPending Boolean @default(false)
   timeCardsRemaining Int @default(3)
   room            Room     @relation("RoomPlayers", fields: [roomId], references: [id], onDelete: Cascade)
+  account         Account? @relation(fields: [accountId], references: [id], onDelete: SetNull)
   hostedRooms  Room[]   @relation("RoomHost")
   receivedChipAdjustments ChipAdjustment[] @relation("ChipRecipient")
   authorizedChipAdjustments ChipAdjustment[] @relation("ChipAuthorizer")
@@ -62,6 +64,30 @@ model Player {
   @@index([roomId])
   @@index([roomId, leftAt])
   @@unique([roomId, id])
+  @@unique([roomId, accountId])
+}
+
+model Account {
+  id             String @id @default(uuid()) @db.Uuid
+  supabaseUserId String @unique @db.Uuid
+  displayName    String?
+  avatarDataUrl  String?
+  sessions       AccountSession[]
+  players        Player[]
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model AccountSession {
+  id        String   @id @default(uuid()) @db.Uuid
+  accountId String   @db.Uuid
+  tokenHash String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  account   Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  @@index([accountId])
+  @@index([expiresAt])
 }
 
 model GameEvent {

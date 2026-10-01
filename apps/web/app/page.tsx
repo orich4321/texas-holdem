@@ -1,10 +1,12 @@
 'use client';
 
-import { type FormEvent, useState } from 'react';
+import { type FormEvent, useEffect, useState } from 'react';
 import { DEFAULT_ROOM_SETTINGS, EMPTY_NICKNAME_MESSAGE, submitRoomCreation, type RoomSettings } from './room-creation';
 import { parsePositiveInteger } from './numeric-input';
 import { AppBrand } from './ui';
 import { AvatarPicker } from './avatar-picker';
+import { googleLoginPath, loadAccount, profilePath, type AccountState } from './account-api';
+import { ProfileImage } from './profile-image';
 
 export default function HomePage() {
   const [nickname, setNickname] = useState('');
@@ -16,6 +18,15 @@ export default function HomePage() {
   });
   const [pending, setPending] = useState(false);
   const [status, setStatus] = useState<string>();
+  const [account, setAccount] = useState<AccountState>();
+  useEffect(() => {
+    if (new URLSearchParams(globalThis.location.search).has('auth_error')) setStatus('ההתחברות עם Google לא הושלמה. נסו שוב.');
+    void loadAccount().then((state) => {
+      setAccount(state);
+      if (state.profile?.displayName) setNickname(state.profile.displayName);
+      if (state.profile?.avatarDataUrl) setAvatarDataUrl(state.profile.avatarDataUrl);
+    }).catch(() => setStatus('לא הצלחנו לבדוק את החשבון. נסו לרענן את הדף.'));
+  }, []);
   const initialStack = parsePositiveInteger(settings.initialStack);
   const smallBlind = parsePositiveInteger(settings.smallBlind);
   const bigBlind = parsePositiveInteger(settings.bigBlind);
@@ -63,13 +74,18 @@ export default function HomePage() {
           <div className="entry-intro">
             <p>שולחן חדש</p>
             <h1 id="home-title">פותחים משחק</h1>
-            <span>בחרו שם ותמונה. את הקישור לחברים תקבלו מיד.</span>
+            <span>{account?.enabled ? 'פותחים שולחן עם פרופיל השחקן שלכם. את הקישור לחברים תקבלו מיד.' : 'בחרו שם ותמונה. את הקישור לחברים תקבלו מיד.'}</span>
           </div>
 
-          <form className="entry-form host-form" onSubmit={handleSubmit}>
-            <label htmlFor="nickname">השם שלכם בשולחן</label>
-            <input id="nickname" name="nickname" type="text" autoComplete="nickname" maxLength={24} placeholder="למשל: אורי" value={nickname} onChange={(event) => setNickname(event.target.value)} disabled={pending} aria-describedby={status ? 'host-status' : undefined} />
-            <AvatarPicker value={avatarDataUrl} onChange={setAvatarDataUrl} disabled={pending} />
+          {account?.enabled && !account.profile ? <a className="entry-primary" href={googleLoginPath('/')}>התחברות עם Google</a> : null}
+          {account?.enabled && account.profile && !account.profile.displayName ? <a className="entry-primary" href={profilePath('/')}>השלמת פרופיל השחקן</a> : null}
+          {!account && !status ? <p role="status">בודקים את החשבון…</p> : null}
+          {account && (!account.enabled || account.profile?.displayName) ? <form className="entry-form host-form" onSubmit={handleSubmit}>
+            {account?.enabled && account.profile?.displayName ? <a className="entry-account" href={profilePath('/')}><ProfileImage className="entry-account-avatar" dataUrl={account.profile.avatarDataUrl} fallback="♠" /><span>{account.profile.displayName}</span><small>עריכת פרופיל ⚙</small></a> : <>
+              <label htmlFor="nickname">השם שלכם בשולחן</label>
+              <input id="nickname" name="nickname" type="text" autoComplete="nickname" maxLength={24} placeholder="למשל: אורי" value={nickname} onChange={(event) => setNickname(event.target.value)} disabled={pending} aria-describedby={status ? 'host-status' : undefined} />
+              <AvatarPicker value={avatarDataUrl} onChange={setAvatarDataUrl} disabled={pending} />
+            </>}
 
             <details className="entry-settings">
               <summary><span>הגדרות המשחק</span><small>{settings.initialStack || '—'} צ׳יפים · {settings.smallBlind || '—'}/{settings.bigBlind || '—'}</small></summary>
@@ -82,7 +98,7 @@ export default function HomePage() {
 
             <button className="entry-primary" type="submit" disabled={pending || !validSettings}>{pending ? 'פותחים…' : 'פתיחת שולחן'}</button>
             {status ? <p id="host-status" className="entry-status" role="status" aria-live="polite">{status}</p> : null}
-          </form>
+          </form> : null}
           <a className="entry-secondary-link" href="/enter-room">יש לכם קוד חדר? היכנסו למשחק</a>
         </div>
       </section>
