@@ -19,7 +19,10 @@ const roomRepository = new RoomRepository(prisma, undefined, undefined, undefine
 const supabaseUrl = process.env.SUPABASE_URL;
 const publishableKey = process.env.SUPABASE_PUBLISHABLE_KEY;
 const appOrigin = process.env.PUBLIC_APP_ORIGIN;
-const accountRepository = supabaseUrl && publishableKey && appOrigin ? new AccountRepository(prisma) : undefined;
+// Keep room creation available if the Supabase Google provider has not yet
+// been enabled. Explicitly switch over only after the provider is verified.
+const accountRepository = process.env.GOOGLE_AUTH_ENABLED === 'true' && supabaseUrl && publishableKey && appOrigin
+  ? new AccountRepository(prisma) : undefined;
 const googleOAuth = accountRepository ? new GoogleOAuth(
   supabaseUrl!, publishableKey!,
   process.env.NODE_ENV === 'production'

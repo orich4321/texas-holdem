@@ -21,6 +21,7 @@ application database or browser after the callback.
    - `SUPABASE_URL=https://<project-ref>.supabase.co`
    - `SUPABASE_PUBLISHABLE_KEY=<the project's publishable key>`
    - `PUBLIC_APP_ORIGIN=https://texas-holdem-play.vercel.app`
+   - `GOOGLE_AUTH_ENABLED=true` (only after the Google provider is enabled and verified)
 
    Set the same values in local `.env`, with `PUBLIC_APP_ORIGIN=http://localhost:3000`.
    Never place the Google client secret, Supabase service-role key, or database
