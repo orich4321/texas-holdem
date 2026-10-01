@@ -60,6 +60,24 @@ test('home presents a minimal Hebrew room-hosting flow with an accessible dark U
   assert.match(styles, /input:not\(\[type="range"\]\), select, textarea\s*\{\s*font-size:\s*16px/);
 });
 
+test('profile editing and private hand history open from home, not the active table or lobby', async () => {
+  const [home, panel, table, lobby, history] = await Promise.all([
+    source('apps/web/app/page.tsx'),
+    source('apps/web/app/home-account-panel.tsx'),
+    source('apps/web/app/r/[joinId]/table-client.tsx'),
+    source('apps/web/app/r/[joinId]/lobby-client.tsx'),
+    source('apps/web/app/history/history-list.tsx'),
+  ]);
+  assert.match(home, /<HomeAccountPanel/);
+  assert.match(home, /פרופיל והיסטוריה/);
+  assert.match(panel, /<AvatarPicker/);
+  assert.match(panel, /<HistoryList onSelectGame=/);
+  assert.match(panel, /<HistoryGame joinId=/);
+  assert.match(history, /credentials: 'include'/);
+  assert.doesNotMatch(table, /AccountLink|\/history/);
+  assert.doesNotMatch(lobby, /AccountLink|\/history/);
+});
+
 test('minimal entry button text meets WCAG AA contrast', async () => {
   assert.ok(contrastRatio('#f2eee4', '#526252') >= 4.5);
 });

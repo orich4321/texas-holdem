@@ -171,17 +171,6 @@ button:disabled { cursor: wait; opacity: 0.55; }
 .table-header { display: grid; grid-row: 1; grid-template-columns: 1fr repeat(5,auto); align-items: center; width: min(100%, 1180px); min-height: 47px; margin: 0 auto; padding: 5px 10px; border: 1px solid var(--line); border-radius: 15px; background: rgba(7,14,11,.8); box-shadow: 0 8px 28px rgba(0,0,0,.16); gap: clamp(8px,2.5vw,30px); backdrop-filter: blur(15px); }
 .table-header:not(:has(.table-management-button)) { grid-template-columns: 1fr repeat(4,auto); }
 .table-header .table-header-tools { display: flex; align-items: center; min-width: 0; gap: 5px; }
-.table-profile-button, .lobby-profile-button { display: grid; width: 36px; height: 36px; flex: 0 0 36px; place-items: center; border: 1px solid rgba(204,181,132,.38); border-radius: 9px; color: #e0cda8; background: rgba(46,51,41,.72); text-decoration: none; }
-.account-menu-wrap { position: relative; z-index: 12; flex: 0 0 auto; }
-.account-menu-wrap > button { cursor: pointer; }
-.account-menu { position: absolute; top: calc(100% + 8px); right: 0; display: grid; width: min(230px, calc(100vw - 24px)); padding: 5px; border: 1px solid var(--gold-line); border-radius: 12px; background: #13231b; box-shadow: 0 18px 45px rgba(0,0,0,.5); gap: 3px; }
-.account-menu a { padding: 10px 11px; border-radius: 8px; color: var(--ink); font-size: .73rem; font-weight: 750; text-decoration: none; white-space: nowrap; }
-.account-menu a:hover, .account-menu a:focus-visible { background: rgba(196,170,117,.13); }
-.lobby-header > .account-menu-wrap { position: absolute; top: 14px; left: 14px; }
-.lobby-header .account-menu { right: auto; left: 0; }
-.account-menu-wrap .lobby-profile-button { position: static; }
-.account-link-avatar { display: grid; width: 27px; height: 27px; overflow: hidden; border-radius: 50%; background-position: center; background-size: cover; place-items: center; }
-.lobby-profile-button { position: absolute; top: 14px; left: 14px; z-index: 2; }
 .table-sound-toggle { display: grid; width: 36px; height: 36px; flex: 0 0 36px; place-items: center; border: 1px solid rgba(204,181,132,.38); border-radius: 9px; color: #e0cda8; background: rgba(46,51,41,.72); cursor: pointer; font-size: 1.1rem; }
 .table-sound-toggle[aria-pressed="false"] { color: #959c96; border-color: rgba(255,255,255,.13); background: rgba(255,255,255,.04); }
 .table-management-button { display: grid; width: 36px; height: 36px; padding: 0; place-items: center; border: 1px solid rgba(230,189,105,.25); border-radius: 10px; color: #f4dfaa; background: rgba(111,77,20,.18); cursor: pointer; }
@@ -691,9 +680,27 @@ button:disabled { cursor: wait; opacity: 0.55; }
 .entry-host small { color: #858f88; font-size: .55rem; }
 .entry-host strong { font-size: .78rem; }
 .entry-account { display: flex; align-items: center; min-height: 56px; padding: 7px 10px; border: 1px solid rgba(197,174,122,.25); border-radius: 12px; color: var(--ink); background: rgba(255,255,255,.025); gap: 9px; text-decoration: none; }
+.entry-account[type="button"] { width: 100%; cursor: pointer; text-align: start; }
+.entry-account[type="button"]:hover, .entry-account[type="button"]:focus-visible { border-color: var(--gold); background: rgba(197,174,122,.07); }
 .entry-account-avatar { display: grid; width: 38px; height: 38px; flex: 0 0 38px; overflow: hidden; border-radius: 50%; background-position: center; background-size: cover; place-items: center; }
 .entry-account span:not(.entry-account-avatar) { flex: 1; font-weight: 850; }
 .entry-account small { color: var(--gold-light); font-size: .6rem; }
+.home-account-backdrop { position: fixed; z-index: 50; inset: 0; display: grid; place-items: center; padding: max(10px,env(safe-area-inset-top)) max(10px,env(safe-area-inset-right)) max(10px,env(safe-area-inset-bottom)) max(10px,env(safe-area-inset-left)); background: rgba(2,8,5,.82); backdrop-filter: blur(9px); }
+.home-account-panel { display: grid; grid-template-rows: auto auto minmax(0,1fr); width: min(100%,760px); max-height: 100%; height: min(680px,100%); min-height: 0; padding: clamp(12px,2vw,20px); border: 1px solid var(--gold-line); border-radius: 20px; background: #101b15; box-shadow: 0 25px 80px rgba(0,0,0,.65); gap: 12px; }
+.home-account-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.home-account-header > div { display: flex; align-items: center; gap: 9px; }
+.home-account-header strong { color: var(--ink); font-size: .9rem; }
+.home-account-close { display: grid; width: 38px; height: 38px; place-items: center; border: 1px solid var(--line); border-radius: 10px; color: var(--ink); background: #24362a; cursor: pointer; font-size: 1.45rem; }
+.home-account-tabs { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); padding: 4px; border: 1px solid var(--line); border-radius: 11px; background: #0a1510; gap: 4px; }
+.home-account-tabs button { min-height: 42px; border: 0; border-radius: 8px; color: var(--muted); background: transparent; cursor: pointer; font-size: .76rem; font-weight: 750; }
+.home-account-tabs button[aria-selected="true"] { color: var(--gold-light); background: #304237; }
+.home-account-content { min-height: 0; overflow-y: auto; padding: 8px; }
+.home-account-content > form { width: min(100%,450px); margin: 0 auto; }
+.home-history-panel { width: 100%; padding: 4px; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+.history-game[type="button"] { width: 100%; cursor: pointer; font: inherit; text-align: start; }
+.history-embedded-game { display: grid; grid-template-rows: auto minmax(0,1fr); min-height: 0; gap: 8px; }
+.history-embedded-game > .history-panel { width: 100%; padding: 4px; border: 0; border-radius: 0; background: transparent; box-shadow: none; }
+.history-back-button { justify-self: start; min-height: 34px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; color: var(--gold-light); background: #24362a; cursor: pointer; }
 .profile-sign-out { min-height: 42px; border: 1px solid rgba(255,255,255,.12); border-radius: 11px; color: #b9c1ba; background: transparent; cursor: pointer; }
 .entry-panel > .entry-primary { display: grid; min-height: 50px; align-items: center; border: 1px solid rgba(197,174,122,.32); border-radius: 13px; color: #f2eee4; background: #526252; font-size: .78rem; font-weight: 900; text-align: center; text-decoration: none; }
 

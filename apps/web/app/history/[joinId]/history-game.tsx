@@ -21,7 +21,7 @@ function HistoryCard({ card }: { card: Card }) {
   return <span className={`playing-card${card.suit === 'hearts' || card.suit === 'diamonds' ? ' playing-card-red' : ''}`} aria-label={`${card.rank} ${card.suit}`}><b>{card.rank}</b><i>{suits[card.suit] ?? '?'}</i></span>;
 }
 
-export default function HistoryGame({ joinId }: { joinId: string }) {
+export default function HistoryGame({ joinId, onBack }: { joinId: string; onBack?: () => void }) {
   const [game, setGame] = useState<HandList>();
   const [selected, setSelected] = useState<string>();
   const [detail, setDetail] = useState<HandDetail>();
@@ -48,9 +48,7 @@ export default function HistoryGame({ joinId }: { joinId: string }) {
     return () => controller.abort();
   }, [joinId, selected]);
   const activeAction = detail && step !== undefined && step > 0 ? detail.actions[step - 1] : undefined;
-  return <main className="history-shell">
-    <header className="history-topbar"><Link href="/"><AppBrand compact /></Link><Link href="/history">← כל המשחקים</Link></header>
-    <section className="history-panel history-detail-panel"><div className="history-heading"><span>שולחן {joinId.slice(0, 6).toUpperCase()}</span><h1>הידיים שלי</h1><p>בחרו יד, ואז עברו בין הפעולות שלה. קלפים חסויים נשארים סגורים.</p></div>
+  const content = <section className="history-panel history-detail-panel"><div className="history-heading"><span>שולחן {joinId.slice(0, 6).toUpperCase()}</span><h1>הידיים שלי</h1><p>בחרו יד, ואז עברו בין הפעולות שלה. קלפים חסויים נשארים סגורים.</p></div>
       {error ? <p role="alert">{error}</p> : null}
       {signInRequired ? <a className="entry-primary" href={googleLoginPath(`/history/${joinId}`)}>התחברות עם Google לצפייה בידיים</a> : null}
       {!game && !error && !signInRequired ? <p role="status">טוענים את המשחק…</p> : null}
@@ -65,6 +63,7 @@ export default function HistoryGame({ joinId }: { joinId: string }) {
         <div className="history-pots">{detail.pots.map((pot, index) => <p key={index}>קופה {index + 1}: {pot.amount.toLocaleString('he-IL')} · {pot.payouts.map((payout) => `${detail.players.find((player) => player.seatNumber === payout.seatNumber)?.displayName ?? 'שחקן'} +${payout.amount}`).join(', ')}</p>)}</div>
         <div className="history-timeline"><button type="button" disabled={!step} onClick={() => setStep((current) => Math.max(0, (current ?? 0) - 1))}>הפעולה הקודמת</button><span>{activeAction ? `${detail.players.find((player) => player.playerId === activeAction.playerId)?.displayName ?? 'שחקן'} · ${actionNames[activeAction.type] ?? activeAction.type}${activeAction.raiseTo ? ` ל־${activeAction.raiseTo}` : activeAction.amount ? ` ${activeAction.amount}` : ''}` : 'תחילת היד'}<small>{step ?? 0} / {detail.actions.length}</small></span><button type="button" disabled={step === detail.actions.length} onClick={() => setStep((current) => Math.min(detail.actions.length, (current ?? 0) + 1))}>הפעולה הבאה</button></div>
       </div> : null}
-    </section>
-  </main>;
+    </section>;
+  if (onBack) return <div className="history-embedded-game"><button type="button" className="history-back-button" onClick={onBack}>← כל המשחקים</button>{content}</div>;
+  return <main className="history-shell"><header className="history-topbar"><Link href="/"><AppBrand compact /></Link><Link href="/history">← כל המשחקים</Link></header>{content}</main>;
 }

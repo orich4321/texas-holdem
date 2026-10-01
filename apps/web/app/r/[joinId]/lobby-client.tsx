@@ -14,7 +14,6 @@ import { AvatarPicker } from '../../avatar-picker';
 import { ProfileImage } from '../../profile-image';
 import { unlockActionAudio } from '../../action-sounds';
 import { googleLoginPath, loadAccount, profilePath, type AccountState } from '../../account-api';
-import { AccountLink } from '../../account-link';
 import { usePageActivity } from '../../use-page-activity';
 
 type LobbyClientProps = { joinId: string; isHostRoute?: boolean };
@@ -225,7 +224,6 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
       <header className="lobby-topbar"><AppBrand compact /><span className="private-pill"><i /> שולחן פרטי</span></header>
       <section className="lobby-card" aria-labelledby="lobby-title">
         <header className="lobby-header">
-          <AccountLink next={`/r/${joinId}${lobby.isHost ? '/host' : ''}`} className="lobby-profile-button" />
           <p className="lobby-kicker">LOBBY · {joinId.slice(0, 6).toUpperCase()}</p>
           <h1 id="lobby-title">מחכים לשחקנים</h1>
           <p>הצטרפו, שתפו את הקישור, וכשהחברים כאן — מתחילים.</p>

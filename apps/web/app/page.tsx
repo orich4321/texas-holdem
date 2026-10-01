@@ -7,6 +7,7 @@ import { AppBrand } from './ui';
 import { AvatarPicker } from './avatar-picker';
 import { googleLoginPath, loadAccount, profilePath, type AccountState } from './account-api';
 import { ProfileImage } from './profile-image';
+import { HomeAccountPanel } from './home-account-panel';
 
 export default function HomePage() {
   const [nickname, setNickname] = useState('');
@@ -19,6 +20,7 @@ export default function HomePage() {
   const [pending, setPending] = useState(false);
   const [status, setStatus] = useState<string>();
   const [account, setAccount] = useState<AccountState>();
+  const [accountPanelOpen, setAccountPanelOpen] = useState(false);
   useEffect(() => {
     if (new URLSearchParams(globalThis.location.search).has('auth_error')) setStatus('ההתחברות עם Google לא הושלמה. נסו שוב.');
     void loadAccount().then((state) => {
@@ -80,8 +82,9 @@ export default function HomePage() {
           {account?.enabled && !account.profile ? <a className="entry-primary" href={googleLoginPath('/')}>התחברות עם Google</a> : null}
           {account?.enabled && account.profile && !account.profile.displayName ? <a className="entry-primary" href={profilePath('/')}>השלמת פרופיל השחקן</a> : null}
           {!account && !status ? <p role="status">בודקים את החשבון…</p> : null}
+          {account?.enabled && account.profile?.displayName ? <button type="button" className="entry-account" onClick={() => setAccountPanelOpen(true)} aria-label="פתיחת הפרופיל והיסטוריית המשחקים"><ProfileImage className="entry-account-avatar" dataUrl={account.profile.avatarDataUrl} fallback="♠" /><span>{account.profile.displayName}</span><small>פרופיל והיסטוריה ⚙</small></button> : null}
           {account && (!account.enabled || account.profile?.displayName) ? <form className="entry-form host-form" onSubmit={handleSubmit}>
-            {account?.enabled && account.profile?.displayName ? <a className="entry-account" href={profilePath('/')}><ProfileImage className="entry-account-avatar" dataUrl={account.profile.avatarDataUrl} fallback="♠" /><span>{account.profile.displayName}</span><small>עריכת פרופיל ⚙</small></a> : <>
+            {account?.enabled && account.profile?.displayName ? null : <>
               <label htmlFor="nickname">השם שלכם בשולחן</label>
               <input id="nickname" name="nickname" type="text" autoComplete="nickname" maxLength={24} placeholder="למשל: אורי" value={nickname} onChange={(event) => setNickname(event.target.value)} disabled={pending} aria-describedby={status ? 'host-status' : undefined} />
               <AvatarPicker value={avatarDataUrl} onChange={setAvatarDataUrl} disabled={pending} />
@@ -102,6 +105,7 @@ export default function HomePage() {
           <a className="entry-secondary-link" href="/enter-room">יש לכם קוד חדר? היכנסו למשחק</a>
         </div>
       </section>
+      {accountPanelOpen && account?.profile ? <HomeAccountPanel account={account} onClose={() => setAccountPanelOpen(false)} onAccountChange={(updated) => { setAccount(updated); setNickname(updated.profile?.displayName ?? ''); setAvatarDataUrl(updated.profile?.avatarDataUrl ?? undefined); }} /> : null}
     </main>
   );
 }
