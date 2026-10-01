@@ -16,15 +16,15 @@ const result = {
   board: [card('A', 'spades')],
   players: [
     { playerId: 'self', playerName: 'אני', seatNumber: 1, folded: true, holeCards: [card('K', 'hearts'), card('Q', 'hearts')] },
-    { playerId: 'showdown-a', playerName: 'שחקן א', seatNumber: 2, folded: false, holeCards: [card('J', 'spades'), card('10', 'spades')] },
-    { playerId: 'showdown-b', playerName: 'שחקן ב', seatNumber: 3, folded: false, holeCards: [card('2', 'clubs'), card('3', 'clubs')] },
+    { playerId: 'showdown-a', playerName: 'שחקן א', seatNumber: 2, holeCards: [card('J', 'spades'), card('10', 'spades')] },
+    { playerId: 'showdown-b', playerName: 'שחקן ב', seatNumber: 3, holeCards: [card('2', 'clubs'), card('3', 'clubs')] },
     { playerId: 'folded', playerName: 'שחקן ג', seatNumber: 4, folded: true, holeCards: [card('A', 'hearts'), card('A', 'diamonds')] },
   ],
   pots: [{ amount: 20, winnerSeatNumbers: [2], payouts: [{ seatNumber: 2, amount: 20 }] }],
   privateDeck: [card('9', 'spades')],
 };
 
-test('history reveals own cards and showdown cards, but masks folded opponents unless individually revealed', () => {
+test('history reveals showdown cards even when folded=false was omitted, but masks unrevealed folded cards', () => {
   const events = [
     { sequence: 8, type: 'PLAYER_ACTION', payload: { actorPlayerId: 'self', action: { type: 'fold' } }, createdAt: new Date('2026-10-01T00:00:00Z') },
     { sequence: 10, type: 'SHOWDOWN_CARD_REVEALED', payload: { playerId: 'folded', cardIndex: 1 }, createdAt: new Date('2026-10-01T00:00:01Z') },

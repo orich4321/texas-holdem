@@ -30,7 +30,10 @@ function int(value: unknown): number {
 export function projectHandHistory(result: unknown, ownPlayerIds: ReadonlySet<string>, events: readonly Event[]) {
   const stored = record(result) ?? {};
   const players = Array.isArray(stored.players) ? stored.players.map(record).filter((player): player is Record<string, unknown> => player !== null) : [];
-  const showdownPlayers = players.filter((player) => player.folded === false);
+  // Older and current settlements can omit `folded` for an active seat:
+  // `isFolded` is optional in the authoritative hand, and JSON drops undefined.
+  // Only an explicit true means the player folded.
+  const showdownPlayers = players.filter((player) => player.folded !== true);
   const publicShowdown = showdownPlayers.length >= 2;
   const revealed = new Map<string, Set<number>>();
   for (const event of events) {
@@ -51,7 +54,7 @@ export function projectHandHistory(result: unknown, ownPlayerIds: ReadonlySet<st
         displayName: typeof player.playerName === 'string' ? player.playerName : 'שחקן',
         seatNumber: int(player.seatNumber),
         folded: player.folded === true,
-        holeCards: [0, 1].map((index) => ownPlayerIds.has(playerId) || (publicShowdown && player.folded === false) || revealed.get(playerId)?.has(index)
+        holeCards: [0, 1].map((index) => ownPlayerIds.has(playerId) || (publicShowdown && player.folded !== true) || revealed.get(playerId)?.has(index)
           ? actualCards[index] ?? null : null),
       };
     }),
