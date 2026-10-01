@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import Link from 'next/link';
 import { io } from 'socket.io-client';
 import { parsePositiveInteger } from '../../numeric-input';
 import { ProfileImage } from '../../profile-image';
@@ -1273,7 +1274,9 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
           </li>;
         })}</ul>
         <small className="final-summary-note">הדירוג מסודר לפי הרווח הנקי{isCurrentHost ? ' · פירוט מלא נשמר בקובץ JSON.' : '.'}</small>
-        {isCurrentHost ? <button type="button" disabled={downloadingSummary} onClick={() => void downloadFinalSummary()}>{downloadingSummary ? 'מורידים…' : 'הורדת סיכום JSON'}</button> : null}
+        <div className="final-summary-actions"><Link href="/">חזרה למסך הראשי</Link><Link href={`/history/${encodeURIComponent(joinId)}`}>צפייה בידיים במשחק</Link>
+          {isCurrentHost ? <button type="button" disabled={downloadingSummary} onClick={() => void downloadFinalSummary()}>{downloadingSummary ? 'מורידים…' : 'הורדת סיכום JSON'}</button> : null}
+        </div>
       </section></div> : null}
     </main>
   );

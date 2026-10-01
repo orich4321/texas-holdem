@@ -418,7 +418,10 @@ button:disabled { cursor: wait; opacity: 0.55; }
 .host-between-actions .final-hand-button { color: #362400; border-color: var(--gold-line); background: var(--gold); }
 .host-player-removals { grid-template-columns: repeat(2,minmax(0,1fr)); }
 .host-player-removals button { color: #ffd9d4; border-color: rgba(216,104,104,.27); background: rgba(123,42,42,.4); }
-.final-summary > button { min-height: 46px; border: 1px solid rgba(196,171,119,.28); border-radius: 12px; color: #17140e; background: linear-gradient(135deg,var(--brass-button-light),var(--brass-button)); cursor: pointer; font-weight: 900; }
+.final-summary-actions { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 7px; }
+.final-summary-actions > a, .final-summary-actions > button { display: grid; min-height: 44px; align-items: center; padding: 6px; border: 1px solid var(--gold-line); border-radius: 11px; color: var(--ink); background: #304237; cursor: pointer; font-size: .7rem; font-weight: 900; text-decoration: none; }
+.final-summary-actions > a:nth-child(2) { color: #17140e; background: linear-gradient(135deg,var(--brass-button-light),var(--brass-button)); }
+.final-summary-actions > button { grid-column: 1/-1; min-height: 39px; color: var(--gold-light); background: rgba(197,174,122,.08); }
 .table-connection { align-self: center; justify-self: center; margin: 0; padding: 18px 22px; border: 1px solid var(--gold-line); border-radius: 16px; color: #d7e0da; background: var(--panel); box-shadow: var(--shadow); }
 
 /* Host management stays out of the playing surface until explicitly opened. */
@@ -754,6 +757,7 @@ button:disabled { cursor: wait; opacity: 0.55; }
 .social-person strong { overflow: hidden; color: var(--ink); font-size: .72rem; text-overflow: ellipsis; white-space: nowrap; }
 .social-person small { justify-self: start; color: var(--muted); font-size: .6rem; }
 .social-message { color: var(--gold-light) !important; }
+.social-load-more { min-height: 40px; border: 1px solid var(--gold-line); border-radius: 9px; color: var(--gold-light); background: #263b2d; cursor: pointer; font-size: .7rem; font-weight: 850; }
 .lobby-friend-invites { display: grid; min-height: 0; gap: 6px; }
 .lobby-friend-invites > strong { color: var(--gold-light); font-size: .7rem; }
 .lobby-friend-invites > small, .lobby-friend-invites p { margin: 0; color: var(--muted); font-size: .6rem; }

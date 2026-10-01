@@ -1416,15 +1416,10 @@ export class RoomRepository {
     const frames: ReplayFrame[] = snapshots.map((snapshot) => {
       const hand = hydrateSignedPrivateHandSnapshot(snapshot.state as unknown as SignedPrivateHandSnapshot,
         { roomId: room.id, sequence: snapshot.sequence }, this.privateSnapshotKeyring).hand;
-      const contenders = hand.seats.filter((seat) => seat.holeCards && !seat.isFolded);
       return {
         sequence: snapshot.sequence, street: hand.street, board: hand.communityCards.map((card) => ({ ...card })), pot: hand.pot,
         seats: hand.seats.map((seat) => ({ playerId: seat.playerId, seatNumber: seat.seatNumber, stack: seat.stack,
           currentBet: seat.currentBet, totalCommitted: seat.totalCommitted, isFolded: seat.isFolded === true })),
-        allInCardsPublic: contenders.length >= 2 && contenders.every((seat) => seat.stack === 0) && hand.pendingActorSeats.length === 0,
-        reveals: hand.revealedHoleCards.map((reveal) => ({
-          playerId: hand.seats.find((seat) => seat.seatNumber === reveal.seatNumber)?.playerId ?? '', cardIndexes: [...reveal.cardIndexes],
-        })),
       };
     });
     const ownPlayerIds = new Set(room.players.map((player) => player.id));

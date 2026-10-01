@@ -68,7 +68,7 @@ export default function HistoryGame({ joinId, onBack }: { joinId: string; onBack
         : activeStep?.kind === 'reveal' ? `${actingPlayer?.displayName ?? 'שחקן'} חשף/ה קלף`
           : activeStep?.kind === 'rabbit' ? `נחשף ${streetNames[activeStep.street] ?? 'קלף'} להמחשה בלבד`
           : activeStep?.kind === 'board' || activeStep?.kind === 'showdown' ? `נפתח ${streetNames[activeStep.street] ?? 'הלוח'}` : '';
-  const content = <section className="history-panel history-detail-panel"><div className="history-heading"><span>שולחן {joinId.slice(0, 6).toUpperCase()}</span><h1>שחזור יד</h1><p>הלוח, הצ׳יפים והקלפים הגלויים מתעדכנים בכל צעד. קלפים חסויים נשארים סגורים.</p></div>
+  const content = <section className="history-panel history-detail-panel"><div className="history-heading"><span>שולחן {joinId.slice(0, 6).toUpperCase()}</span><h1>שחזור יד</h1><p>קלפים שנחשפו במשחק גלויים כבר מתחילת השחזור, כדי לראות מה קרה מאחורי הקלעים. קלפים חסויים נשארים סגורים.</p></div>
       {error ? <p role="alert">{error}</p> : null}
       {signInRequired ? <a className="entry-primary" href={googleLoginPath(`/history/${joinId}`)}>התחברות עם Google לצפייה בידיים</a> : null}
       {!game && !error && !signInRequired ? <p role="status">טוענים את המשחק…</p> : null}

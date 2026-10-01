@@ -9,6 +9,18 @@ function pair(a: string, b: string) {
 export class SocialRepository {
   constructor(private readonly db: PrismaClient) {}
 
+  /** A bounded, account-only directory; never return email or auth metadata. */
+  async listUsers(accountId: string, after?: string) {
+    const users = await this.db.account.findMany({
+      where: { id: { not: accountId }, displayName: { not: null }, username: { not: null, ...(after ? { gt: after } : {}) } },
+      orderBy: { username: 'asc' },
+      take: 21,
+      select: publicAccount,
+    });
+    const page = users.slice(0, 20);
+    return { users: page, nextCursor: users.length > 20 ? page[page.length - 1]?.username ?? null : null };
+  }
+
   async overview(accountId: string) {
     const [friends, incoming, outgoing, invitations] = await Promise.all([
       this.db.friend.findMany({ where: { OR: [{ accountAId: accountId }, { accountBId: accountId }] }, include: { accountA: { select: publicAccount }, accountB: { select: publicAccount } } }),

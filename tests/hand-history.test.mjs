@@ -41,7 +41,7 @@ test('history reveals own cards and showdown cards, but masks folded opponents u
   assert.deepEqual(uncontested.players[1].holeCards, [null, null]);
 });
 
-test('replay opens the board after its closing action and never shows an opponent early', () => {
+test('replay opens the board in order but shows every eventually public hole card from the deal', () => {
   const finished = { ...result, board: [card('A', 'spades'), card('2', 'diamonds'), card('7', 'clubs')],
     stacks: [{ playerId: 'self', stack: 90 }, { playerId: 'showdown-a', stack: 110 }, { playerId: 'showdown-b', stack: 80 }, { playerId: 'folded', stack: 100 }] };
   const events = [
@@ -65,9 +65,11 @@ test('replay opens the board after its closing action and never shows an opponen
   assert.deepEqual(replay.map((step) => step.kind), ['deal', 'action', 'action', 'showdown', 'result', 'reveal']);
   assert.equal(replay[2].board.length, 0);
   assert.equal(replay[3].board.length, 3);
-  assert.deepEqual(replay[0].players[1].holeCards, [null, null]);
+  assert.deepEqual(replay[0].players[1].holeCards, finished.players[1].holeCards);
+  assert.deepEqual(replay[0].players[2].holeCards, finished.players[2].holeCards);
+  assert.deepEqual(replay[0].players[3].holeCards, [null, finished.players[3].holeCards[1]]);
   assert.deepEqual(replay[4].players[1].holeCards, finished.players[1].holeCards);
-  assert.deepEqual(replay[4].players[3].holeCards, [null, null]);
+  assert.deepEqual(replay[4].players[3].holeCards, [null, finished.players[3].holeCards[1]]);
   assert.deepEqual(replay[5].players[3].holeCards, [null, finished.players[3].holeCards[1]]);
   assert.equal(replay[4].pot, 0);
   assert.equal(replay[4].players[1].stack, 110);
@@ -76,9 +78,16 @@ test('replay opens the board after its closing action and never shows an opponen
   const allIn = projectHandReplay(finished, new Set(['self']), events.slice(0, 2), [
     frame(0, 'preflop', []), { ...frame(1, 'preflop', []), allInCardsPublic: true },
   ]);
-  assert.deepEqual(allIn[0].players[1].holeCards, [null, null]);
+  assert.deepEqual(allIn[0].players[1].holeCards, finished.players[1].holeCards);
   assert.deepEqual(allIn[1].players[1].holeCards, finished.players[1].holeCards);
   assert.deepEqual(allIn[1].players[3].holeCards, [null, null]);
+
+  const uncontested = { ...finished, players: [finished.players[0], finished.players[1], { ...finished.players[2], folded: true }, finished.players[3]] };
+  const privateReplay = projectHandReplay(uncontested, new Set(['self']), events.slice(0, 2), [frame(0, 'preflop', [])]);
+  assert.deepEqual(privateReplay[0].players[0].holeCards, finished.players[0].holeCards);
+  assert.deepEqual(privateReplay[0].players[1].holeCards, [null, null]);
+  assert.deepEqual(privateReplay[0].players[2].holeCards, [null, null]);
+  assert.deepEqual(privateReplay[0].players[3].holeCards, [null, null]);
 });
 
 test('evening recap counts seated hands and split-pot winners without double-counting a hand', () => {

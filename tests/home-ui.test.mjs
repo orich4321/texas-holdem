@@ -74,8 +74,22 @@ test('profile editing and private hand history open from home, not the active ta
   assert.match(panel, /<HistoryList onSelectGame=/);
   assert.match(panel, /<HistoryGame joinId=/);
   assert.match(history, /credentials: 'include'/);
-  assert.doesNotMatch(table, /AccountLink|\/history/);
+  assert.doesNotMatch(table, /AccountLink/);
+  assert.match(table, /חזרה למסך הראשי/);
+  assert.match(table, /צפייה בידיים במשחק/);
   assert.doesNotMatch(lobby, /AccountLink|\/history/);
+});
+
+test('friends panel shows an account directory instead of requiring a typed username', async () => {
+  const [panel, api] = await Promise.all([
+    source('apps/web/app/home-account-panel.tsx'),
+    source('apps/web/app/social-api.ts'),
+  ]);
+  assert.match(panel, /שחקנים באפליקציה/);
+  assert.match(panel, /loadSocialUsers/);
+  assert.match(panel, /הצגת שחקנים נוספים/);
+  assert.doesNotMatch(panel, /friend-username|social-request-form/);
+  assert.match(api, /credentials: 'include'/);
 });
 
 test('minimal entry button text meets WCAG AA contrast', async () => {

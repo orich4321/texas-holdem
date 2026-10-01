@@ -8,6 +8,15 @@ export type SocialOverview = {
   invitations: { id: string; from: SocialAccount; joinId: string; roomStatus: string }[];
 };
 
+export type SocialUserPage = { users: SocialAccount[]; nextCursor: string | null };
+
+export async function loadSocialUsers(cursor?: string): Promise<SocialUserPage> {
+  const path = cursor ? `/social/users?cursor=${encodeURIComponent(cursor)}` : '/social/users';
+  const response = await globalThis.fetch(`${SERVER_URL}${path}`, { credentials: 'include', cache: 'no-store' });
+  if (!response.ok) throw new Error('User directory unavailable');
+  return await response.json() as SocialUserPage;
+}
+
 export async function loadSocial(): Promise<SocialOverview> {
   const response = await globalThis.fetch(`${SERVER_URL}/social`, { credentials: 'include', cache: 'no-store' });
   if (!response.ok) throw new Error('Social unavailable');

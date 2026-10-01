@@ -8,6 +8,7 @@ import { createApp } from '../apps/server/src/http-app.ts';
 import { GoogleOAuth, safeAuthDestination } from '../apps/server/src/google-oauth.ts';
 import { authenticateSocketSession } from '../apps/server/src/socket-session.ts';
 import { AccountRepository, usernameBaseFromEmail } from '../apps/server/src/persistence/account-repository.ts';
+import { SocialRepository } from '../apps/server/src/persistence/social-repository.ts';
 
 const joinId = '0123456789abcdef';
 const accountToken = 'A'.repeat(43);
@@ -58,6 +59,7 @@ test('friends and room invitations require authenticated recipients and the actu
   };
   const social = {
     async overview(id) { calls.push(['overview', id]); return { friends: [], incoming: [], outgoing: [], invitations: [] }; },
+    async listUsers(id, cursor) { calls.push(['users', id, cursor]); return { users: [{ id: otherId, username: 'other', displayName: 'אחר', avatarDataUrl: null }], nextCursor: null }; },
     async notificationSnapshot(id) { calls.push(['notifications', id]); return { invitations: [], pendingFriendRequests: 1 }; },
     async requestFriend(id, username) { calls.push(['request', id, username]); return 'sent'; },
     async answerFriendRequest(id, target, accept) { calls.push(['answer', id, target, accept]); return id === otherId; },
@@ -68,6 +70,13 @@ test('friends and room invitations require authenticated recipients and the actu
     const json = { 'content-type': 'application/json' };
     assert.equal((await globalThis.fetch(`${base}/social`)).status, 401);
     assert.equal((await globalThis.fetch(`${base}/social`, { headers: { cookie: `poker_account_token=${accountToken}` } })).status, 200);
+    assert.equal((await globalThis.fetch(`${base}/social/users`)).status, 401);
+    assert.equal((await globalThis.fetch(`${base}/social/users?cursor=bad%20cursor`, { headers: { cookie: `poker_account_token=${accountToken}` } })).status, 400);
+    const directory = await globalThis.fetch(`${base}/social/users?cursor=ori`, { headers: { cookie: `poker_account_token=${accountToken}` } });
+    assert.equal(directory.status, 200);
+    assert.equal(directory.headers.get('cache-control'), 'private, no-store');
+    assert.deepEqual(await directory.json(), { users: [{ id: otherId, username: 'other', displayName: 'אחר', avatarDataUrl: null }], nextCursor: null });
+    assert.deepEqual(calls.find((call) => call[0] === 'users'), ['users', account.id, 'ori']);
     const notifications = await globalThis.fetch(`${base}/social/invitations`, { headers: { cookie: `poker_account_token=${accountToken}` } });
     assert.deepEqual(await notifications.json(), { invitations: [], pendingFriendRequests: 1 });
     const friendRequest = await globalThis.fetch(`${base}/social/friend-requests`, { method: 'POST', headers: { ...json, cookie: `poker_account_token=${accountToken}` }, body: JSON.stringify({ username: 'OriCh4321' }) });
@@ -88,6 +97,21 @@ test('friends and room invitations require authenticated recipients and the actu
     assert.equal(acceptedInvite.status, 200);
     assert.deepEqual(await acceptedInvite.json(), { joinPath: `/r/${joinId}` });
   }, social);
+});
+
+test('user directory is bounded, ordered, excludes the requester, and selects no email', async () => {
+  const queries = [];
+  const rows = Array.from({ length: 21 }, (_, index) => ({ id: `user-${index}`, username: `user${String(index).padStart(2, '0')}`, displayName: `שחקן ${index}`, avatarDataUrl: null }));
+  const repository = new SocialRepository({ account: { async findMany(query) { queries.push(query); return rows; } } });
+  const first = await repository.listUsers(account.id);
+  assert.equal(first.users.length, 20);
+  assert.equal(first.nextCursor, 'user19');
+  await repository.listUsers(account.id, first.nextCursor);
+  assert.deepEqual(queries[0].where, { id: { not: account.id }, displayName: { not: null }, username: { not: null } });
+  assert.deepEqual(queries[1].where.username, { not: null, gt: 'user19' });
+  assert.deepEqual(queries[0].orderBy, { username: 'asc' });
+  assert.equal(queries[0].take, 21);
+  assert.deepEqual(queries[0].select, { id: true, username: true, displayName: true, avatarDataUrl: true });
 });
 
 test('Google OAuth uses PKCE and accepts only a verified Google identity from this Supabase project', async () => {

@@ -7,8 +7,6 @@ export type ReplayFrame = {
   board: readonly Card[];
   pot: number;
   seats: readonly { playerId: string; seatNumber: number; stack: number; currentBet: number; totalCommitted: number; isFolded: boolean }[];
-  allInCardsPublic: boolean;
-  reveals: readonly { playerId: string; cardIndexes: readonly number[] }[];
 };
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -96,8 +94,6 @@ export function projectHandReplay(result: unknown, ownPlayerIds: ReadonlySet<str
     const event = eventBySequence.get(frame.sequence);
     const payload = record(event?.payload) ?? {};
     const action = record(payload.action) ?? {};
-    const publicCards = street === 'showdown' && final.players.filter((player) => !player.folded).length >= 2;
-    const revealedByPlayer = new Map(frame.reveals.map((reveal) => [reveal.playerId, reveal.cardIndexes]));
     steps.push({
       sequence: frame.sequence, kind, street,
       board: board.map((value) => ({ ...value })),
@@ -110,16 +106,16 @@ export function projectHandReplay(result: unknown, ownPlayerIds: ReadonlySet<str
       } : null,
       players: frame.seats.map((seat) => {
         const finalPlayer = final.players.find((player) => player.playerId === seat.playerId);
-        const visibleIndices = revealedByPlayer.get(seat.playerId) ?? [];
-        const showBoth = ownPlayerIds.has(seat.playerId)
-          || (!seat.isFolded && (publicCards || frame.allInCardsPublic));
         return {
           playerId: seat.playerId,
           stack: settled || kind === 'result' ? finalStacks.get(seat.playerId) ?? seat.stack : seat.stack,
           currentBet: settled || kind === 'result' ? 0 : seat.currentBet,
           totalCommitted: seat.totalCommitted,
           folded: seat.isFolded,
-          holeCards: [0, 1].map((index) => showBoth || visibleIndices.includes(index) ? finalPlayer?.holeCards[index] ?? null : null),
+          // The final account-safe projection is the visibility boundary for
+          // every replay frame. This lets players see already-public cards
+          // from the deal without exposing a card that stayed private.
+          holeCards: finalPlayer?.holeCards ?? [null, null],
         };
       }),
     });
