@@ -11,6 +11,7 @@ import { HomeAccountPanel } from './home-account-panel';
 import { deleteGamePreset, loadGamePresets, saveGamePreset, type GamePreset } from './game-presets';
 import { answerGameInvite, loadInvitations, loadSocial, type SocialOverview } from './social-api';
 import { usePageActivity } from './use-page-activity';
+import { HomeActiveGames } from './home-active-games';
 
 export default function HomePage() {
   const activity = usePageActivity();
@@ -180,6 +181,7 @@ export default function HomePage() {
           {account?.enabled && account.profile && !account.profile.displayName ? <a className="entry-primary" href={profilePath('/')}>השלמת פרופיל השחקן</a> : null}
           {!account && !status ? <p role="status">בודקים את החשבון…</p> : null}
           {account?.enabled && account.profile?.displayName ? <button type="button" className="entry-account" onClick={() => setAccountPanelOpen(true)} aria-label="פתיחת הפרופיל, החברים והיסטוריית המשחקים"><ProfileImage className="entry-account-avatar" dataUrl={account.profile.avatarDataUrl} fallback="♠" /><span>{account.profile.displayName}</span><small>{pendingFriendRequests ? `${pendingFriendRequests} בקשות חברות · ` : ''}פרופיל וחברים ⚙</small></button> : null}
+          {account?.profile?.id ? <HomeActiveGames accountId={account.profile.id} networkActive={activity.networkActive} /> : null}
           {account && (!account.enabled || account.profile?.displayName) ? <form className="entry-form host-form" onSubmit={handleSubmit}>
             {account?.enabled && account.profile?.displayName ? null : <>
               <label htmlFor="nickname">השם שלכם בשולחן</label>

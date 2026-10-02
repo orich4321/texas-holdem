@@ -1349,6 +1349,28 @@ export class RoomRepository {
     });
   }
 
+  /** A compact, account-scoped resume list for the home screen. */
+  async listActiveGamesForAccount(accountId: string) {
+    const rooms = await this.db.room.findMany({
+      where: {
+        status: { in: ['WAITING', 'IN_PROGRESS'] },
+        players: { some: { accountId, leftAt: null } },
+      },
+      orderBy: { updatedAt: 'desc' },
+      select: {
+        joinId: true, status: true, hostPlayerId: true,
+        players: { where: { accountId, leftAt: null }, select: { id: true } },
+        _count: { select: { settlements: true } },
+      },
+    });
+    return rooms.map((room) => ({
+      joinId: room.joinId,
+      status: room.status,
+      handCount: room._count.settlements,
+      isHost: room.players.some((player) => player.id === room.hostPlayerId),
+    }));
+  }
+
   /** Account-scoped history; never use a room URL or a legacy room cookie as authority. */
   async listGamesForAccount(accountId: string) {
     const rooms = await this.db.room.findMany({

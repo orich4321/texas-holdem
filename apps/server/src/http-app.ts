@@ -469,6 +469,15 @@ export function createApp({ roomRepository, accountRepository, socialRepository,
     }
   });
 
+  routes.get('/auth/active-games', async (request, response) => {
+    try {
+      const account = await findAccountIdentity(request.headers.cookie);
+      if (!account) { response.status(401).json({ error: { code: 'AUTH_REQUIRED' } }); return; }
+      response.setHeader('Cache-Control', 'private, no-store');
+      response.json({ games: await roomRepository.listActiveGamesForAccount(account.id) });
+    } catch { response.status(500).json({ error: { code: 'INTERNAL_ERROR' } }); }
+  });
+
   routes.get('/auth/history', async (request, response) => {
     try {
       const account = await findAccountIdentity(request.headers.cookie);

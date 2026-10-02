@@ -118,6 +118,16 @@ test('friend removal is red and room invitations have a separate named action', 
   assert.match(lobby, /className="lobby-friend-invite"[^]*<strong>\{friend\.displayName \?\? friend\.username\}<\/strong>[^]*<button[^]*>\{invitingFriendId === friend\.id \? 'שולחים…' : 'הזמנה'\}<\/button>/);
 });
 
+test('home offers a compact return path to every account-owned active room', async () => {
+  const home = await source('apps/web/app/page.tsx');
+  const active = await source('apps/web/app/home-active-games.tsx');
+  assert.match(home, /<HomeActiveGames accountId=\{account\.profile\.id\} networkActive=\{activity\.networkActive\}/);
+  assert.match(active, /\/auth\/active-games/);
+  assert.match(active, /game\.isHost \? '\/host' : ''/);
+  assert.match(active, /games\.map\(\(game\) => <Link/);
+  assert.match(active, /visibilitychange/);
+});
+
 test('main app shells fill the dynamic viewport without page-level scrolling', async () => {
   const styles = await source('apps/web/app/globals.css');
   const shell = rule(styles, '.entry-shell');

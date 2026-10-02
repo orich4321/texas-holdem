@@ -169,3 +169,47 @@ test('history API requires an account session and uses its account ID for every 
     await once(server, 'close');
   }
 });
+
+test('active games include only current memberships and preserve the current host route', async () => {
+  let query;
+  const db = { room: { async findMany(args) {
+    query = args;
+    return [
+      { joinId: 'room-a', status: 'IN_PROGRESS', hostPlayerId: 'player-a', players: [{ id: 'player-a' }], _count: { settlements: 28 } },
+      { joinId: 'room-b', status: 'WAITING', hostPlayerId: 'other', players: [{ id: 'player-b' }], _count: { settlements: 0 } },
+    ];
+  } } };
+  const games = await new RoomRepository(db).listActiveGamesForAccount('account-self');
+  assert.deepEqual(query.where, {
+    status: { in: ['WAITING', 'IN_PROGRESS'] },
+    players: { some: { accountId: 'account-self', leftAt: null } },
+  });
+  assert.deepEqual(query.select.players, { where: { accountId: 'account-self', leftAt: null }, select: { id: true } });
+  assert.deepEqual(games, [
+    { joinId: 'room-a', status: 'IN_PROGRESS', handCount: 28, isHost: true },
+    { joinId: 'room-b', status: 'WAITING', handCount: 0, isHost: false },
+  ]);
+});
+
+test('active game list requires account authentication and returns only account-scoped rooms', async () => {
+  const calls = [];
+  const app = createApp({
+    accountRepository: { async findIdentityBySession(token) { return token === 'A'.repeat(43) ? { id: 'account-self' } : null; } },
+    roomRepository: { async listActiveGamesForAccount(id) { calls.push(id); return [{ joinId: 'room-a', isHost: true }]; } },
+  });
+  const server = createServer(app);
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  try {
+    const url = `http://127.0.0.1:${server.address().port}/auth/active-games`;
+    assert.equal((await globalThis.fetch(url)).status, 401);
+    const response = await globalThis.fetch(url, { headers: { cookie: `poker_account_token=${'A'.repeat(43)}` } });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('cache-control'), 'private, no-store');
+    assert.deepEqual((await response.json()).games, [{ joinId: 'room-a', isHost: true }]);
+    assert.deepEqual(calls, ['account-self']);
+  } finally {
+    server.close();
+    await once(server, 'close');
+  }
+});

@@ -740,6 +740,17 @@ button:disabled { cursor: wait; opacity: 0.55; }
 .entry-stage { display: grid; align-items: center; justify-items: center; min-height: 0; padding: 0 0 clamp(28px,9dvh,92px); }
 .entry-panel { position: relative; display: grid; width: min(100%,460px); max-height: 100%; padding: clamp(20px,3.5vh,30px); overflow-y: auto; overscroll-behavior: contain; border: 1px solid rgba(183,147,84,.24); border-radius: 24px; background: linear-gradient(155deg,rgba(255,255,255,.025),transparent 42%),rgba(13,18,15,.97); box-shadow: 0 22px 64px rgba(0,0,0,.42); gap: 17px; scrollbar-width: thin; scrollbar-color: rgba(183,147,84,.28) transparent; }
 .home-entry-panel { width: min(100%,480px); }
+.home-active-games { display: grid; min-width: 0; padding: 10px; border: 1px solid rgba(120,167,194,.3); border-radius: 13px; background: rgba(22,43,42,.6); gap: 7px; }
+.home-active-games-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.home-active-games-heading strong { color: #dcece8; font-size: .7rem; }
+.home-active-games-heading small, .home-active-games > p { margin: 0; color: var(--muted); font-size: .58rem; }
+.home-active-games-list { display: grid; max-height: min(19dvh,140px); min-height: 0; overflow-y: auto; gap: 5px; }
+.home-active-game { display: flex; align-items: center; justify-content: space-between; min-width: 0; min-height: 48px; padding: 6px 9px; border: 1px solid rgba(130,177,164,.2); border-radius: 9px; color: var(--ink); background: #1a332c; gap: 8px; text-decoration: none; }
+.home-active-game:hover, .home-active-game:focus-visible { border-color: var(--poker-action-blue); background: #25463d; }
+.home-active-game > span { display: grid; min-width: 0; gap: 2px; }
+.home-active-game strong { font-size: .66rem; }
+.home-active-game small { overflow: hidden; color: #a7c1b4; font-size: .54rem; text-overflow: ellipsis; white-space: nowrap; }
+.home-active-game-enter { flex: 0 0 auto; color: #b5d4e3; font-size: .58rem; white-space: nowrap; }
 .join-entry-panel { width: min(100%,430px); }
 .entry-suit { position: absolute; top: 21px; left: 22px; color: rgba(197,174,122,.36); font-family: Georgia,serif; font-size: 1.25rem; }
 .entry-intro { display: grid; gap: 5px; text-align: center; }
