@@ -320,7 +320,7 @@ button:disabled { cursor: wait; opacity: 0.55; }
 .table-seat-self .seat-rebuy-actions { top: auto; bottom: calc(100% + 4px); }
 
 .player-panel { position: sticky; z-index: 10; grid-row: 4; bottom: max(5px, env(safe-area-inset-bottom)); display: grid; grid-template-columns: auto auto minmax(0,1fr); align-items: center; width: min(100%, 940px); margin: 0 auto; padding: 6px 8px; border: 1px solid rgba(255,255,255,.13); border-radius: 16px; background: rgba(7,15,12,.96); box-shadow: 0 14px 38px rgba(0,0,0,.48); gap: 7px 10px; backdrop-filter: blur(18px); }
-.player-panel:has(.chip-tray) { height: clamp(208px,27dvh,230px); grid-template-rows: minmax(0,1fr) auto; align-content: center; overflow: visible; }
+.player-panel:has(.chip-tray) { height: clamp(248px,32dvh,270px); grid-template-rows: minmax(0,1fr) auto; align-content: center; overflow: visible; }
 .player-panel:has(.between-hands-controls) { height: auto; }
 .your-hand > p { margin: 0 0 3px; color: #b8c2bc; font-size: .58rem; font-weight: 800; text-align: center; }
 .your-hand > p span { color: var(--emerald); }
@@ -360,8 +360,6 @@ button:disabled { cursor: wait; opacity: 0.55; }
 .chip-tray-header { min-width: 0; }
 .chip-tray-header span { color: #d8e5dc; font-size: .65rem; font-weight: 850; }
 .chip-tray-header strong { color: var(--gold-light); font-size: .69rem; font-variant-numeric: tabular-nums; }
-.chip-all-in { flex: 0 0 auto; min-height: 23px; padding: 0 7px; border: 1px solid rgba(196,180,141,.32); border-radius: 7px; color: #efe7d1; background: #38483b; cursor: pointer; font-size: .56rem; font-weight: 850; }
-.chip-all-in:disabled { opacity: .5; cursor: default; }
 .chip-piles { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 5px; }
 .chip-pile { display: grid; justify-items: center; min-width: 0; gap: 2px; }
 .chip-pile > strong { color: #e2e8e1; font-size: .67rem; font-variant-numeric: tabular-nums; }
@@ -377,18 +375,19 @@ button:disabled { cursor: wait; opacity: 0.55; }
 .chip-break, .chip-break-spacer { min-height: 16px; }
 .chip-break { padding: 0 4px; border: 0; color: #c6d2c8; background: transparent; cursor: pointer; font-size: .54rem; text-decoration: underline; }
 .chip-break:disabled { opacity: .3; cursor: default; }
-.chip-tray-actions { display: flex; align-items: center; min-width: 0; gap: 5px; }
-.chip-tray-selected { display: flex; flex: 1 1 130px; align-items: center; min-width: 0; min-height: 27px; padding: 2px 5px; overflow-x: auto; border: 1px solid rgba(255,255,255,.1); border-radius: 8px; background: rgba(0,0,0,.15); gap: 5px; }
+.chip-tray-actions { display: grid; min-width: 0; gap: 5px; }
+.chip-tray-selected { display: flex; align-items: center; min-width: 0; min-height: 28px; padding: 2px 5px; border: 1px solid rgba(255,255,255,.1); border-radius: 8px; background: rgba(0,0,0,.15); gap: 5px; }
 .chip-tray-selected > span { color: #d4dfd6; font-size: .56rem; font-weight: 800; white-space: nowrap; }
 .chip-tray-selected > small { color: var(--muted); font-size: .55rem; }
 .chip-tray-selected .bet-chip { display: flex; width: auto; min-width: 35px; height: 25px; padding: 0 5px; border-width: 2px; border-radius: 14px; box-shadow: none; gap: 2px; font-size: .55rem; }
 .chip-tray-selected .bet-chip::after { display: none; }
 .chip-tray-selected .bet-chip i { font-style: normal; font-size: .5rem; }
-.chip-tray-footer { flex: 0 0 auto; flex-wrap: nowrap; gap: 5px; }
+.chip-tray-footer { display: grid; grid-template-columns: minmax(0,1.45fr) minmax(0,1fr) minmax(0,.8fr); gap: 5px; }
 .chip-tray-footer small { margin-inline-end: auto; color: #c0cfc3; font-size: .56rem; }
-.chip-tray-footer button { min-height: 30px; padding: 0 9px; border: 1px solid rgba(196,180,141,.3); border-radius: 8px; color: #e8ece4; background: #334739; cursor: pointer; font-size: .58rem; font-weight: 800; }
+.chip-tray-footer button { min-width: 0; min-height: 44px; padding: 4px 9px; border: 1px solid rgba(196,180,141,.3); border-radius: 10px; color: #e8ece4; background: #334739; cursor: pointer; font-size: .72rem; font-weight: 900; line-height: 1.15; }
 .chip-tray-footer button:disabled { opacity: .4; cursor: default; }
 .chip-tray-footer .chip-bet-submit { color: var(--action-ink); background: var(--action-light); }
+.chip-tray-footer .chip-all-in { border-color: rgba(196,180,141,.5); color: #f4e3bf; background: #514632; }
 
 /* Between-hand controls and the end-of-game overlay */
 .modal-backdrop { position: fixed; z-index: 50; inset: 0; display: grid; padding: max(12px,env(safe-area-inset-top)) 12px max(12px,env(safe-area-inset-bottom)); background: rgba(2,6,4,.74); backdrop-filter: blur(8px); place-items: center; animation: fade-in 180ms ease both; }
@@ -589,7 +588,7 @@ button:disabled { cursor: wait; opacity: 0.55; }
   .seat-action i { width: 15px; height: 15px; flex-basis: 15px; font-size: .53rem; }
   .seat-action b { font-size: .45rem; }
   .player-panel { grid-template-columns: auto auto minmax(0,1fr); padding: 4px 5px; border-radius: 13px; gap: 3px 5px; }
-  .player-panel:has(.chip-tray) { height: clamp(208px,27dvh,230px); }
+  .player-panel:has(.chip-tray) { height: clamp(248px,32dvh,270px); }
   .player-panel:has(.chip-tray):has(.between-hands-controls) { height: auto; }
   .hole-cards .playing-card { width: clamp(42px,11.5vw,52px); }
   .your-stack strong { font-size: clamp(.9rem,3.5vw,1.1rem); }
@@ -602,22 +601,20 @@ button:disabled { cursor: wait; opacity: 0.55; }
   .chip-tray { padding: 4px 5px; gap: 2px; }
   .chip-tray-header { gap: 4px; }
   .chip-tray-header span, .chip-tray-header strong { font-size: .54rem; }
-  .chip-all-in { min-height: 21px; padding-inline: 5px; font-size: .52rem; }
   .chip-pile { gap: 1px; }
   .chip-pile > strong { font-size: .56rem; }
   .chip-pile > .bet-chip { width: 32px; height: 32px; }
   .chip-break, .chip-break-spacer { min-height: 13px; font-size: .47rem; }
   .chip-tray-actions { gap: 3px; }
-  .chip-tray-selected { min-height: 25px; gap: 3px; }
+  .chip-tray-selected { min-height: 27px; gap: 3px; }
   .chip-tray-selected .bet-chip { min-width: 29px; height: 21px; padding-inline: 3px; }
-  .chip-tray-footer { gap: 3px; }
-  .chip-tray-footer button { min-height: 27px; padding-inline: 6px; font-size: .53rem; }
+  .chip-tray-footer { gap: 4px; }
+  .chip-tray-footer button { min-height: 44px; padding-inline: 5px; font-size: .68rem; }
   .chip-tray-waiting { padding: 3px 5px; gap: 1px; }
   .chip-tray-waiting .chip-tray-header { line-height: 1; }
   .chip-tray-waiting .chip-tray-header span, .chip-tray-waiting .chip-tray-header strong { font-size: .54rem; }
   .chip-tray-waiting .chip-pile > .bet-chip { width: 27px; height: 27px; }
   .bet-chip { width: 38px; height: 38px; }
-  .chip-tray-footer small { flex-basis: 100%; }
   .final-summary-backdrop { padding: max(8px,env(safe-area-inset-top)) 8px max(8px,env(safe-area-inset-bottom)); }
   .final-summary { padding: 14px 11px; border-radius: 22px; gap: 8px; }
   .final-summary-header { grid-template-columns: 30px 1fr 30px; gap: 6px; }
