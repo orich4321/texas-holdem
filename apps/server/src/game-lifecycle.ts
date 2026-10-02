@@ -142,6 +142,8 @@ export interface ServerPlayerView {
     maxRaiseTo: number;
     minimumIncrement: number;
   }>;
+  /** The actor's complete stack may be committed even below a full minimum raise. */
+  allInRaiseTo?: number;
   holeCards: readonly [Card, Card] | readonly [];
   seats: readonly {
     seatNumber: number;
@@ -343,6 +345,10 @@ export class ServerGameLifecycle {
           minimumIncrement: hand.minimumRaiseIncrement,
         }),
       } : {}),
+      ...(legalActions && requestingSeat.stack > legalActions.toCall
+        && !hand.raiseLockedSeats?.includes(requestingSeat.seatNumber)
+        && requestingSeat.currentBet + requestingSeat.stack > hand.currentBet
+        ? { allInRaiseTo: requestingSeat.currentBet + requestingSeat.stack } : {}),
       holeCards: Object.freeze(requestingSeat.holeCards.map((card) => Object.freeze({ ...card }))) as unknown as readonly [Card, Card],
       seats: Object.freeze(hand.seats.map((seat) => Object.freeze({
         seatNumber: seat.seatNumber,

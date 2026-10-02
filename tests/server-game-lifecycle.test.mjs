@@ -35,7 +35,58 @@ test('server lifecycle starts only through the server CSPRNG boundary and expose
   assert.equal(JSON.stringify(view).includes('holeCards'), true);
   assert.equal(JSON.stringify(view).match(/"holeCards"/g).length, 1);
   assert.equal(game.viewFor('ben').raise, undefined, 'only the active authenticated player receives legal raise bounds');
+  assert.equal(game.viewFor('ben').allInRaiseTo, undefined, 'inactive players receive no all-in target');
   assert.throws(() => game.viewFor('outsider'), /not seated/i);
+});
+
+test('the active short stack receives a legal all-in target below the full minimum raise', () => {
+  const game = new ServerGameLifecycle({
+    seats: [
+      { seatNumber: 1, playerId: 'ada', playerName: 'Ada', stack: 100 },
+      { seatNumber: 2, playerId: 'ben', playerName: 'Ben', stack: 30 },
+    ],
+    dealerSeat: 1, smallBlind: 1, bigBlind: 2,
+  });
+  game.start();
+  game.applyAction('ada', { type: 'raise', raiseTo: 20 });
+  const shortStack = game.viewFor('ben');
+  assert.equal(shortStack.raise, undefined);
+  assert.equal(shortStack.allInRaiseTo, 30);
+  assert.equal(game.viewFor('ada').allInRaiseTo, undefined);
+
+  game.applyAction('ben', { type: 'all-in' });
+  const bettor = game.viewFor('ada');
+  assert.equal(bettor.toCall, 10);
+  assert.equal(bettor.raise, undefined);
+  assert.equal(bettor.allInRaiseTo, undefined);
+  assert.throws(() => game.applyAction('ada', { type: 'raise', raiseTo: 50 }), /full raise/i);
+  const called = game.applyAction('ada', { type: 'call' });
+  assert.equal(called.allInRunout?.nextStreet, 'flop');
+});
+
+test('the short all-in target is also available after the flop', () => {
+  const game = new ServerGameLifecycle({
+    seats: [
+      { seatNumber: 1, playerId: 'ada', playerName: 'Ada', stack: 100 },
+      { seatNumber: 2, playerId: 'ben', playerName: 'Ben', stack: 30 },
+    ],
+    dealerSeat: 1, smallBlind: 1, bigBlind: 2,
+  });
+  game.start();
+  game.applyAction('ada', { type: 'call' });
+  game.applyAction('ben', { type: 'check' });
+  game.applyAction('ben', { type: 'check' });
+  game.applyAction('ada', { type: 'raise', raiseTo: 20 });
+
+  const shortStack = game.viewFor('ben');
+  assert.equal(shortStack.street, 'flop');
+  assert.equal(shortStack.raise, undefined);
+  assert.equal(shortStack.allInRaiseTo, 28, 'the two-chip big blind was committed on the previous street');
+  game.applyAction('ben', { type: 'all-in' });
+  assert.equal(game.viewFor('ada').raise, undefined);
+  assert.equal(game.viewFor('ada').allInRaiseTo, undefined);
+  game.applyAction('ada', { type: 'call' });
+  assert.equal(game.viewFor('ada').allInRunout?.nextStreet, 'turn');
 });
 
 test('fold against an all-in sole survivor immediately awards the pot', () => {

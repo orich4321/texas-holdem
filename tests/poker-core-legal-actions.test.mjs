@@ -364,6 +364,31 @@ test('preflop all-in permits a short raise without changing the minimum full-rai
   assert.equal(hand.pot, 15);
 });
 
+test('a 30-chip stack may shove over 20, but the short raise does not reopen the bettor', () => {
+  const hand = startHand({
+    seats: [
+      { seatNumber: 1, playerId: 'ada', stack: 100 },
+      { seatNumber: 2, playerId: 'ben', stack: 30 },
+    ],
+    dealerSeat: 1, smallBlind: 1, bigBlind: 2, randomInt: unshuffledRandomInt,
+  });
+  const opened = applyPreflopRaise(hand, 1, 20);
+  assert.equal(getPreflopLegalActions(opened).canRaise, false);
+
+  const shoved = applyPreflopAllIn(opened, 2);
+  assert.equal(shoved.currentBet, 30);
+  assert.equal(shoved.minimumRaiseIncrement, 18);
+  assert.deepEqual(shoved.pendingActorSeats, [1]);
+  assert.deepEqual(shoved.raiseLockedSeats, [1]);
+  assert.equal(getPreflopLegalActions(shoved).canRaise, false);
+  assert.throws(() => applyPreflopRaise(shoved, 1, 50), /full raise/i);
+  assert.throws(() => applyPreflopAllIn(shoved, 1), /locked raise/i);
+
+  const called = applyPreflopCall(shoved, 1);
+  assert.deepEqual(called.pendingActorSeats, []);
+  assert.equal(called.pot, 60);
+});
+
 test('preflop all-in rejects a non-raising stack and malformed pots without changing the hand', () => {
   const shortCallHand = startHand({
     seats: [
@@ -417,7 +442,7 @@ test('coverage only: a short all-in preserves a larger prior full-raise incremen
   assert.equal(fullRaise.minimumRaiseIncrement, 20);
   assert.equal(allInHand.currentBet, 33);
   assert.equal(allInHand.minimumRaiseIncrement, 20);
-  assert.equal(getPreflopLegalActions(allInHand).minRaiseTo, 53);
+  assert.equal(getPreflopLegalActions(allInHand).minRaiseTo, null, 'the earlier bettor may call but a short shove does not reopen raising');
 });
 
 test('preflop all-in permits a full raise, consumes the actor stack, and reopens the raise increment', () => {

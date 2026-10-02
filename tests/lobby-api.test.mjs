@@ -39,7 +39,7 @@ test('mobile table UI keeps the player anchored, reconnects safely, and exposes 
   assert.match(table, /reconnectionDelayMax:\s*10_000/);
   assert.match(table, /document\.addEventListener\('visibilitychange'/);
   assert.match(table, /CHIP_VALUES\.map\(\(value\)/);
-  assert.match(table, /className=\{`chip-tray\$\{!isTurn \|\| !view\.raise/);
+  assert.match(table, /className=\{`chip-tray\$\{!isTurn \|\| !canBetWithChips/);
   assert.match(table, /className="chip-piles"/);
   assert.doesNotMatch(table, /type="range"/);
   assert.doesNotMatch(table, /showRaiseControls/);
@@ -51,7 +51,9 @@ test('mobile table UI keeps the player anchored, reconnects safely, and exposes 
   assert.doesNotMatch(table, /className="action-fold"/);
   assert.doesNotMatch(table, />צ׳ק<\/button>/);
   assert.match(table, /isTurn && view\.toCall > 0 \? <div className="action-bar"/);
-  assert.match(table, /isTurn && view\.raise \? <div className="chip-tray-actions"/);
+  assert.match(table, /isTurn && canBetWithChips \? <div className="chip-tray-actions"/);
+  assert.match(table, /selectedRaiseTo === view\.allInRaiseTo \? \{ type: 'all-in' \}/);
+  assert.match(table, /selectedRaiseTo === view\.allInRaiseTo \|\| \(view\.raise && selectedRaiseTo >= view\.raise\.minRaiseTo/);
   assert.match(table, /className="table-wagers"/);
   assert.match(table, /className="table-board-actions"/);
   assert.match(table, /isCurrentHost && !view\.finalSummaryVisible && \(view\.allInRunout \|\| view\.rabbitRunout \|\| view\.showdown\)/);
@@ -113,7 +115,7 @@ test('mobile table UI keeps the player anchored, reconnects safely, and exposes 
   assert.match(styles, /\.pot-award-card\s*\{[^}]*grid-row:\s*2/s);
   assert.doesNotMatch(styles, /\.pot-award-card\s*\{[^}]*position:\s*absolute/s);
   assert.match(styles, /\.table-seat-pot-eligible\s*\{/);
-  assert.match(table, /selectedRaiseTo === view\.raise\.maxRaiseTo \? \{ type: 'all-in' \}/);
+  assert.match(table, /selectedRaiseTo === view\.allInRaiseTo \? \{ type: 'all-in' \}/);
   assert.match(table, /seat\.seatNumber === view\.smallBlindSeat/);
   assert.match(table, /seat\.seatNumber === view\.bigBlindSeat/);
   assert.match(table, /table-seat-sitting-out/);

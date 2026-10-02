@@ -584,7 +584,7 @@ export function getPreflopLegalActions(hand: StartedHand): PreflopLegalActions {
   if (!Number.isSafeInteger(minRaiseTo) || !Number.isSafeInteger(maxRaiseTo)) {
     throw new Error('Preflop raise targets must be safe integers');
   }
-  const canRaise = maxRaiseTo >= minRaiseTo;
+  const canRaise = maxRaiseTo >= minRaiseTo && !hand.raiseLockedSeats?.includes(actor.seatNumber);
   const otherContestingPlayers = hand.seats.filter((seat) => seat.seatNumber !== actor.seatNumber && seat.holeCards && !seat.isFolded).length;
   return Object.freeze({
     actorSeat: actor.seatNumber,
@@ -796,7 +796,7 @@ export function applyPreflopRaise(hand: StartedHand, actorSeat: number, raiseTo:
     pot: nextPot,
     currentActorSeat: seats[wrappedActorIndex].seatNumber,
     seats,
-  }, pendingAfterAction(hand, actorSeat, true));
+  }, pendingAfterAction(hand, actorSeat, true), []);
 }
 
 /** Applies an all-in preflop raise; a full raise reopens the full-raise increment. */
@@ -814,8 +814,8 @@ export function applyPreflopAllIn(hand: StartedHand, actorSeat: number): Started
   const legalActions = getPreflopLegalActions(hand);
   const actorIndex = hand.seats.findIndex((seat) => seat.seatNumber === actorSeat);
   const actor = hand.seats[actorIndex];
-  if (!actor?.holeCards || actor.stack <= 0) {
-    throw new Error('A preflop all-in requires an eligible actor');
+  if (!actor?.holeCards || actor.stack <= 0 || hand.raiseLockedSeats?.includes(actorSeat)) {
+    throw new Error('A preflop all-in requires an eligible actor with an unlocked raise');
   }
   const allInTo = actor.currentBet + actor.stack;
   if (!Number.isSafeInteger(allInTo) || allInTo <= hand.currentBet) {
@@ -846,16 +846,20 @@ export function applyPreflopAllIn(hand: StartedHand, actorSeat: number): Started
     throw new Error('A preflop all-in requires another eligible actor');
   }
 
+  const isFullRaise = allInTo >= (legalActions.minRaiseTo ?? Number.MAX_SAFE_INTEGER);
+  const pending = isFullRaise ? pendingAfterAction(hand, actorSeat, true)
+    : hand.seats.filter((seat) => seat.seatNumber !== actorSeat && seat.holeCards && !seat.isFolded && seat.stack > 0 && seat.currentBet < allInTo).map((seat) => seat.seatNumber);
+  const locked = isFullRaise ? [] : [...new Set([...(hand.raiseLockedSeats ?? []), ...hand.seats.filter((seat) => seat.seatNumber !== actorSeat && seat.holeCards && !seat.isFolded && seat.stack > 0 && seat.currentBet < allInTo && !hand.pendingActorSeats.includes(seat.seatNumber)).map((seat) => seat.seatNumber)])];
   return preservePrivateHandState(hand, {
     ...hand,
     currentBet: allInTo,
-    minimumRaiseIncrement: allInTo >= (legalActions.minRaiseTo ?? Number.MAX_SAFE_INTEGER)
+    minimumRaiseIncrement: isFullRaise
       ? allInTo - hand.currentBet
       : hand.minimumRaiseIncrement,
     pot: nextPot,
     currentActorSeat: seats[wrappedActorIndex].seatNumber,
     seats,
-  }, pendingAfterAction(hand, actorSeat, true));
+  }, pending, locked);
 }
 
 /** Advances a settled preflop round to the flop using the server-shuffled deck retained at hand start. */

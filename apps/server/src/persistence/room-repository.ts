@@ -676,7 +676,7 @@ export class RoomRepository {
     const baseView = lifecycle.viewFor(seatedInHand ? playerId : hand.seats[0].playerId);
     const safeView = seatedInHand
       ? { ...baseView, isSittingOut: (member?.isSittingOut ?? false) && !(member?.rebuyDecisionPending ?? false) }
-      : { ...baseView, playerId, holeCards: [] as const, toCall: 0, raise: undefined, isSittingOut: true };
+      : { ...baseView, playerId, holeCards: [] as const, toCall: 0, raise: undefined, allInRaiseTo: undefined, isSittingOut: true };
     const latestAction = room.events[0]?.sequence === latest.sequence
       ? actionNotificationFromEvent(room.events[0], room.players)
       : undefined;
