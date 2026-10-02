@@ -1400,6 +1400,27 @@ export class RoomRepository {
     });
   }
 
+  /**
+   * One-time incident recovery for an active participant. The HTTP boundary
+   * restricts this to the project owner's verified account and a single room.
+   */
+  async recoverHostForAccount(joinId: string, accountId: string) {
+    return this.db.$transaction(async (tx) => {
+      const room = await tx.room.findFirst({
+        where: { joinId, status: 'IN_PROGRESS', players: { some: { accountId, leftAt: null } } },
+        select: { id: true, hostPlayerId: true, players: { where: { accountId, leftAt: null }, select: { id: true } } },
+      });
+      const target = room?.players[0];
+      if (!room || !target) throw new Error('Host recovery is unavailable');
+      const updated = await tx.room.updateMany({
+        where: { id: room.id, status: 'IN_PROGRESS', hostPlayerId: room.hostPlayerId },
+        data: { hostPlayerId: target.id },
+      });
+      if (updated.count !== 1) throw new Error('Host recovery is unavailable');
+      return { hostPlayerId: target.id };
+    });
+  }
+
   /** A compact, account-scoped resume list for the home screen. */
   async listActiveGamesForAccount(accountId: string) {
     const rooms = await this.db.room.findMany({

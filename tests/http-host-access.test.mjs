@@ -17,8 +17,8 @@ const room = {
   players: [{ id: 'host-id', displayName: 'מארח' }, { id: 'guest-id', displayName: 'אורח' }],
 };
 
-async function withServer(repository, run) {
-  const server = createServer(createApp({ roomRepository: repository, isOriginAllowed: () => true }));
+async function withServer(repository, run, extras = {}) {
+  const server = createServer(createApp({ roomRepository: repository, isOriginAllowed: () => true, ...extras }));
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const address = server.address();
@@ -29,6 +29,32 @@ async function withServer(repository, run) {
     await once(server, 'close');
   }
 }
+
+test('the project owner can reclaim only the explicitly approved incident room from their verified account', async () => {
+  const incidentJoinId = '5347f61f0f84b694';
+  const ownerToken = 'O'.repeat(43);
+  const calls = [];
+  const repository = {
+    async recoverHostForAccount(joinId, accountId) { calls.push({ joinId, accountId }); return { hostPlayerId: 'ori-seat' }; },
+  };
+  const accountRepository = {
+    async findBySession(token) {
+      if (token === ownerToken) return { id: 'ori-account', username: 'orich4321', displayName: 'אורי', avatarDataUrl: null };
+      if (token === guestToken) return { id: 'guest-account', username: 'guest', displayName: 'אורח', avatarDataUrl: null };
+      return null;
+    },
+  };
+  await withServer(repository, async (baseUrl) => {
+    const owner = await globalThis.fetch(`${baseUrl}/rooms/${incidentJoinId}/owner-recovery`, { method: 'POST', headers: { cookie: `poker_account_token=${ownerToken}` } });
+    assert.equal(owner.status, 201);
+    assert.deepEqual(await owner.json(), { hostPlayerId: 'ori-seat' });
+    for (const [path, token] of [[joinId, ownerToken], [incidentJoinId, guestToken], [incidentJoinId, undefined]]) {
+      const response = await globalThis.fetch(`${baseUrl}/rooms/${path}/owner-recovery`, { method: 'POST', headers: token ? { cookie: `poker_account_token=${token}` } : {} });
+      assert.equal(response.status, 403);
+    }
+  }, { accountRepository });
+  assert.deepEqual(calls, [{ joinId: incidentJoinId, accountId: 'ori-account' }]);
+});
 
 test('the host route API derives authority from the opaque session, not the known host URL', async () => {
   const repository = {
