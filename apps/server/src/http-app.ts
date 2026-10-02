@@ -256,9 +256,6 @@ export function createApp({ roomRepository, accountRepository, socialRepository,
   if (basePath) app.use(basePath, routes);
 
   const authReady = Boolean(accountRepository && googleOAuth);
-  // Incident-specific recovery: this exact Google-backed account is the
-  // project owner and may reclaim this one room after an accidental transfer.
-  const ownerRecovery = Object.freeze({ joinId: '5347f61f0f84b694', username: 'orich4321' });
   const appRedirect = (path: string) => publicAppOrigin ? new URL(path, publicAppOrigin).toString() : path;
   const oauthCookieOptions = { httpOnly: true, sameSite: 'lax' as const, secure: process.env.NODE_ENV === 'production', path: '/', maxAge: 10 * 60 * 1_000 };
 
@@ -477,17 +474,7 @@ export function createApp({ roomRepository, accountRepository, socialRepository,
       const account = await findAccountIdentity(request.headers.cookie);
       if (!account) { response.status(401).json({ error: { code: 'AUTH_REQUIRED' } }); return; }
       response.setHeader('Cache-Control', 'private, no-store');
-      const games = await roomRepository.listActiveGamesForAccount(account.id);
-      const containsIncidentRoom = games.some((game) => game.joinId === ownerRecovery.joinId && !game.isHost);
-      const profile = typeof accountRepository?.findBySession === 'function' ? await findAccount(request.headers.cookie) : null;
-      const mayRecover = profile?.username === ownerRecovery.username;
-      const incidentRoom = mayRecover && !containsIncidentRoom
-        ? await roomRepository.findOwnerRecoveryRoomForAccount?.(ownerRecovery.joinId, account.id)
-        : null;
-      response.json({ games: [...games, ...(incidentRoom ? [incidentRoom] : [])].map((game) => ({
-        ...game,
-        ...(mayRecover && game.joinId === ownerRecovery.joinId && !game.isHost ? { canRecoverHost: true } : {}),
-      })) });
+      response.json({ games: await roomRepository.listActiveGamesForAccount(account.id) });
     } catch { response.status(500).json({ error: { code: 'INTERNAL_ERROR' } }); }
   });
 
@@ -860,22 +847,6 @@ export function createApp({ roomRepository, accountRepository, socialRepository,
     } catch (error) {
       console.error('Game finish failed', error);
       response.status(409).json({ error: { code: 'GAME_FINISH_UNAVAILABLE' } });
-    }
-  });
-
-  routes.post('/rooms/:joinId/owner-recovery', async (request, response) => {
-    try {
-      const account = await findAccount(request.headers.cookie);
-      if (!account || account.username !== ownerRecovery.username || request.params.joinId !== ownerRecovery.joinId) {
-        response.status(403).json({ error: { code: 'OWNER_RECOVERY_FORBIDDEN' } });
-        return;
-      }
-      const result = await roomRepository.recoverHostForAccount(request.params.joinId, account.id);
-      response.setHeader('Cache-Control', 'private, no-store');
-      response.status(201).json(result);
-    } catch (error) {
-      console.error('Owner host recovery failed', error);
-      response.status(409).json({ error: { code: 'OWNER_RECOVERY_UNAVAILABLE' } });
     }
   });
 
