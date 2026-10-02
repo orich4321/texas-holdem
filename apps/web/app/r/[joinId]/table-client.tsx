@@ -535,7 +535,7 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
     if (ownIndex < 0) return [...view.seats];
     return [...view.seats.slice(ownIndex), ...view.seats.slice(0, ownIndex)];
   }, [view]);
-  const isTurn = Boolean(view && ownSeat && view.currentActorSeat === ownSeat.seatNumber && view.street !== 'showdown' && !view.allInRunout);
+  const isTurn = Boolean(view && ownSeat && !view.gameCompleted && view.currentActorSeat === ownSeat.seatNumber && view.street !== 'showdown' && !view.allInRunout);
   const callIsAllIn = Boolean(isTurn && ownSeat && view && view.toCall > 0 && view.toCall >= ownSeat.stack);
   const callAmount = Math.min(view?.toCall ?? 0, ownSeat?.stack ?? 0);
 
@@ -658,7 +658,7 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
   }, [ownSeat?.stack, view?.street]);
 
   useEffect(() => {
-    if (!networkActive || view?.street !== 'showdown' || !view.gameCompleted || !view.finalSummaryVisible) return;
+    if (!networkActive || !view?.gameCompleted || !view.finalSummaryVisible) return;
     let active = true;
     let attempts = 0;
     let retryTimer: ReturnType<typeof globalThis.setTimeout> | undefined;

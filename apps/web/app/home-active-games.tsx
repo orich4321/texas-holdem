@@ -17,7 +17,7 @@ export function HomeActiveGames({ accountId, networkActive }: { accountId: strin
   const [confirmCloseGame, setConfirmCloseGame] = useState<ActiveGame>();
   const [closing, setClosing] = useState(false);
   const [closeError, setCloseError] = useState('');
-  const [finishedJoinId, setFinishedJoinId] = useState('');
+  const [closedGame, setClosedGame] = useState<{ joinId: string; status: 'CANCELLED' | 'COMPLETED' }>();
   const lastLoadedAt = useRef(0);
 
   useEffect(() => {
@@ -54,20 +54,19 @@ export function HomeActiveGames({ accountId, networkActive }: { accountId: strin
         method: 'POST', credentials: 'include', cache: 'no-store',
       });
       if (!response.ok) {
-        setCloseError(response.status === 409
-          ? 'אפשר לסיים את המשחק רק אחרי שהיד הנוכחית הסתיימה. חזרו לשולחן ובדקו את תוצאת היד.'
-          : 'לא הצלחנו לסיים את המשחק. ודאו שאתם המארחים ונסו שוב.');
+        setCloseError('לא הצלחנו לסגור את החדר. ודאו שאתם המארחים ונסו שוב.');
         return;
       }
+      const result = await response.json() as { status: 'CANCELLED' | 'COMPLETED' };
       setGames((current) => current?.filter((game) => game.joinId !== confirmCloseGame.joinId));
-      setFinishedJoinId(confirmCloseGame.joinId);
+      setClosedGame({ joinId: confirmCloseGame.joinId, status: result.status });
       setConfirmCloseGame(undefined);
       lastLoadedAt.current = 0;
     } catch { setCloseError('החיבור נכשל. נסו שוב.'); }
     finally { setClosing(false); }
   }
 
-  if (!games?.length && !error && !finishedJoinId) return null;
+  if (!games?.length && !error && !closedGame) return null;
 
   return <section className="home-active-games" aria-labelledby="home-active-games-title">
     <div className="home-active-games-heading"><strong id="home-active-games-title">המשחקים הפעילים שלכם</strong><small>{games?.length ?? 0} חדרים</small></div>
@@ -77,14 +76,14 @@ export function HomeActiveGames({ accountId, networkActive }: { accountId: strin
         <span><strong>{game.status === 'WAITING' ? 'חדר ממתין' : 'משחק פעיל'}</strong><small>חדר <b dir="ltr">{game.joinId.toUpperCase()}</b> · {game.handCount} ידיים{game.isHost ? ' · מארח' : ''}</small></span>
         <b className="home-active-game-enter">חזרה לשולחן ←</b>
       </Link>
-      {game.isHost && game.status === 'IN_PROGRESS' ? <button type="button" className="home-active-game-finish" onClick={() => { setCloseError(''); setConfirmCloseGame(game); }}>סיום משחק</button> : null}
+      {game.isHost ? <button type="button" className="home-active-game-finish" onClick={() => { setCloseError(''); setConfirmCloseGame(game); }}>{game.status === 'WAITING' ? 'סגירת חדר' : 'סיום משחק'}</button> : null}
     </div>)}</div> : null}
-    {finishedJoinId ? <div className="home-finished-game" role="status"><strong>המשחק הסתיים.</strong><Link href={`/r/${encodeURIComponent(finishedJoinId)}/host`}>לסיכום המשחק</Link><a href={`${SERVER_URL}/rooms/${encodeURIComponent(finishedJoinId)}/final-summary/download`}>הורדת JSON</a></div> : null}
+    {closedGame ? <div className="home-finished-game" role="status"><strong>{closedGame.status === 'CANCELLED' ? 'החדר נסגר.' : 'המשחק הסתיים.'}</strong>{closedGame.status === 'COMPLETED' ? <><Link href={`/r/${encodeURIComponent(closedGame.joinId)}/host`}>לסיכום המשחק</Link><a href={`${SERVER_URL}/rooms/${encodeURIComponent(closedGame.joinId)}/final-summary/download`}>הורדת JSON</a></> : null}</div> : null}
     {confirmCloseGame ? <div className="home-finish-backdrop"><div className="home-finish-dialog" role="alertdialog" aria-modal="true" aria-labelledby="home-finish-title" aria-describedby="home-finish-description">
-      <h2 id="home-finish-title">סיום המשחק</h2>
-      <p id="home-finish-description">המשחק יסתיים ללא יד נוספת. אפשר לעשות זאת רק אחרי שהיד הנוכחית הוכרעה. כל המשתתפים יוכלו לראות את הסיכום, ורק המארח יוכל להוריד את קובץ ה־JSON.</p>
+      <h2 id="home-finish-title">{confirmCloseGame.status === 'WAITING' ? 'סגירת החדר' : 'סיום המשחק'}</h2>
+      <p id="home-finish-description">{confirmCloseGame.status === 'WAITING' ? 'החדר ייסגר ולא ניתן יהיה להצטרף אליו. לא נוצר סיכום משחק לחדר שטרם התחיל.' : 'המשחק יסתיים כעת. אם יד עדיין בעיצומה, היא לא תיחשב והצ׳יפים יחזרו למצב שהיה לפני תחילתה. הידיים שכבר הוכרעו יישמרו בסיכום, ורק המארח יוכל להוריד את קובץ ה־JSON.'}</p>
       {closeError ? <p className="home-finish-error" role="alert">{closeError}</p> : null}
-      <div><button type="button" disabled={closing} onClick={() => setConfirmCloseGame(undefined)}>ביטול</button><button type="button" className="home-finish-confirm" disabled={closing} onClick={() => void finishGame()}>{closing ? 'מסיימים…' : 'כן, סיימו את המשחק'}</button></div>
+      <div><button type="button" disabled={closing} onClick={() => setConfirmCloseGame(undefined)}>ביטול</button><button type="button" className="home-finish-confirm" disabled={closing} onClick={() => void finishGame()}>{closing ? 'סוגרים…' : confirmCloseGame.status === 'WAITING' ? 'כן, סגרו את החדר' : 'כן, סיימו את המשחק'}</button></div>
     </div></div> : null}
   </section>;
 }

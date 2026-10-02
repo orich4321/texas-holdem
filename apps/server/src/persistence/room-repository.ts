@@ -1053,36 +1053,45 @@ export class RoomRepository {
     });
   }
 
-  /** Ends a game after its latest hand has settled; never discards an in-flight pot. */
-  async finishGameBetweenHandsForHost(joinId: string, hostPlayerId: string) {
+  /** Closes a waiting room or ends a game. An unfinished hand is void, not settled. */
+  async closeRoomForHost(joinId: string, hostPlayerId: string) {
     return this.db.$transaction(async (tx) => {
       const room = await tx.room.findUnique({ where: { joinId }, select: { id: true, hostPlayerId: true, status: true } });
-      if (!room || room.hostPlayerId !== hostPlayerId || room.status !== 'IN_PROGRESS') throw new Error('Game finish is unavailable');
+      if (!room || room.hostPlayerId !== hostPlayerId || !['WAITING', 'IN_PROGRESS'].includes(room.status)) throw new Error('Game finish is unavailable');
       const locked = await tx.room.updateMany({
-        where: { id: room.id, hostPlayerId, status: 'IN_PROGRESS' },
+        where: { id: room.id, hostPlayerId, status: room.status },
         data: { updatedAt: new Date() },
       });
       if (locked.count !== 1) throw new Error('Game finish is unavailable');
+      if (room.status === 'WAITING') {
+        const cancelled = await tx.room.updateMany({
+          where: { id: room.id, hostPlayerId, status: 'WAITING' },
+          data: { status: 'CANCELLED', turnDeadlineAt: null },
+        });
+        if (cancelled.count !== 1) throw new Error('Game finish is unavailable');
+        return { status: 'CANCELLED' as const, finalSummaryVisible: false };
+      }
       const latest = await tx.gameSnapshot.findFirst({ where: { roomId: room.id }, orderBy: { sequence: 'desc' }, select: { sequence: true, state: true } });
       if (!latest) throw new Error('Game finish is unavailable');
       const hand = hydrateSignedPrivateHandSnapshot(latest.state as unknown as SignedPrivateHandSnapshot,
         { roomId: room.id, sequence: latest.sequence }, this.privateSnapshotKeyring).hand;
-      if (hand.street !== 'showdown') throw new Error('The current hand must finish first');
-      const handStart = await tx.gameEvent.findFirst({
-        where: { roomId: room.id, sequence: { lte: latest.sequence }, type: { in: HAND_START_TYPES } },
-        orderBy: { sequence: 'desc' }, select: { sequence: true },
-      });
-      if (!handStart) throw new Error('Game finish is unavailable');
-      const settlingEvent = await tx.gameEvent.findFirst({
-        where: { roomId: room.id, sequence: { gt: handStart.sequence, lte: latest.sequence }, type: { in: ['PLAYER_ACTION', 'ALL_IN_RUNOUT_ADVANCED'] } },
-        orderBy: { sequence: 'desc' }, select: { sequence: true },
-      });
-      if (!settlingEvent) throw new Error('Game finish is unavailable');
-      const settlement = await tx.settlement.findUnique({
-        where: { roomId_idempotencyKey: { roomId: room.id, idempotencyKey: `hand-${settlingEvent.sequence - 1}` } },
-        select: { id: true },
-      });
-      if (!settlement) throw new Error('The current hand must finish first');
+      if (hand.street === 'showdown') {
+        const handStart = await tx.gameEvent.findFirst({
+          where: { roomId: room.id, sequence: { lte: latest.sequence }, type: { in: HAND_START_TYPES } },
+          orderBy: { sequence: 'desc' }, select: { sequence: true },
+        });
+        if (!handStart) throw new Error('Game finish is unavailable');
+        const settlingEvent = await tx.gameEvent.findFirst({
+          where: { roomId: room.id, sequence: { gt: handStart.sequence, lte: latest.sequence }, type: { in: ['PLAYER_ACTION', 'ALL_IN_RUNOUT_ADVANCED'] } },
+          orderBy: { sequence: 'desc' }, select: { sequence: true },
+        });
+        if (!settlingEvent) throw new Error('Game finish is unavailable');
+        const settlement = await tx.settlement.findUnique({
+          where: { roomId_idempotencyKey: { roomId: room.id, idempotencyKey: `hand-${settlingEvent.sequence - 1}` } },
+          select: { id: true },
+        });
+        if (!settlement) throw new Error('The current hand must finish first');
+      }
       const finished = await tx.room.updateMany({
         where: { id: room.id, hostPlayerId, status: 'IN_PROGRESS' },
         data: { status: 'COMPLETED', finalSummaryVisible: true, nextHandIsFinal: false, turnDeadlineAt: null },
@@ -1091,7 +1100,7 @@ export class RoomRepository {
       await tx.preAction.deleteMany({ where: { roomId: room.id } });
       await tx.chipAdjustment.updateMany({ where: { roomId: room.id, status: 'PENDING' }, data: { status: 'CANCELLED', cancelledAt: new Date() } });
       await tx.player.updateMany({ where: { roomId: room.id, currentStack: 0, leftAt: null }, data: { isSittingOut: true, rebuyDecisionPending: false } });
-      return { status: 'COMPLETED' as const, finalSummaryVisible: true };
+      return { status: 'COMPLETED' as const, finalSummaryVisible: true, abandonedHand: hand.street !== 'showdown' };
     });
   }
 

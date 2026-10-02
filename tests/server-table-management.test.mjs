@@ -124,7 +124,22 @@ test('the completed summary stays hidden until the host releases it', async () =
   await assert.rejects(unavailable.revealFinalSummaryForHost(joinId, guestId), /unavailable/);
 });
 
-test('finishing from home preserves a settled hand and rejects a live hand or another player', async () => {
+test('host can cancel a waiting room, but a guest cannot', async () => {
+  const calls = [];
+  const tx = {
+    room: {
+      findUnique: async () => ({ id: roomId, hostPlayerId: hostId, status: 'WAITING' }),
+      updateMany: async (args) => { calls.push(args); return { count: 1 }; },
+    },
+  };
+  const repository = new RoomRepository({ $transaction: async (callback) => callback(tx) });
+  await assert.rejects(repository.closeRoomForHost(joinId, guestId), /unavailable/);
+  assert.equal(calls.length, 0);
+  assert.deepEqual(await repository.closeRoomForHost(joinId, hostId), { status: 'CANCELLED', finalSummaryVisible: false });
+  assert.deepEqual(calls[1].data, { status: 'CANCELLED', turnDeadlineAt: null });
+});
+
+test('host can end an in-flight hand without settlement, or preserve a settled hand', async () => {
   const keyId = 'test-current';
   const key = Buffer.from('a server-only snapshot signing key with adequate length', 'utf8');
   const keyring = new Map([[keyId, key]]);
@@ -148,13 +163,15 @@ test('finishing from home preserves a settled hand and rejects a live hand or an
     player: { updateMany: async (args) => { calls.push(['player.updateMany', args]); } },
   };
   const repository = new RoomRepository({ $transaction: async (callback) => callback(tx) }, undefined, undefined, undefined, keyring);
-  await assert.rejects(repository.finishGameBetweenHandsForHost(joinId, guestId), /unavailable/);
-  await assert.rejects(repository.finishGameBetweenHandsForHost(joinId, hostId), /current hand must finish/);
-  assert.equal(calls.some(([name, args]) => name === 'room.updateMany' && args.data.status === 'COMPLETED'), false);
+  await assert.rejects(repository.closeRoomForHost(joinId, guestId), /unavailable/);
+  assert.deepEqual(await repository.closeRoomForHost(joinId, hostId), { status: 'COMPLETED', finalSummaryVisible: true, abandonedHand: true });
+  assert.equal(calls.some(([name]) => name === 'settlement.findUnique'), false);
+  assert.equal(calls.some(([name, args]) => name === 'room.updateMany' && args.data.status === 'COMPLETED'), true);
+  calls.length = 0;
   const settled = finishUncontestedHand(applyPreflopFold(hand, hand.currentActorSeat));
   sequence = 1;
   snapshot = signPrivateHandSnapshot(settled, { roomId, sequence, keyId }, key);
-  assert.deepEqual(await repository.finishGameBetweenHandsForHost(joinId, hostId), { status: 'COMPLETED', finalSummaryVisible: true });
+  assert.deepEqual(await repository.closeRoomForHost(joinId, hostId), { status: 'COMPLETED', finalSummaryVisible: true, abandonedHand: false });
   assert.deepEqual(calls.find(([name, args]) => name === 'room.updateMany' && args.data.status === 'COMPLETED')[1].data, {
     status: 'COMPLETED', finalSummaryVisible: true, nextHandIsFinal: false, turnDeadlineAt: null,
   });

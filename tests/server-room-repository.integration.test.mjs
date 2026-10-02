@@ -376,7 +376,7 @@ test('a host can add another hand after a final hand and decide afresh whether i
   assert.equal((await finishCurrentHand()).view.gameCompleted, true, 'the same choice returns after every final hand');
 });
 
-test('a host may finish only after the current hand is settled and keep its final JSON intact', { skip: !integrationEnabled }, async () => {
+test('a host may end a settled game and keep its final JSON intact', { skip: !integrationEnabled }, async () => {
   const repository = new RoomRepository(prisma, undefined, undefined, undefined, snapshotKeyring);
   const guestId = randomUUID();
   const created = await repository.createRoom({
@@ -385,14 +385,43 @@ test('a host may finish only after the current hand is settled and keep its fina
     players: [{ id: guestId, displayName: 'Guest', initialStack: 500 }],
   });
   await repository.startGameForHostAtomically({ joinId: created.joinId, hostPlayerId: created.hostPlayerId });
-  await assert.rejects(repository.finishGameBetweenHandsForHost(created.joinId, created.hostPlayerId), /current hand must finish/);
   const current = await repository.recoverLatestHandForPlayer(created.id, created.hostPlayerId);
   const actorId = current.recovery.hand.seats.find((seat) => seat.seatNumber === current.recovery.hand.currentActorSeat).playerId;
   await repository.persistPlayerActionAtomically({ roomId: created.id, playerId: actorId, action: { type: 'fold' } });
-  await assert.rejects(repository.finishGameBetweenHandsForHost(created.joinId, guestId), /unavailable/);
-  assert.deepEqual(await repository.finishGameBetweenHandsForHost(created.joinId, created.hostPlayerId), { status: 'COMPLETED', finalSummaryVisible: true });
+  await assert.rejects(repository.closeRoomForHost(created.joinId, guestId), /unavailable/);
+  assert.deepEqual(await repository.closeRoomForHost(created.joinId, created.hostPlayerId), { status: 'COMPLETED', finalSummaryVisible: true, abandonedHand: false });
   const summary = await repository.getFinalSummaryForPlayer(created.id, guestId);
   assert.equal(summary.hands.length, 1);
   assert.equal((await prisma.room.findUnique({ where: { id: created.id } })).status, 'COMPLETED');
-  await assert.rejects(repository.finishGameBetweenHandsForHost(created.joinId, created.hostPlayerId), /unavailable/);
+  await assert.rejects(repository.closeRoomForHost(created.joinId, created.hostPlayerId), /unavailable/);
+});
+
+test('a waiting room can be cancelled and an unfinished hand is excluded from final accounting', { skip: !integrationEnabled }, async () => {
+  const repository = new RoomRepository(prisma, undefined, undefined, undefined, snapshotKeyring);
+  const waiting = await repository.createRoom({
+    status: 'WAITING',
+    host: { id: randomUUID(), displayName: 'Host', initialStack: 500 },
+    players: [{ id: randomUUID(), displayName: 'Guest', initialStack: 500 }],
+  });
+  await assert.rejects(repository.closeRoomForHost(waiting.joinId, randomUUID()), /unavailable/);
+  assert.deepEqual(await repository.closeRoomForHost(waiting.joinId, waiting.hostPlayerId), { status: 'CANCELLED', finalSummaryVisible: false });
+  assert.equal((await prisma.room.findUnique({ where: { id: waiting.id } })).status, 'CANCELLED');
+  await assert.rejects(repository.closeRoomForHost(waiting.joinId, waiting.hostPlayerId), /unavailable/);
+
+  const guestId = randomUUID();
+  const playing = await repository.createRoom({
+    status: 'WAITING',
+    host: { id: randomUUID(), displayName: 'Host', initialStack: 500 },
+    players: [{ id: guestId, displayName: 'Guest', initialStack: 500 }],
+  });
+  await repository.startGameForHostAtomically({ joinId: playing.joinId, hostPlayerId: playing.hostPlayerId });
+  const live = await repository.recoverLatestHandForPlayer(playing.id, playing.hostPlayerId);
+  const actorId = live.recovery.hand.seats.find((seat) => seat.seatNumber === live.recovery.hand.currentActorSeat).playerId;
+  await repository.persistPlayerActionAtomically({ roomId: playing.id, playerId: actorId, action: { type: 'call' } });
+  await assert.rejects(repository.closeRoomForHost(playing.joinId, guestId), /unavailable/);
+  assert.deepEqual(await repository.closeRoomForHost(playing.joinId, playing.hostPlayerId), { status: 'COMPLETED', finalSummaryVisible: true, abandonedHand: true });
+  const summary = await repository.getFinalSummaryForPlayer(playing.id, guestId);
+  assert.equal(summary.hands.length, 0);
+  assert.deepEqual(summary.standings.map((player) => player.finalStack).sort(), [500, 500]);
+  assert.equal((await prisma.settlement.count({ where: { roomId: playing.id } })), 0);
 });

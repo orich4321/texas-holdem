@@ -194,7 +194,7 @@ test('the authenticated owner alone can schedule a final hand, reveal its summar
     async findRoomByJoinId() { return room; },
     async scheduleFinalHandForHost(joinId, hostPlayerId, enabled) { calls.push(['final', { joinId, hostPlayerId, enabled }]); return { nextHandIsFinal: enabled }; },
     async revealFinalSummaryForHost(joinId, hostPlayerId) { calls.push(['summary', { joinId, hostPlayerId }]); return { finalSummaryVisible: true }; },
-    async finishGameBetweenHandsForHost(joinId, hostPlayerId) { calls.push(['finish', { joinId, hostPlayerId }]); return { status: 'COMPLETED', finalSummaryVisible: true }; },
+    async closeRoomForHost(joinId, hostPlayerId) { calls.push(['finish', { joinId, hostPlayerId }]); return { status: 'COMPLETED', finalSummaryVisible: true, abandonedHand: false }; },
     async removePlayerBetweenHandsForHostAtomically(input) { calls.push(['remove', input]); },
   };
   await withServer(repository, async (baseUrl) => {
@@ -205,7 +205,7 @@ test('the authenticated owner alone can schedule a final hand, reveal its summar
     assert.deepEqual(await summary.json(), { finalSummaryVisible: true });
     const finish = await globalThis.fetch(`${baseUrl}/rooms/${joinId}/game/finish`, { method: 'POST', headers: { cookie: `poker_player_token=${hostToken}` } });
     assert.equal(finish.status, 200);
-    assert.deepEqual(await finish.json(), { status: 'COMPLETED', finalSummaryVisible: true });
+    assert.deepEqual(await finish.json(), { status: 'COMPLETED', finalSummaryVisible: true, abandonedHand: false });
     const removal = await globalThis.fetch(`${baseUrl}/rooms/${joinId}/players/${targetPlayerId}/remove`, { method: 'POST', headers: { cookie: `poker_player_token=${hostToken}` } });
     assert.equal(removal.status, 201);
   });

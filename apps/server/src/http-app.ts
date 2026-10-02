@@ -829,7 +829,7 @@ export function createApp({ roomRepository, accountRepository, socialRepository,
     try {
       const host = await findAuthenticatedHost(request.params.joinId, request.headers.cookie);
       if (!host) { response.status(403).json({ error: { code: 'HOST_FORBIDDEN' } }); return; }
-      const result = await roomRepository.finishGameBetweenHandsForHost(request.params.joinId, host.id);
+      const result = await roomRepository.closeRoomForHost(request.params.joinId, host.id);
       response.setHeader('Cache-Control', 'private, no-store');
       response.json(result);
     } catch (error) {

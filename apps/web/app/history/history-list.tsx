@@ -28,7 +28,7 @@ export function HistoryList({ onSelectGame }: { onSelectGame?: (joinId: string) 
     {!games && !error && !signInRequired ? <p role="status">טוענים משחקים…</p> : null}
     {games?.length === 0 ? <p>עדיין אין משחקים בחשבון הזה.</p> : null}
     <div className="history-list">{games?.map((game) => {
-      const label = <><span><b>{new Date(game.createdAt).toLocaleDateString('he-IL')}</b><small>{game.handCount} ידיים · {game.status === 'COMPLETED' ? 'הסתיים' : game.status === 'IN_PROGRESS' ? 'משחק פעיל' : 'ממתין'}</small></span><strong className={game.yourNet >= 0 ? 'history-positive' : 'history-negative'} dir="ltr">{game.yourNet >= 0 ? '+' : ''}{game.yourNet.toLocaleString('he-IL')} צ׳יפים</strong><span aria-hidden="true">←</span></>;
+      const label = <><span><b>{new Date(game.createdAt).toLocaleDateString('he-IL')}</b><small>{game.handCount} ידיים · {game.status === 'COMPLETED' ? 'הסתיים' : game.status === 'IN_PROGRESS' ? 'משחק פעיל' : game.status === 'CANCELLED' ? 'בוטל' : 'ממתין'}</small></span><strong className={game.yourNet >= 0 ? 'history-positive' : 'history-negative'} dir="ltr">{game.yourNet >= 0 ? '+' : ''}{game.yourNet.toLocaleString('he-IL')} צ׳יפים</strong><span aria-hidden="true">←</span></>;
       return onSelectGame ? <button type="button" className="history-game" onClick={() => onSelectGame(game.joinId)} key={game.joinId}>{label}</button>
         : <Link className="history-game" href={`/history/${encodeURIComponent(game.joinId)}`} key={game.joinId}>{label}</Link>;
     })}</div>
