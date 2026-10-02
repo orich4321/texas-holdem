@@ -522,6 +522,18 @@ export function createApp({ roomRepository, accountRepository, socialRepository,
     } catch { response.status(500).json({ error: { code: 'INTERNAL_ERROR' } }); }
   });
 
+  routes.delete('/auth/history/:joinId', async (request, response) => {
+    try {
+      const account = await findAccountIdentity(request.headers.cookie);
+      if (!account) { response.status(401).json({ error: { code: 'AUTH_REQUIRED' } }); return; }
+      if (!await roomRepository.hideGameForAccount(account.id, request.params.joinId)) {
+        response.status(404).json({ error: { code: 'HISTORY_NOT_FOUND' } });
+        return;
+      }
+      response.status(204).end();
+    } catch { response.status(500).json({ error: { code: 'INTERNAL_ERROR' } }); }
+  });
+
   routes.post('/rooms', async (request, response) => {
     try {
       const account = authReady ? await findAccount(request.headers.cookie) : null;

@@ -149,6 +149,7 @@ test('history API requires an account session and uses its account ID for every 
       async listGamesForAccount(id) { calls.push(['games', id]); return [{ joinId: 'room' }]; },
       async listHandsForAccount(id, joinId) { calls.push(['hands', id, joinId]); return joinId === 'room' ? { hands: [] } : null; },
       async getHandForAccount(id, joinId, key) { calls.push(['hand', id, joinId, key]); return joinId === 'room' && key === 'hand-2' ? { players: [] } : null; },
+      async hideGameForAccount(id, joinId) { calls.push(['hide', id, joinId]); return joinId === 'room'; },
     },
   });
   const server = createServer(app);
@@ -163,11 +164,28 @@ test('history API requires an account session and uses its account ID for every 
     assert.equal((await globalThis.fetch(`${base}/room`, { headers })).status, 200);
     assert.equal((await globalThis.fetch(`${base}/room/hands/hand-2`, { headers })).status, 200);
     assert.equal((await globalThis.fetch(`${base}/other/hands/hand-2`, { headers })).status, 404);
-    assert.deepEqual(calls, [['games', 'owner'], ['hands', 'owner', 'room'], ['hand', 'owner', 'room', 'hand-2'], ['hand', 'owner', 'other', 'hand-2']]);
+    assert.equal((await globalThis.fetch(`${base}/room`, { method: 'DELETE', headers })).status, 204);
+    assert.equal((await globalThis.fetch(`${base}/other`, { method: 'DELETE', headers })).status, 404);
+    assert.deepEqual(calls, [['games', 'owner'], ['hands', 'owner', 'room'], ['hand', 'owner', 'room', 'hand-2'], ['hand', 'owner', 'other', 'hand-2'], ['hide', 'owner', 'room'], ['hide', 'owner', 'other']]);
   } finally {
     server.close();
     await once(server, 'close');
   }
+});
+
+test('hiding a game records only the requesting account and never deletes the room', async () => {
+  const calls = [];
+  const tx = {
+    room: { findFirst: async (args) => { calls.push(['find', args]); return { id: 'room-db-id' }; } },
+    accountHiddenGame: { upsert: async (args) => { calls.push(['hide', args]); } },
+  };
+  const repository = new RoomRepository({ $transaction: async (callback) => callback(tx) });
+  assert.equal(await repository.hideGameForAccount('account-a', '0123456789abcdef'), true);
+  assert.deepEqual(calls[0][1].where, { joinId: '0123456789abcdef', players: { some: { accountId: 'account-a' } } });
+  assert.deepEqual(calls[1][1], {
+    where: { accountId_roomId: { accountId: 'account-a', roomId: 'room-db-id' } },
+    create: { accountId: 'account-a', roomId: 'room-db-id' }, update: {},
+  });
 });
 
 test('active games include only current memberships and preserve the current host route', async () => {

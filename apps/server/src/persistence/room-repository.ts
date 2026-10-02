@@ -1461,7 +1461,7 @@ export class RoomRepository {
   /** Account-scoped history; never use a room URL or a legacy room cookie as authority. */
   async listGamesForAccount(accountId: string) {
     const rooms = await this.db.room.findMany({
-      where: { players: { some: { accountId } } },
+      where: { players: { some: { accountId } }, hiddenForAccounts: { none: { accountId } } },
       orderBy: { updatedAt: 'desc' },
       select: {
         joinId: true, status: true, createdAt: true, updatedAt: true,
@@ -1481,7 +1481,7 @@ export class RoomRepository {
 
   async listHandsForAccount(accountId: string, joinId: string) {
     const room = await this.db.room.findFirst({
-      where: { joinId, players: { some: { accountId } } },
+      where: { joinId, players: { some: { accountId } }, hiddenForAccounts: { none: { accountId } } },
       select: {
         id: true, joinId: true, status: true, createdAt: true,
         settlements: { orderBy: { createdAt: 'asc' }, select: { idempotencyKey: true, createdAt: true } },
@@ -1499,7 +1499,7 @@ export class RoomRepository {
   async getHandForAccount(accountId: string, joinId: string, handKey: string) {
     if (!/^hand-\d+$/.test(handKey)) return null;
     const room = await this.db.room.findFirst({
-      where: { joinId, players: { some: { accountId } } },
+      where: { joinId, players: { some: { accountId } }, hiddenForAccounts: { none: { accountId } } },
       select: { id: true, players: { where: { accountId }, select: { id: true } },
         settlements: { where: { idempotencyKey: handKey }, take: 1, select: { result: true, createdAt: true } } },
     });
@@ -1535,6 +1535,23 @@ export class RoomRepository {
     return { key: handKey, settledAt: settlement.createdAt.toISOString(),
       ...projectHandHistory(settlement.result, ownPlayerIds, events),
       replay: projectHandReplay(settlement.result, ownPlayerIds, events, frames) };
+  }
+
+  /** Hides a game only from this account's archive; it never deletes shared data. */
+  async hideGameForAccount(accountId: string, joinId: string) {
+    return this.db.$transaction(async (tx) => {
+      const room = await tx.room.findFirst({
+        where: { joinId, players: { some: { accountId } } },
+        select: { id: true },
+      });
+      if (!room) return false;
+      await tx.accountHiddenGame.upsert({
+        where: { accountId_roomId: { accountId, roomId: room.id } },
+        create: { accountId, roomId: room.id },
+        update: {},
+      });
+      return true;
+    });
   }
 
   /** Returns only the public audit trail and final stacks to a room participant. */

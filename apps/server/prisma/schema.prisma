@@ -14,78 +14,80 @@ enum RoomStatus {
 }
 
 model Room {
-  id           String     @id @default(uuid()) @db.Uuid
-  joinId       String     @unique
-  status       RoomStatus @default(WAITING)
-  initialStack Int        @default(500)
-  smallBlind   Int        @default(1)
-  bigBlind     Int        @default(2)
-  maxPlayers   Int        @default(9)
-  nextHandIsFinal Boolean @default(false)
-  finalSummaryVisible Boolean @default(true)
-  turnDeadlineAt DateTime?
-  hostPlayerId String?    @db.Uuid
-  hostPlayer   Player?    @relation("RoomHost", fields: [id, hostPlayerId], references: [roomId, id], onDelete: Restrict)
-  players      Player[]   @relation("RoomPlayers")
-  events       GameEvent[]
-  snapshots    GameSnapshot[]
-  settlements  Settlement[]
-  chipAdjustments ChipAdjustment[]
-  preActions   PreAction[]
-  gameInvites  GameInvite[]
-  createdAt    DateTime   @default(now())
-  updatedAt    DateTime   @updatedAt
+  id                  String              @id @default(uuid()) @db.Uuid
+  joinId              String              @unique
+  status              RoomStatus          @default(WAITING)
+  initialStack        Int                 @default(500)
+  smallBlind          Int                 @default(1)
+  bigBlind            Int                 @default(2)
+  maxPlayers          Int                 @default(9)
+  nextHandIsFinal     Boolean             @default(false)
+  finalSummaryVisible Boolean             @default(true)
+  turnDeadlineAt      DateTime?
+  hostPlayerId        String?             @db.Uuid
+  hostPlayer          Player?             @relation("RoomHost", fields: [id, hostPlayerId], references: [roomId, id], onDelete: Restrict)
+  players             Player[]            @relation("RoomPlayers")
+  events              GameEvent[]
+  snapshots           GameSnapshot[]
+  settlements         Settlement[]
+  chipAdjustments     ChipAdjustment[]
+  preActions          PreAction[]
+  gameInvites         GameInvite[]
+  hiddenForAccounts   AccountHiddenGame[]
+  createdAt           DateTime            @default(now())
+  updatedAt           DateTime            @updatedAt
 
   @@index([status])
 }
 
 model Player {
-  id           String   @id @db.Uuid
-  roomId       String   @db.Uuid
-  accountId    String?  @db.Uuid
-  displayName  String
-  avatarDataUrl String?
-  initialStack Int
-  currentStack    Int
-  accessTokenHash String @unique
-  leftAt       DateTime?
-  leaveAfterHand Boolean @default(false)
-  isSittingOut Boolean @default(false)
-  rebuyDecisionPending Boolean @default(false)
-  timeCardsRemaining Int @default(3)
-  room            Room     @relation("RoomPlayers", fields: [roomId], references: [id], onDelete: Cascade)
-  account         Account? @relation(fields: [accountId], references: [id], onDelete: SetNull)
-  hostedRooms  Room[]   @relation("RoomHost")
-  receivedChipAdjustments ChipAdjustment[] @relation("ChipRecipient")
+  id                        String           @id @db.Uuid
+  roomId                    String           @db.Uuid
+  accountId                 String?          @db.Uuid
+  displayName               String
+  avatarDataUrl             String?
+  initialStack              Int
+  currentStack              Int
+  accessTokenHash           String           @unique
+  leftAt                    DateTime?
+  leaveAfterHand            Boolean          @default(false)
+  isSittingOut              Boolean          @default(false)
+  rebuyDecisionPending      Boolean          @default(false)
+  timeCardsRemaining        Int              @default(3)
+  room                      Room             @relation("RoomPlayers", fields: [roomId], references: [id], onDelete: Cascade)
+  account                   Account?         @relation(fields: [accountId], references: [id], onDelete: SetNull)
+  hostedRooms               Room[]           @relation("RoomHost")
+  receivedChipAdjustments   ChipAdjustment[] @relation("ChipRecipient")
   authorizedChipAdjustments ChipAdjustment[] @relation("ChipAuthorizer")
-  preAction PreAction?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  preAction                 PreAction?
+  createdAt                 DateTime         @default(now())
+  updatedAt                 DateTime         @updatedAt
 
-  @@index([roomId])
-  @@index([roomId, leftAt])
   @@unique([roomId, id])
   @@unique([roomId, accountId])
+  @@index([roomId])
+  @@index([roomId, leftAt])
 }
 
 model Account {
-  id             String @id @default(uuid()) @db.Uuid
-  supabaseUserId String @unique @db.Uuid
-  displayName    String?
-  avatarDataUrl  String?
-  username       String? @unique
-  directoryVisibleToAccountId String? @db.Uuid
-  sessions       AccountSession[]
-  players        Player[]
-  gamePresets    GamePreset[]
-  sentFriendRequests     FriendRequest[] @relation("FriendRequestSender")
-  receivedFriendRequests FriendRequest[] @relation("FriendRequestRecipient")
-  friendshipsA Friend[] @relation("FriendA")
-  friendshipsB Friend[] @relation("FriendB")
-  sentGameInvites GameInvite[] @relation("GameInviteSender")
-  receivedGameInvites GameInvite[] @relation("GameInviteRecipient")
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  id                          String              @id @default(uuid()) @db.Uuid
+  supabaseUserId              String              @unique @db.Uuid
+  displayName                 String?
+  avatarDataUrl               String?
+  username                    String?             @unique
+  directoryVisibleToAccountId String?             @db.Uuid
+  sessions                    AccountSession[]
+  players                     Player[]
+  gamePresets                 GamePreset[]
+  sentFriendRequests          FriendRequest[]     @relation("FriendRequestSender")
+  receivedFriendRequests      FriendRequest[]     @relation("FriendRequestRecipient")
+  friendshipsA                Friend[]            @relation("FriendA")
+  friendshipsB                Friend[]            @relation("FriendB")
+  sentGameInvites             GameInvite[]        @relation("GameInviteSender")
+  receivedGameInvites         GameInvite[]        @relation("GameInviteRecipient")
+  hiddenGames                 AccountHiddenGame[]
+  createdAt                   DateTime            @default(now())
+  updatedAt                   DateTime            @updatedAt
 
   @@index([directoryVisibleToAccountId])
 }
@@ -145,6 +147,19 @@ model GamePreset {
   @@index([accountId])
 }
 
+// A personal archive preference. The room, hands, and every other player's
+// history remain intact when an account hides one of its own games.
+model AccountHiddenGame {
+  accountId String   @db.Uuid
+  roomId    String   @db.Uuid
+  hiddenAt  DateTime @default(now())
+  account   Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  room      Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@id([accountId, roomId])
+  @@index([accountId])
+}
+
 model AccountSession {
   id        String   @id @default(uuid()) @db.Uuid
   accountId String   @db.Uuid
@@ -158,14 +173,14 @@ model AccountSession {
 }
 
 model GameEvent {
-  id        String   @id @default(uuid()) @db.Uuid
-  roomId    String   @db.Uuid
-  sequence  Int
-  type      String
-  payload   Json
-  clientActionId String? @unique
-  room      Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
-  createdAt DateTime @default(now())
+  id             String   @id @default(uuid()) @db.Uuid
+  roomId         String   @db.Uuid
+  sequence       Int
+  type           String
+  payload        Json
+  clientActionId String?  @unique
+  room           Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  createdAt      DateTime @default(now())
 
   @@unique([roomId, sequence])
 }
@@ -188,20 +203,20 @@ model PreAction {
 }
 
 model ChipAdjustment {
-  id                   String   @id @default(uuid()) @db.Uuid
-  roomId               String   @db.Uuid
-  playerId             String   @db.Uuid
-  authorizedByPlayerId String   @db.Uuid
+  id                   String    @id @default(uuid()) @db.Uuid
+  roomId               String    @db.Uuid
+  playerId             String    @db.Uuid
+  authorizedByPlayerId String    @db.Uuid
   amount               Int
-  status               String   @default("PENDING")
+  status               String    @default("PENDING")
   stackBefore          Int?
   stackAfter           Int?
-  createdAt            DateTime @default(now())
+  createdAt            DateTime  @default(now())
   appliedAt            DateTime?
   cancelledAt          DateTime?
-  room                 Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
-  player               Player   @relation("ChipRecipient", fields: [playerId], references: [id], onDelete: Cascade)
-  authorizedBy         Player   @relation("ChipAuthorizer", fields: [authorizedByPlayerId], references: [id], onDelete: Cascade)
+  room                 Room      @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  player               Player    @relation("ChipRecipient", fields: [playerId], references: [id], onDelete: Cascade)
+  authorizedBy         Player    @relation("ChipAuthorizer", fields: [authorizedByPlayerId], references: [id], onDelete: Cascade)
 
   @@index([roomId, status])
   @@index([playerId, status])
