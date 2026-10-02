@@ -125,7 +125,7 @@ test('home offers a compact return path to every account-owned active room', asy
   assert.match(active, /\/auth\/active-games/);
   assert.match(active, /game\.isHost \? '\/host' : ''/);
   assert.match(active, /games\.map\(\(game\) => <div/);
-  assert.match(active, /game\.isHost \? <button/);
+  assert.match(active, /game\.isHost && game\.status !== 'COMPLETED' \? <button/);
   assert.match(active, /game\.status === 'WAITING' \? 'סגירת חדר' : 'סיום משחק'/);
   assert.match(active, /\/game\/finish/);
   assert.match(active, /visibilitychange/);

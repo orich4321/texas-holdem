@@ -1407,18 +1407,33 @@ export class RoomRepository {
   async recoverHostForAccount(joinId: string, accountId: string) {
     return this.db.$transaction(async (tx) => {
       const room = await tx.room.findFirst({
-        where: { joinId, status: 'IN_PROGRESS', players: { some: { accountId, leftAt: null } } },
-        select: { id: true, hostPlayerId: true, players: { where: { accountId, leftAt: null }, select: { id: true } } },
+        where: { joinId, status: { in: ['IN_PROGRESS', 'COMPLETED'] }, players: { some: { accountId, leftAt: null } } },
+        select: { id: true, hostPlayerId: true, status: true, players: { where: { accountId, leftAt: null }, select: { id: true } } },
       });
       const target = room?.players[0];
       if (!room || !target) throw new Error('Host recovery is unavailable');
       const updated = await tx.room.updateMany({
-        where: { id: room.id, status: 'IN_PROGRESS', hostPlayerId: room.hostPlayerId },
+        where: { id: room.id, status: room.status, hostPlayerId: room.hostPlayerId },
         data: { hostPlayerId: target.id },
       });
       if (updated.count !== 1) throw new Error('Host recovery is unavailable');
       return { hostPlayerId: target.id };
     });
+  }
+
+  /** Returns only the incident room for an account already seated there. */
+  async findOwnerRecoveryRoomForAccount(joinId: string, accountId: string) {
+    const room = await this.db.room.findFirst({
+      where: { joinId, status: { in: ['IN_PROGRESS', 'COMPLETED'] }, players: { some: { accountId, leftAt: null } } },
+      select: { joinId: true, status: true, hostPlayerId: true, players: { where: { accountId, leftAt: null }, select: { id: true } }, _count: { select: { settlements: true } } },
+    });
+    if (!room) return null;
+    return {
+      joinId: room.joinId,
+      status: room.status,
+      handCount: room._count.settlements,
+      isHost: room.players.some((player) => player.id === room.hostPlayerId),
+    };
   }
 
   /** A compact, account-scoped resume list for the home screen. */

@@ -6,7 +6,7 @@ import { SERVER_URL } from './account-api';
 
 type ActiveGame = {
   joinId: string;
-  status: 'WAITING' | 'IN_PROGRESS';
+  status: 'WAITING' | 'IN_PROGRESS' | 'COMPLETED';
   handCount: number;
   isHost: boolean;
   canRecoverHost?: boolean;
@@ -89,10 +89,10 @@ export function HomeActiveGames({ accountId, networkActive }: { accountId: strin
     {error ? <p role="status">לא הצלחנו לטעון משחקים פעילים. נסו לרענן את הדף.</p> : null}
     {games?.length ? <div className="home-active-games-list">{games.map((game) => <div className="home-active-game" key={game.joinId}>
       <Link className="home-active-game-link" href={`/r/${encodeURIComponent(game.joinId)}${game.isHost ? '/host' : ''}`}>
-        <span><strong>{game.status === 'WAITING' ? 'חדר ממתין' : 'משחק פעיל'}</strong><small>חדר <b dir="ltr">{game.joinId.toUpperCase()}</b> · {game.handCount} ידיים{game.isHost ? ' · מארח' : ''}</small></span>
+        <span><strong>{game.status === 'WAITING' ? 'חדר ממתין' : game.status === 'COMPLETED' ? 'משחק שהסתיים' : 'משחק פעיל'}</strong><small>חדר <b dir="ltr">{game.joinId.toUpperCase()}</b> · {game.handCount} ידיים{game.isHost ? ' · מארח' : ''}</small></span>
         <b className="home-active-game-enter">חזרה לשולחן ←</b>
       </Link>
-      {game.isHost ? <button type="button" className="home-active-game-finish" onClick={() => { setCloseError(''); setConfirmCloseGame(game); }}>{game.status === 'WAITING' ? 'סגירת חדר' : 'סיום משחק'}</button> : null}
+      {game.isHost && game.status !== 'COMPLETED' ? <button type="button" className="home-active-game-finish" onClick={() => { setCloseError(''); setConfirmCloseGame(game); }}>{game.status === 'WAITING' ? 'סגירת חדר' : 'סיום משחק'}</button> : null}
       {game.canRecoverHost ? <button type="button" className="home-active-game-finish" disabled={recoveringJoinId === game.joinId} onClick={() => void recoverHost(game)}>{recoveringJoinId === game.joinId ? 'משחזרים ניהול…' : 'שחזור ניהול'}</button> : null}
     </div>)}</div> : null}
     {closedGame ? <div className="home-finished-game" role="status"><strong>{closedGame.status === 'CANCELLED' ? 'החדר נסגר.' : 'המשחק הסתיים.'}</strong>{closedGame.status === 'COMPLETED' ? <><Link href={`/r/${encodeURIComponent(closedGame.joinId)}/host`}>לסיכום המשחק</Link><a href={`${SERVER_URL}/rooms/${encodeURIComponent(closedGame.joinId)}/final-summary/download`}>הורדת JSON</a></> : null}</div> : null}

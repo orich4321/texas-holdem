@@ -479,10 +479,14 @@ export function createApp({ roomRepository, accountRepository, socialRepository,
       response.setHeader('Cache-Control', 'private, no-store');
       const games = await roomRepository.listActiveGamesForAccount(account.id);
       const containsIncidentRoom = games.some((game) => game.joinId === ownerRecovery.joinId && !game.isHost);
-      const profile = containsIncidentRoom ? await findAccount(request.headers.cookie) : null;
-      response.json({ games: games.map((game) => ({
+      const profile = typeof accountRepository?.findBySession === 'function' ? await findAccount(request.headers.cookie) : null;
+      const mayRecover = profile?.username === ownerRecovery.username;
+      const incidentRoom = mayRecover && !containsIncidentRoom
+        ? await roomRepository.findOwnerRecoveryRoomForAccount?.(ownerRecovery.joinId, account.id)
+        : null;
+      response.json({ games: [...games, ...(incidentRoom ? [incidentRoom] : [])].map((game) => ({
         ...game,
-        ...(profile?.username === ownerRecovery.username && game.joinId === ownerRecovery.joinId && !game.isHost ? { canRecoverHost: true } : {}),
+        ...(mayRecover && game.joinId === ownerRecovery.joinId && !game.isHost ? { canRecoverHost: true } : {}),
       })) });
     } catch { response.status(500).json({ error: { code: 'INTERNAL_ERROR' } }); }
   });
