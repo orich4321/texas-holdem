@@ -124,7 +124,9 @@ test('home offers a compact return path to every account-owned active room', asy
   assert.match(home, /<HomeActiveGames accountId=\{account\.profile\.id\} networkActive=\{activity\.networkActive\}/);
   assert.match(active, /\/auth\/active-games/);
   assert.match(active, /game\.isHost \? '\/host' : ''/);
-  assert.match(active, /games\.map\(\(game\) => <Link/);
+  assert.match(active, /games\.map\(\(game\) => <div/);
+  assert.match(active, /game\.isHost && game\.status === 'IN_PROGRESS'/);
+  assert.match(active, /\/game\/finish/);
   assert.match(active, /visibilitychange/);
 });
 

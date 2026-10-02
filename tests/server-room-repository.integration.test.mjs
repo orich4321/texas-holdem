@@ -375,3 +375,24 @@ test('a host can add another hand after a final hand and decide afresh whether i
   assert.equal((await repository.startNextHandForHostAtomically({ joinId: created.joinId, hostPlayerId: created.hostPlayerId, finalHand: true })).finalHand, true);
   assert.equal((await finishCurrentHand()).view.gameCompleted, true, 'the same choice returns after every final hand');
 });
+
+test('a host may finish only after the current hand is settled and keep its final JSON intact', { skip: !integrationEnabled }, async () => {
+  const repository = new RoomRepository(prisma, undefined, undefined, undefined, snapshotKeyring);
+  const guestId = randomUUID();
+  const created = await repository.createRoom({
+    status: 'WAITING',
+    host: { id: randomUUID(), displayName: 'Host', initialStack: 500 },
+    players: [{ id: guestId, displayName: 'Guest', initialStack: 500 }],
+  });
+  await repository.startGameForHostAtomically({ joinId: created.joinId, hostPlayerId: created.hostPlayerId });
+  await assert.rejects(repository.finishGameBetweenHandsForHost(created.joinId, created.hostPlayerId), /current hand must finish/);
+  const current = await repository.recoverLatestHandForPlayer(created.id, created.hostPlayerId);
+  const actorId = current.recovery.hand.seats.find((seat) => seat.seatNumber === current.recovery.hand.currentActorSeat).playerId;
+  await repository.persistPlayerActionAtomically({ roomId: created.id, playerId: actorId, action: { type: 'fold' } });
+  await assert.rejects(repository.finishGameBetweenHandsForHost(created.joinId, guestId), /unavailable/);
+  assert.deepEqual(await repository.finishGameBetweenHandsForHost(created.joinId, created.hostPlayerId), { status: 'COMPLETED', finalSummaryVisible: true });
+  const summary = await repository.getFinalSummaryForPlayer(created.id, guestId);
+  assert.equal(summary.hands.length, 1);
+  assert.equal((await prisma.room.findUnique({ where: { id: created.id } })).status, 'COMPLETED');
+  await assert.rejects(repository.finishGameBetweenHandsForHost(created.joinId, created.hostPlayerId), /unavailable/);
+});

@@ -825,6 +825,19 @@ export function createApp({ roomRepository, accountRepository, socialRepository,
     }
   });
 
+  routes.post('/rooms/:joinId/game/finish', async (request, response) => {
+    try {
+      const host = await findAuthenticatedHost(request.params.joinId, request.headers.cookie);
+      if (!host) { response.status(403).json({ error: { code: 'HOST_FORBIDDEN' } }); return; }
+      const result = await roomRepository.finishGameBetweenHandsForHost(request.params.joinId, host.id);
+      response.setHeader('Cache-Control', 'private, no-store');
+      response.json(result);
+    } catch (error) {
+      console.error('Game finish failed', error);
+      response.status(409).json({ error: { code: 'GAME_FINISH_UNAVAILABLE' } });
+    }
+  });
+
   routes.post('/rooms/:joinId/players/:playerId/remove', async (request, response) => {
     if (!PLAYER_ID_PATTERN.test(request.params.playerId)) {
       response.status(400).json({ error: { code: 'INVALID_REQUEST' } });

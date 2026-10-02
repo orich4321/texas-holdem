@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
+import { Buffer } from 'node:buffer';
 import { test } from 'node:test';
 
 import { RoomRepository } from '../apps/server/src/persistence/room-repository.ts';
+import { signPrivateHandSnapshot } from '../apps/server/src/persistence/private-hand-snapshot.ts';
+import { applyPreflopFold, finishUncontestedHand, startHand } from '../packages/poker-core/src/index.ts';
 
 const roomId = 'room-db-id';
 const joinId = '0123456789abcdef';
@@ -119,4 +122,41 @@ test('the completed summary stays hidden until the host releases it', async () =
 
   const unavailable = new RoomRepository({ $transaction: async (callback) => callback({ room: { findFirst: async () => null } }) });
   await assert.rejects(unavailable.revealFinalSummaryForHost(joinId, guestId), /unavailable/);
+});
+
+test('finishing from home preserves a settled hand and rejects a live hand or another player', async () => {
+  const keyId = 'test-current';
+  const key = Buffer.from('a server-only snapshot signing key with adequate length', 'utf8');
+  const keyring = new Map([[keyId, key]]);
+  const hand = startHand({
+    seats: [{ seatNumber: 1, playerId: hostId, stack: 500 }, { seatNumber: 2, playerId: guestId, stack: 500 }],
+    dealerSeat: 1, smallBlind: 1, bigBlind: 2, randomInt: () => 0,
+  });
+  let snapshot = signPrivateHandSnapshot(hand, { roomId, sequence: 0, keyId }, key);
+  let sequence = 0;
+  const calls = [];
+  const tx = {
+    room: {
+      findUnique: async () => ({ id: roomId, hostPlayerId: hostId, status: 'IN_PROGRESS' }),
+      updateMany: async (args) => { calls.push(['room.updateMany', args]); return { count: 1 }; },
+    },
+    gameSnapshot: { findFirst: async () => ({ sequence, state: snapshot }) },
+    gameEvent: { findFirst: async ({ where }) => where.type.in.includes('GAME_STARTED') ? { sequence: 0 } : { sequence: 1 } },
+    settlement: { findUnique: async ({ where }) => where.roomId_idempotencyKey.idempotencyKey === 'hand-0' ? { id: 'settled' } : null },
+    preAction: { deleteMany: async (args) => { calls.push(['preAction.deleteMany', args]); } },
+    chipAdjustment: { updateMany: async (args) => { calls.push(['chipAdjustment.updateMany', args]); } },
+    player: { updateMany: async (args) => { calls.push(['player.updateMany', args]); } },
+  };
+  const repository = new RoomRepository({ $transaction: async (callback) => callback(tx) }, undefined, undefined, undefined, keyring);
+  await assert.rejects(repository.finishGameBetweenHandsForHost(joinId, guestId), /unavailable/);
+  await assert.rejects(repository.finishGameBetweenHandsForHost(joinId, hostId), /current hand must finish/);
+  assert.equal(calls.some(([name, args]) => name === 'room.updateMany' && args.data.status === 'COMPLETED'), false);
+  const settled = finishUncontestedHand(applyPreflopFold(hand, hand.currentActorSeat));
+  sequence = 1;
+  snapshot = signPrivateHandSnapshot(settled, { roomId, sequence, keyId }, key);
+  assert.deepEqual(await repository.finishGameBetweenHandsForHost(joinId, hostId), { status: 'COMPLETED', finalSummaryVisible: true });
+  assert.deepEqual(calls.find(([name, args]) => name === 'room.updateMany' && args.data.status === 'COMPLETED')[1].data, {
+    status: 'COMPLETED', finalSummaryVisible: true, nextHandIsFinal: false, turnDeadlineAt: null,
+  });
+  assert.equal(calls.some(([name]) => name === 'preAction.deleteMany'), true);
 });
