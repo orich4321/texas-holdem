@@ -71,7 +71,10 @@ test('mobile table UI keeps the player anchored, reconnects safely, and exposes 
   assert.match(styles, /\.chip-tray-actions \{ display: grid/);
   assert.match(styles, /\.chip-tray-footer button \{[^}]*min-height: 44px;/);
   assert.match(styles, /\.chip-tray-footer \{ display: grid; grid-template-columns:/);
-  assert.match(table, /className="chip-tray-footer"><button[^]*className="chip-bet-submit"[^]*className="chip-all-in"[^]*>איפוס<\/button>/);
+  assert.match(table, /className="chip-tray-footer"><button[^]*className=\{`chip-bet-submit[^]*className="chip-all-in"[^]*className="chip-reset"[^]*>איפוס<\/button>/);
+  assert.match(styles, /\.action-bar \.action-primary\s*\{[^}]*var\(--poker-action-blue\)/s);
+  assert.match(styles, /\.chip-tray-footer \.chip-reset\s*\{[^}]*background:\s*#111715;/s);
+  assert.doesNotMatch(table, /השוואה/);
   assert.match(table, /game\/final-hand/);
   assert.match(table, /className="table-management-button"/);
   assert.match(table, /management\/transfer-host/);
@@ -131,8 +134,8 @@ test('mobile table UI keeps the player anchored, reconnects safely, and exposes 
   assert.match(styles, /\.playing-card-winning\s*\{/);
   assert.doesNotMatch(styles, /\.action-notification\s*\{/);
   assert.match(styles, /\.community-cards\s*\{[^}]*z-index:\s*7/s);
-  assert.match(styles, /\.seat-action-fold\s*\{[^}]*#d77f79/s);
-  assert.match(styles, /\.seat-action-call, \.seat-action-bet\s*\{[^}]*#78a7c2/s);
+  assert.match(styles, /\.seat-action-fold\s*\{[^}]*var\(--poker-action-red\)/s);
+  assert.match(styles, /\.seat-action-call, \.seat-action-bet\s*\{[^}]*var\(--poker-action-blue\)/s);
   assert.match(table, /function seatPosition\(index: number, count: number\)/);
   assert.match(table, /index \* 360/);
   assert.match(table, /style=\{seatPosition\(seatIndex, orderedSeats\.length\)\}/);

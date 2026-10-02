@@ -12,6 +12,10 @@
   --emerald: #4f705d;
   --action: #3d604e;
   --action-light: #527662;
+  --poker-action-blue: #78a7c2;
+  --poker-action-red: #d77f79;
+  --poker-action-green: #80ad91;
+  --poker-action-gold: #c6a261;
   --action-ink: #f2eee4;
   --ink: #eeeae0;
   --muted: #9da39d;
@@ -310,10 +314,10 @@ button:disabled { cursor: wait; opacity: 0.55; }
 .seat-action { position: absolute; z-index: 9; right: 50%; bottom: -13px; display: inline-flex; align-items: center; justify-content: center; min-height: 25px; max-width: calc(100% - 10px); padding: 3px 8px; border: 1px solid currentColor; border-radius: 999px; background: rgba(8,15,12,.97); box-shadow: 0 5px 14px rgba(0,0,0,.42); gap: 5px; direction: rtl; line-height: 1; white-space: nowrap; transform: translateX(50%); }
 .seat-action i { display: grid; flex: 0 0 17px; width: 17px; height: 17px; border: 1px solid currentColor; border-radius: 50%; place-items: center; font-style: normal; font-size: .61rem; font-weight: 950; }
 .seat-action b { overflow: hidden; font-size: .5rem; text-overflow: ellipsis; }
-.seat-action-check, .seat-action-raise { color: #80ad91; }
-.seat-action-fold { color: #d77f79; }
-.seat-action-call, .seat-action-bet { color: #78a7c2; }
-.seat-action-all-in { color: #c6a261; }
+.seat-action-check, .seat-action-raise { color: var(--poker-action-green); }
+.seat-action-fold { color: var(--poker-action-red); }
+.seat-action-call, .seat-action-bet { color: var(--poker-action-blue); }
+.seat-action-all-in { color: var(--poker-action-gold); }
 .seat-rebuy-actions { position: absolute; z-index: 12; top: calc(100% + 4px); left: 50%; display: flex; width: max-content; gap: 4px; transform: translateX(-50%); }
 .seat-rebuy-actions button { min-height: 25px; padding: 0 7px; border: 1px solid rgba(139,162,145,.36); border-radius: 8px; color: #edf4ef; background: #31513f; box-shadow: 0 4px 12px rgba(0,0,0,.38); cursor: pointer; font-size: .47rem; font-weight: 900; white-space: nowrap; }
 .seat-rebuy-actions .seat-rebuy-decline { color: #eadfd3; border-color: rgba(185,167,143,.24); background: #28342e; }
@@ -341,11 +345,15 @@ button:disabled { cursor: wait; opacity: 0.55; }
 .pre-action-bar { grid-column: 3; grid-row: 1; display: flex; align-items: center; flex-wrap: wrap; gap: 5px; min-height: 40px; }
 .pre-action-bar > span, .pre-action-bar > small { color: var(--muted); font-size: .62rem; white-space: nowrap; }
 .pre-action-bar button { min-height: 36px; padding: 0 11px; border: 1px solid rgba(196,180,141,.28); border-radius: 10px; color: #d9ded8; background: rgba(255,255,255,.05); cursor: pointer; font-size: .69rem; font-weight: 800; }
-.pre-action-bar button.is-selected { border-color: #baa16c; color: #f3e1bc; background: rgba(125,97,47,.3); box-shadow: inset 0 0 0 1px rgba(186,161,108,.25); }
+.pre-action-bar button.is-selected { border-color: var(--poker-action-green); color: #e7f4e9; background: rgba(49,91,65,.55); box-shadow: inset 0 0 0 1px rgba(128,173,145,.25); }
+.pre-action-bar button.pre-action-check-fold { border-color: rgba(128,173,145,.45); color: #d8e9dc; background: rgba(40,70,51,.45); }
+.pre-action-bar button.pre-action-check-fold.is-selected { border-color: var(--poker-action-green); color: #f0f8f1; background: rgba(56,105,71,.72); }
+.pre-action-bar button.pre-action-call { border-color: rgba(120,167,194,.48); color: #d5e9f2; background: rgba(35,73,95,.5); }
+.pre-action-bar button.pre-action-call.is-selected { border-color: var(--poker-action-blue); color: #eef8fc; background: rgba(52,104,135,.7); box-shadow: inset 0 0 0 1px rgba(120,167,194,.3); }
 .pre-action-bar button:disabled { opacity: .55; cursor: wait; }
 .action-bar button { display: inline-flex; align-items: center; justify-content: center; min-height: 44px; padding: 0 7px; border: 1px solid rgba(255,255,255,.15); border-radius: 12px; color: #edf6f1; background: rgba(255,255,255,.06); cursor: pointer; gap: 6px; font-size: clamp(.63rem,1.4vw,.75rem); font-weight: 900; white-space: nowrap; transition: transform 130ms ease, filter 130ms ease, box-shadow 130ms ease; }
 .action-bar button:active:not(:disabled) { filter: brightness(1.09); transform: scale(.985); }
-.action-bar .action-primary { flex-wrap: wrap; padding-block: 3px; color: var(--action-ink); border: 1px solid rgba(139,162,145,.3); background: linear-gradient(135deg,var(--action-light),var(--action)); box-shadow: 0 7px 18px rgba(20,43,32,.24); white-space: normal; }
+.action-bar .action-primary { flex-wrap: wrap; padding-block: 3px; color: #eef8fc; border: 1px solid var(--poker-action-blue); background: linear-gradient(135deg,#386784,#24465e); box-shadow: 0 7px 18px rgba(17,49,70,.32); white-space: normal; }
 .chip-amount-call .chip-amount-piece > .bet-chip { width: 13px; height: 13px; border-width: 1px; font-size: .29rem; }
 .chip-amount-call .chip-amount-piece > b { color: inherit; font-size: .4rem; }
 .pre-action-bar button:has(.chip-amount) { display: inline-flex; align-items: center; gap: 5px; }
@@ -386,8 +394,10 @@ button:disabled { cursor: wait; opacity: 0.55; }
 .chip-tray-footer small { margin-inline-end: auto; color: #c0cfc3; font-size: .56rem; }
 .chip-tray-footer button { min-width: 0; min-height: 44px; padding: 4px 9px; border: 1px solid rgba(196,180,141,.3); border-radius: 10px; color: #e8ece4; background: #334739; cursor: pointer; font-size: .72rem; font-weight: 900; line-height: 1.15; }
 .chip-tray-footer button:disabled { opacity: .4; cursor: default; }
-.chip-tray-footer .chip-bet-submit { color: var(--action-ink); background: var(--action-light); }
-.chip-tray-footer .chip-all-in { border-color: rgba(196,180,141,.5); color: #f4e3bf; background: #514632; }
+.chip-tray-footer .chip-bet-submit { border-color: var(--poker-action-blue); color: #eef8fc; background: #315d79; }
+.chip-tray-footer .chip-bet-all-in { border-color: var(--poker-action-gold); color: #fff0cd; background: #76582b; }
+.chip-tray-footer .chip-all-in { border-color: var(--poker-action-gold); color: #f4e3bf; background: #514632; }
+.chip-tray-footer .chip-reset { border-color: #46504b; color: #e7e9e5; background: #111715; }
 
 /* Between-hand controls and the end-of-game overlay */
 .modal-backdrop { position: fixed; z-index: 50; inset: 0; display: grid; padding: max(12px,env(safe-area-inset-top)) 12px max(12px,env(safe-area-inset-bottom)); background: rgba(2,6,4,.74); backdrop-filter: blur(8px); place-items: center; animation: fade-in 180ms ease both; }
@@ -823,16 +833,18 @@ button:disabled { cursor: wait; opacity: 0.55; }
 .social-person > span:not(.social-avatar) { display: grid; flex: 1; min-width: 0; }
 .social-person strong { overflow: hidden; color: var(--ink); font-size: .72rem; text-overflow: ellipsis; white-space: nowrap; }
 .social-person small { justify-self: start; color: var(--muted); font-size: .6rem; }
+.social-person button.social-remove-friend { border-color: rgba(215,127,121,.65); color: #ffe0dc; background: #703b38; }
 .social-message { color: var(--gold-light) !important; }
 .social-load-more { min-height: 40px; border: 1px solid var(--gold-line); border-radius: 9px; color: var(--gold-light); background: #263b2d; cursor: pointer; font-size: .7rem; font-weight: 850; }
 .lobby-friend-invites { display: grid; min-height: 0; gap: 6px; }
 .lobby-friend-invites > strong { color: var(--gold-light); font-size: .7rem; }
 .lobby-friend-invites > small, .lobby-friend-invites p { margin: 0; color: var(--muted); font-size: .6rem; }
-.lobby-friend-invites > div { display: grid; max-height: 120px; overflow-y: auto; gap: 4px; }
-.lobby-friend-invites button { display: flex; align-items: center; min-height: 42px; padding: 4px 7px; border: 1px solid var(--line); border-radius: 9px; color: var(--ink); background: #20382a; cursor: pointer; gap: 7px; text-align: start; }
-.lobby-friend-invites button span:not(.social-avatar) { display: grid; flex: 1; min-width: 0; font-size: .68rem; }
-.lobby-friend-invites button small { color: var(--muted); font-size: .55rem; }
-.lobby-friend-invites button b { color: var(--gold-light); font-size: .6rem; }
+.lobby-friend-list { display: grid; max-height: min(24dvh,180px); overflow-y: auto; gap: 5px; }
+.lobby-friend-invite { display: grid; grid-template-columns: 36px minmax(0,1fr) auto; align-items: center; min-width: 0; min-height: 54px; padding: 6px 8px; border: 1px solid rgba(197,174,122,.25); border-radius: 11px; background: #192b21; gap: 9px; }
+.lobby-friend-invite > span:not(.social-avatar) { display: grid; min-width: 0; gap: 2px; }
+.lobby-friend-invite strong { overflow: hidden; color: var(--ink); font-size: .74rem; text-overflow: ellipsis; white-space: nowrap; }
+.lobby-friend-invite small { color: var(--muted); font-size: .57rem; }
+.lobby-friend-invite button { min-width: 72px; min-height: 38px; padding: 5px 10px; border: 1px solid var(--poker-action-green); border-radius: 9px; color: #ecf6ed; background: #365d42; cursor: pointer; font-size: .65rem; font-weight: 900; }
 .lobby-friend-invites button:disabled, .home-invite-banner button:disabled, .social-person button:disabled { opacity: .55; cursor: default; }
 
 @media (max-width: 560px) {

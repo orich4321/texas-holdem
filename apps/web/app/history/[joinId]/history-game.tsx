@@ -16,7 +16,7 @@ type HandDetail = {
     players: { playerId: string; stack: number; currentBet: number; totalCommitted: number; folded: boolean; holeCards: Card[] }[] }[];
 };
 const suits: Record<string, string> = { clubs: '♣', diamonds: '♦', hearts: '♥', spades: '♠' };
-const actionNames: Record<string, string> = { fold: 'פרישה', check: 'צ׳ק', call: 'השוואה', raise: 'העלאה', 'all-in': 'אול אין' };
+const actionNames: Record<string, string> = { fold: 'פרישה', check: 'צ׳ק', call: 'שולם', raise: 'העלאה', 'all-in': 'אול אין' };
 const streetNames: Record<string, string> = { preflop: 'פרה־פלופ', flop: 'פלופ', turn: 'טרן', river: 'ריבר', showdown: 'שואודאון' };
 
 function HistoryCard({ card }: { card: Card }) {

@@ -104,9 +104,18 @@ test('friend avatars stay circular instead of inheriting the flexible text-colum
   assert.match(avatar, /flex:\s*0 0 34px/);
   assert.match(avatar, /border-radius:\s*50%/);
   assert.match(styles, /\.social-person > span:not\(\.social-avatar\)\s*\{/);
-  assert.match(styles, /\.lobby-friend-invites button span:not\(\.social-avatar\)\s*\{/);
+  assert.match(styles, /\.lobby-friend-invite > span:not\(\.social-avatar\)\s*\{/);
   assert.doesNotMatch(styles, /\.social-person > span\s*\{/);
-  assert.doesNotMatch(styles, /\.lobby-friend-invites button span\s*\{/);
+  assert.doesNotMatch(styles, /\.lobby-friend-invite > span\s*\{/);
+});
+
+test('friend removal is red and room invitations have a separate named action', async () => {
+  const styles = await source('apps/web/app/globals.css');
+  const home = await source('apps/web/app/home-account-panel.tsx');
+  const lobby = await source('apps/web/app/r/[joinId]/lobby-client.tsx');
+  assert.match(home, /className="social-remove-friend"[^]*>הסרה<\/button>/);
+  assert.match(styles, /\.social-person button\.social-remove-friend\s*\{[^}]*background:\s*#703b38;/);
+  assert.match(lobby, /className="lobby-friend-invite"[^]*<strong>\{friend\.displayName \?\? friend\.username\}<\/strong>[^]*<button[^]*>\{invitingFriendId === friend\.id \? 'שולחים…' : 'הזמנה'\}<\/button>/);
 });
 
 test('main app shells fill the dynamic viewport without page-level scrolling', async () => {
