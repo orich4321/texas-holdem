@@ -490,14 +490,29 @@ export function createApp({ roomRepository, accountRepository, socialRepository,
   // This one-time, token-protected route exists solely to resolve a support
   // request where the authenticated host cannot access their device. It is
   // removed immediately after the operation completes.
+  routes.get('/maintenance/active-rooms', async (request, response) => {
+    if (!hasMaintenanceToken(request.header('x-maintenance-token'))) {
+      response.status(404).end();
+      return;
+    }
+    response.json({ rooms: await roomRepository.listActiveRoomsForMaintenance() });
+  });
+
   routes.post('/maintenance/close-ori-shay-game', async (request, response) => {
     if (!hasMaintenanceToken(request.header('x-maintenance-token'))) {
       response.status(404).end();
       return;
     }
+    const joinId = request.body && typeof request.body === 'object' && !Array.isArray(request.body)
+      ? request.body.joinId
+      : undefined;
+    if (typeof joinId !== 'string' || !/^[a-f0-9]{16}$/i.test(joinId)) {
+      response.status(400).json({ error: { code: 'ONE_TIME_INVALID_ROOM' } });
+      return;
+    }
     try {
-      const room = await roomRepository.findSingleActiveRoomByParticipantNames(['אורי', 'שי שמואל']);
-      if (!room) {
+      const room = await roomRepository.findActiveRoomForMaintenance(joinId);
+      if (!room?.hostPlayerId) {
         response.status(409).json({ error: { code: 'ONE_TIME_ROOM_NOT_FOUND' } });
         return;
       }

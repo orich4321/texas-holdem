@@ -241,31 +241,24 @@ export class RoomRepository {
     private readonly privateSnapshotKeyring: ReadonlyMap<string, PrivateSnapshotSigningKey> = new Map(),
   ) {}
 
-  /**
-   * Deliberately narrow support lookup for a one-time owner-requested closure.
-   * The caller must still authorize the operation before using the host id.
-   */
-  async findSingleActiveRoomByParticipantNames(displayNames: readonly string[]) {
-    const normalizedNames = new Set(displayNames.map((name) => name.trim()).filter(Boolean));
-    if (normalizedNames.size === 0) return undefined;
-    const rooms = await this.db.room.findMany({
-      where: {
-        status: { in: ['WAITING', 'IN_PROGRESS'] },
-        players: { some: { leftAt: null, displayName: { in: [...normalizedNames] } } },
-      },
+  /** A token-protected, short-lived support lookup. Removed with its route after use. */
+  async listActiveRoomsForMaintenance() {
+    return this.db.room.findMany({
+      where: { status: { in: ['WAITING', 'IN_PROGRESS'] } },
       select: {
         joinId: true,
         hostPlayerId: true,
         players: { where: { leftAt: null }, select: { displayName: true } },
       },
+      orderBy: { updatedAt: 'desc' },
     });
-    const matches = rooms.filter((room) => {
-      const participants = new Set(room.players.map((player) => player.displayName));
-      return [...normalizedNames].every((name) => participants.has(name));
+  }
+
+  async findActiveRoomForMaintenance(joinId: string) {
+    return this.db.room.findFirst({
+      where: { joinId, status: { in: ['WAITING', 'IN_PROGRESS'] } },
+      select: { joinId: true, hostPlayerId: true },
     });
-    return matches.length === 1 && matches[0].hostPlayerId
-      ? { joinId: matches[0].joinId, hostPlayerId: matches[0].hostPlayerId }
-      : undefined;
   }
 
   /** Stores one authenticated choice for the current hand and betting street. */
