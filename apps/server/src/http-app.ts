@@ -503,9 +503,10 @@ export function createApp({ roomRepository, accountRepository, socialRepository,
       response.status(404).end();
       return;
     }
-    const joinId = request.body && typeof request.body === 'object' && !Array.isArray(request.body)
+    const bodyJoinId = request.body && typeof request.body === 'object' && !Array.isArray(request.body)
       ? request.body.joinId
       : undefined;
+    const joinId = typeof bodyJoinId === 'string' ? bodyJoinId : request.query.joinId;
     if (typeof joinId !== 'string' || !/^[a-f0-9]{16}$/i.test(joinId)) {
       response.status(400).json({ error: { code: 'ONE_TIME_INVALID_ROOM' } });
       return;
