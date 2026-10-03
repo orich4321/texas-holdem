@@ -241,26 +241,6 @@ export class RoomRepository {
     private readonly privateSnapshotKeyring: ReadonlyMap<string, PrivateSnapshotSigningKey> = new Map(),
   ) {}
 
-  /** A token-protected, short-lived support lookup. Removed with its route after use. */
-  async listActiveRoomsForMaintenance() {
-    return this.db.room.findMany({
-      where: { status: { in: ['WAITING', 'IN_PROGRESS'] } },
-      select: {
-        joinId: true,
-        hostPlayerId: true,
-        players: { where: { leftAt: null }, select: { displayName: true } },
-      },
-      orderBy: { updatedAt: 'desc' },
-    });
-  }
-
-  async findActiveRoomForMaintenance(joinId: string) {
-    return this.db.room.findFirst({
-      where: { joinId, status: { in: ['WAITING', 'IN_PROGRESS'] } },
-      select: { joinId: true, hostPlayerId: true },
-    });
-  }
-
   /** Stores one authenticated choice for the current hand and betting street. */
   async setPreActionForPlayer(roomId: string, playerId: string, type: PreActionChoice | null) {
     return this.db.$transaction(async (tx) => {

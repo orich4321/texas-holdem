@@ -1,4 +1,4 @@
-import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import express, { type ErrorRequestHandler, type RequestHandler } from 'express';
 import type { PlayerAction } from './game-lifecycle.js';
 import { createOriginPolicy, isAllowedRequestOrigin } from './origin-policy.js';
@@ -23,14 +23,6 @@ const DEFAULT_MAX_PLAYERS = 9;
 const PLAYER_SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1_000;
 const PLAYER_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-function hasMaintenanceToken(value: unknown): boolean {
-  const configuredToken = process.env.ONE_TIME_MAINTENANCE_TOKEN;
-  if (!configuredToken || typeof value !== 'string') return false;
-  const supplied = Buffer.from(value);
-  const expected = Buffer.from(configuredToken);
-  return supplied.length === expected.length && timingSafeEqual(supplied, expected);
-}
 
 type OriginPolicy = (origin: string | undefined) => boolean;
 
@@ -485,44 +477,6 @@ export function createApp({ roomRepository, accountRepository, socialRepository,
       response.setHeader('Cache-Control', 'private, no-store');
       response.json({ games: await roomRepository.listActiveGamesForAccount(account.id) });
     } catch { response.status(500).json({ error: { code: 'INTERNAL_ERROR' } }); }
-  });
-
-  // This one-time, token-protected route exists solely to resolve a support
-  // request where the authenticated host cannot access their device. It is
-  // removed immediately after the operation completes.
-  routes.get('/maintenance/active-rooms', async (request, response) => {
-    if (!hasMaintenanceToken(request.header('x-maintenance-token'))) {
-      response.status(404).end();
-      return;
-    }
-    response.json({ rooms: await roomRepository.listActiveRoomsForMaintenance() });
-  });
-
-  routes.post('/maintenance/close-ori-shay-game', async (request, response) => {
-    if (!hasMaintenanceToken(request.header('x-maintenance-token'))) {
-      response.status(404).end();
-      return;
-    }
-    const bodyJoinId = request.body && typeof request.body === 'object' && !Array.isArray(request.body)
-      ? request.body.joinId
-      : undefined;
-    const joinId = typeof bodyJoinId === 'string' ? bodyJoinId : request.query.joinId;
-    if (typeof joinId !== 'string' || !/^[a-f0-9]{16}$/i.test(joinId)) {
-      response.status(400).json({ error: { code: 'ONE_TIME_INVALID_ROOM' } });
-      return;
-    }
-    try {
-      const room = await roomRepository.findActiveRoomForMaintenance(joinId);
-      if (!room?.hostPlayerId) {
-        response.status(409).json({ error: { code: 'ONE_TIME_ROOM_NOT_FOUND' } });
-        return;
-      }
-      const result = await roomRepository.closeRoomForHost(room.joinId, room.hostPlayerId);
-      response.json({ joinId: room.joinId, status: result.status });
-    } catch (error) {
-      console.error('One-time maintenance room closure failed', error);
-      response.status(409).json({ error: { code: 'ONE_TIME_ROOM_CLOSE_FAILED' } });
-    }
   });
 
   routes.get('/auth/history', async (request, response) => {
