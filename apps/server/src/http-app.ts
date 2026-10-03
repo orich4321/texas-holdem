@@ -326,11 +326,12 @@ export function createApp({ roomRepository, accountRepository, socialRepository,
     if (cursor !== undefined && (typeof cursor !== 'string' || !/^[a-z0-9._-]{1,24}$/i.test(cursor))) {
       response.status(400).json({ error: { code: 'INVALID_CURSOR' } }); return;
     }
+    const validCursor = typeof cursor === 'string' ? cursor : undefined;
     try {
       const account = await findAccountIdentity(request.headers.cookie);
       if (!account || !socialRepository) { response.status(401).json({ error: { code: 'AUTH_REQUIRED' } }); return; }
       response.setHeader('Cache-Control', 'private, no-store');
-      response.json(await socialRepository.listUsers(account.id, cursor));
+      response.json(await socialRepository.listUsers(account.id, validCursor));
     } catch { response.status(500).json({ error: { code: 'INTERNAL_ERROR' } }); }
   });
 
