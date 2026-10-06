@@ -210,6 +210,20 @@ test('accepted authoritative action persists a minimal event and next signed sna
   assert.equal(JSON.stringify(db.calls[3][1].data).includes('deck'), false);
 });
 
+test('live game recovery and action responses never repeat player profile images', async () => {
+  const avatarDataUrl = `data:image/png;base64,${'A'.repeat(32_000)}`;
+  const players = room.players.map((player) => ({ ...player, avatarDataUrl }));
+  const db = createDb({ players });
+  const repository = new RoomRepository(db, undefined, undefined, undefined, keyring);
+  const recovered = await repository.recoverLatestPlayerViewForPlayer(room.id, 'host-id');
+  const action = await repository.persistPlayerActionAtomically({ roomId: room.id, playerId: 'host-id', action: { type: 'call' } });
+
+  assert.doesNotMatch(JSON.stringify(recovered), /data:image\/png/);
+  assert.doesNotMatch(JSON.stringify(action.view), /data:image\/png/);
+  const actionRead = db.calls.find(([name]) => name === 'room.findUnique');
+  assert.equal(actionRead[1].select.players.select.avatarDataUrl, undefined);
+});
+
 test('a preflop wager over the blinds is identified publicly as a raise', async () => {
   const db = createDb();
   const repository = new RoomRepository(db, undefined, undefined, undefined, keyring);

@@ -47,7 +47,6 @@ type PlayerWriter = Pick<PrismaClient, 'player'>;
 type RoomViewPlayer = Readonly<{
   id: string;
   displayName: string;
-  avatarDataUrl: string | null;
   currentStack: number;
   isSittingOut: boolean;
   rebuyDecisionPending: boolean;
@@ -208,7 +207,7 @@ function validatePersistedPlayerAction(action: unknown): asserts action is Playe
 
 function actionNotificationFromEvent(
   event: { sequence: number; payload: unknown } | undefined,
-  players: readonly { id: string; displayName: string; avatarDataUrl: string | null }[],
+  players: readonly { id: string; displayName: string }[],
 ): PlayerActionNotification | undefined {
   if (!event || !event.payload || typeof event.payload !== 'object' || Array.isArray(event.payload)) return undefined;
   const payload = event.payload as Record<string, unknown>;
@@ -225,7 +224,6 @@ function actionNotificationFromEvent(
     sequence: event.sequence,
     actorPlayerId: actor.id,
     actorPlayerName: actor.displayName,
-    ...(actor.avatarDataUrl ? { avatarDataUrl: actor.avatarDataUrl } : {}),
     action: Object.freeze({ ...payload.action }),
     ...(raiseKind ? { raiseKind } : {}),
     ...(amount !== undefined ? { amount } : {}),
@@ -314,7 +312,6 @@ export class RoomRepository {
             seatNumber: -(index + 1),
             playerId: player.id,
             playerName: player.displayName,
-            ...(player.avatarDataUrl ? { avatarDataUrl: player.avatarDataUrl } : {}),
             stack: player.currentStack,
             currentBet: 0,
             isFolded: false,
@@ -601,16 +598,28 @@ export class RoomRepository {
       select: {
         status: true,
         updatedAt: true,
-        players: { select: { id: true, updatedAt: true }, orderBy: { id: 'asc' } },
         snapshots: { select: { sequence: true }, orderBy: { sequence: 'desc' }, take: 1 },
       },
     });
     if (!room?.snapshots[0]) return null;
-    const revision = JSON.stringify([
-      playerId, room.status, room.updatedAt.getTime(), room.snapshots[0].sequence,
-      room.players.map((player) => [player.id, player.updatedAt.getTime()]),
-    ]);
+    // Room.updatedAt catches management and timer changes; sequence catches
+    // fast consecutive actions even if the timestamp has the same millisecond.
+    const revision = JSON.stringify([playerId, room.status, room.updatedAt.getTime(), room.snapshots[0].sequence]);
     return `"poker-${createHash('sha256').update(revision).digest('base64url').slice(0, 22)}"`;
+  }
+
+  /** Profile images are loaded once per roster, outside the live game poll. */
+  async findRoomAvatarsForPlayer(roomId: string, playerId: string) {
+    const room = await this.db.room.findFirst({
+      where: { id: roomId, players: { some: { id: playerId, leftAt: null } } },
+      select: {
+        players: {
+          where: { leftAt: null },
+          select: { id: true, avatarDataUrl: true },
+        },
+      },
+    });
+    return room?.players ?? null;
   }
 
   /**
@@ -631,7 +640,7 @@ export class RoomRepository {
           turnDeadlineAt: true,
           players: {
             orderBy: { createdAt: 'asc' },
-            select: { id: true, displayName: true, avatarDataUrl: true, currentStack: true, isSittingOut: true, rebuyDecisionPending: true, timeCardsRemaining: true, preAction: { select: { type: true, street: true, quotedToCall: true } } },
+            select: { id: true, displayName: true, currentStack: true, isSittingOut: true, rebuyDecisionPending: true, timeCardsRemaining: true, preAction: { select: { type: true, street: true, quotedToCall: true } } },
           },
           events: {
             where: { type: 'PLAYER_ACTION' },
@@ -664,7 +673,6 @@ export class RoomRepository {
           seatNumber: seat.seatNumber,
           playerId: player.id,
           playerName: player.displayName,
-          avatarDataUrl: player.avatarDataUrl ?? undefined,
           stack: player.currentStack,
         };
       }),
@@ -694,7 +702,7 @@ export class RoomRepository {
     return this.db.$transaction(async (tx) => {
       const room = await tx.room.findUnique({
         where: { id: roomId },
-        select: { status: true, hostPlayerId: true, turnDeadlineAt: true, players: { where: { leftAt: null }, orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, avatarDataUrl: true, currentStack: true, isSittingOut: true, rebuyDecisionPending: true, timeCardsRemaining: true } } },
+        select: { status: true, hostPlayerId: true, turnDeadlineAt: true, players: { where: { leftAt: null }, orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, currentStack: true, isSittingOut: true, rebuyDecisionPending: true, timeCardsRemaining: true } } },
       });
       if (!room || !room.hostPlayerId || room.status !== 'IN_PROGRESS' || !room.players.some((player) => player.id === playerId)) throw new Error('Game action is unavailable');
 
@@ -720,7 +728,7 @@ export class RoomRepository {
         seats: hand.seats.map((seat) => {
           const player = playersById.get(seat.playerId);
           if (!player) throw new Error('Game action is unavailable');
-          return { seatNumber: seat.seatNumber, playerId: player.id, playerName: player.displayName, avatarDataUrl: player.avatarDataUrl ?? undefined, stack: player.currentStack };
+          return { seatNumber: seat.seatNumber, playerId: player.id, playerName: player.displayName, stack: player.currentStack };
         }),
         dealerSeat: hand.dealerSeat, smallBlind: hand.smallBlindAmount, bigBlind: hand.bigBlindAmount,
       }, recovery);
@@ -890,7 +898,7 @@ export class RoomRepository {
     return this.db.$transaction(async (tx) => {
       const room = await tx.room.findUnique({
         where: { joinId },
-        select: { id: true, hostPlayerId: true, status: true, players: { where: { leftAt: null }, orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, avatarDataUrl: true, currentStack: true, isSittingOut: true, rebuyDecisionPending: true } } },
+        select: { id: true, hostPlayerId: true, status: true, players: { where: { leftAt: null }, orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, currentStack: true, isSittingOut: true, rebuyDecisionPending: true } } },
       });
       if (!room || room.hostPlayerId !== hostPlayerId || room.status !== 'IN_PROGRESS') throw new Error('All-in board is unavailable');
       const locked = await tx.room.updateMany({ where: { id: room.id, hostPlayerId, status: 'IN_PROGRESS' }, data: { updatedAt: new Date() } });
@@ -903,7 +911,7 @@ export class RoomRepository {
         seats: recovery.hand.seats.map((seat) => {
           const player = playersById.get(seat.playerId);
           if (!player) throw new Error('All-in board is unavailable');
-          return { seatNumber: seat.seatNumber, playerId: player.id, playerName: player.displayName, avatarDataUrl: player.avatarDataUrl ?? undefined, stack: player.currentStack };
+          return { seatNumber: seat.seatNumber, playerId: player.id, playerName: player.displayName, stack: player.currentStack };
         }),
         dealerSeat: recovery.hand.dealerSeat, smallBlind: recovery.hand.smallBlindAmount, bigBlind: recovery.hand.bigBlindAmount,
       }, recovery);
@@ -964,7 +972,7 @@ export class RoomRepository {
     return this.db.$transaction(async (tx) => {
       const room = await tx.room.findUnique({
         where: { joinId },
-        select: { id: true, hostPlayerId: true, status: true, finalSummaryVisible: true, players: { where: { leftAt: null }, orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, avatarDataUrl: true, currentStack: true, isSittingOut: true, rebuyDecisionPending: true } } },
+        select: { id: true, hostPlayerId: true, status: true, finalSummaryVisible: true, players: { where: { leftAt: null }, orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, currentStack: true, isSittingOut: true, rebuyDecisionPending: true } } },
       });
       if (!room || room.hostPlayerId !== hostPlayerId || (room.status !== 'IN_PROGRESS' && (room.status !== 'COMPLETED' || room.finalSummaryVisible))) {
         throw new Error('Uncontested board is unavailable');
@@ -982,7 +990,7 @@ export class RoomRepository {
         seats: recovery.hand.seats.map((seat) => {
           const player = playersById.get(seat.playerId);
           if (!player) throw new Error('Uncontested board is unavailable');
-          return { seatNumber: seat.seatNumber, playerId: player.id, playerName: player.displayName, avatarDataUrl: player.avatarDataUrl ?? undefined, stack: player.currentStack };
+          return { seatNumber: seat.seatNumber, playerId: player.id, playerName: player.displayName, stack: player.currentStack };
         }),
         dealerSeat: recovery.hand.dealerSeat, smallBlind: recovery.hand.smallBlindAmount, bigBlind: recovery.hand.bigBlindAmount,
       }, recovery);
@@ -1007,7 +1015,7 @@ export class RoomRepository {
     return this.db.$transaction(async (tx) => {
       const room = await tx.room.findUnique({
         where: { id: roomId },
-        select: { status: true, hostPlayerId: true, finalSummaryVisible: true, players: { where: { leftAt: null }, orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, avatarDataUrl: true, currentStack: true, isSittingOut: true, rebuyDecisionPending: true } } },
+        select: { status: true, hostPlayerId: true, finalSummaryVisible: true, players: { where: { leftAt: null }, orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, currentStack: true, isSittingOut: true, rebuyDecisionPending: true } } },
       });
       if (!room || !room.hostPlayerId || (room.status !== 'IN_PROGRESS' && (room.status !== 'COMPLETED' || room.finalSummaryVisible)) || !room.players.some((player) => player.id === playerId)) throw new Error('Showdown reveal is unavailable');
       const locked = await tx.room.updateMany({ where: { id: roomId, status: room.status }, data: { updatedAt: new Date() } });
@@ -1020,7 +1028,7 @@ export class RoomRepository {
         seats: recovery.hand.seats.map((seat) => {
           const player = playersById.get(seat.playerId);
           if (!player) throw new Error('Showdown reveal is unavailable');
-          return { seatNumber: seat.seatNumber, playerId: player.id, playerName: player.displayName, avatarDataUrl: player.avatarDataUrl ?? undefined, stack: player.currentStack };
+          return { seatNumber: seat.seatNumber, playerId: player.id, playerName: player.displayName, stack: player.currentStack };
         }),
         dealerSeat: recovery.hand.dealerSeat, smallBlind: recovery.hand.smallBlindAmount, bigBlind: recovery.hand.bigBlindAmount,
       }, recovery);

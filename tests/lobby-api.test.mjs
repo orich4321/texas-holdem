@@ -83,7 +83,7 @@ test('mobile table UI keeps the player anchored, reconnects safely, and exposes 
   assert.doesNotMatch(table, /className="action-notifications"/);
   assert.match(table, /className=\{`seat-action seat-action-\$\{presentedAction\.tone\}`\}/);
   assert.doesNotMatch(table, /setActionNotices/);
-  assert.match(table, /className="table-seat-avatar" dataUrl=\{seat\.avatarDataUrl\}/);
+  assert.match(table, /className="table-seat-avatar" dataUrl=\{avatarByPlayerId\[seat\.playerId\] \?\? seat\.avatarDataUrl\}/);
   assert.match(table, /className="table-seat-info"/);
   assert.match(table, /seenActionSequenceRef/);
   assert.match(table, /className="table-timer"/);

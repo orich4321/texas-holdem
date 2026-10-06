@@ -286,6 +286,7 @@ function PlayingCard({ card, hidden = false, placeholder = false, highlighted = 
 
 export default function TableClient({ joinId, isHost, networkActive = true }: { joinId: string; isHost: boolean; networkActive?: boolean }) {
   const [view, setView] = useState<PlayerView>();
+  const [avatarByPlayerId, setAvatarByPlayerId] = useState<Readonly<Record<string, string | null>>>({});
   const [status, setStatus] = useState('מתחברים לשולחן…');
   const [chipTray, setChipTray] = useState(() => createChipTray(0));
   const [pending, setPending] = useState(false);
@@ -323,6 +324,7 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
     && selectedBigBlind !== undefined && selectedBigBlind <= 100_000 && selectedBigBlind > selectedSmallBlind;
   const socketRef = useRef<ReturnType<typeof io> | null>(null);
   const latestSequenceRef = useRef(-1);
+  const viewRef = useRef<PlayerView | undefined>(undefined);
   const actionPendingRef = useRef(false);
   const feltRef = useRef<HTMLDivElement>(null);
   const cardDragRef = useRef<{ pointerId: number; startX: number; startY: number; moved: boolean } | undefined>(undefined);
@@ -391,12 +393,49 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
   }, [view, soundEnabled]);
   const turnAlertRef = useRef<{ identity: string; observedSequence: number; vibrated: boolean; soundNotified: boolean } | undefined>(undefined);
 
+  useEffect(() => { viewRef.current = view; }, [view]);
+  const avatarRoster = view?.seats.map((seat) => seat.playerId).sort().join('.') ?? '';
+  useEffect(() => {
+    if (!avatarRoster || !networkActive) return;
+    let active = true;
+    let retry: ReturnType<typeof globalThis.setTimeout> | undefined;
+    const controller = new AbortController();
+    let attempts = 0;
+    const loadAvatars = async () => {
+      try {
+        const response = await globalThis.fetch(`${SERVER_URL}/rooms/${encodeURIComponent(joinId)}/avatars?roster=${encodeURIComponent(avatarRoster)}`, {
+          credentials: 'include', signal: controller.signal,
+        });
+        if (!response.ok) throw new Error('Avatar roster unavailable');
+        const result: unknown = await response.json();
+        if (!result || typeof result !== 'object' || !('avatars' in result) || !Array.isArray(result.avatars)) throw new Error('Invalid avatar roster');
+        const avatars: Record<string, string | null> = {};
+        for (const entry of result.avatars) {
+          if (!entry || typeof entry.id !== 'string' || (entry.avatarDataUrl !== null && typeof entry.avatarDataUrl !== 'string')) throw new Error('Invalid avatar');
+          avatars[entry.id] = entry.avatarDataUrl;
+        }
+        if (active) setAvatarByPlayerId(avatars);
+      } catch {
+        if (active && attempts < 3) retry = globalThis.setTimeout(() => { attempts += 1; void loadAvatars(); }, 1_500 * 2 ** attempts);
+      }
+    };
+    void loadAvatars();
+    return () => {
+      active = false;
+      controller.abort();
+      if (retry !== undefined) globalThis.clearTimeout(retry);
+    };
+  }, [avatarRoster, joinId, networkActive]);
+
   useEffect(() => {
     if (!networkActive) return;
     let active = true;
+    let refreshing = false;
     const controller = new AbortController();
     let refreshTag: string | undefined;
     const refresh = async () => {
+      if (refreshing) return;
+      refreshing = true;
       try {
         const response = await globalThis.fetch(`${SERVER_URL}/rooms/${encodeURIComponent(joinId)}/game`, {
           credentials: 'include', cache: 'no-store', signal: controller.signal,
@@ -422,6 +461,8 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
         setStatus(next.street === 'showdown' ? 'היד הסתיימה' : 'מחוברים לשולחן');
       } catch {
         if (active) setStatus('החיבור נותק זמנית — מתחברים מחדש…');
+      } finally {
+        refreshing = false;
       }
     };
 
@@ -464,7 +505,13 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
     let pollTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
     const poll = async () => {
       if (globalThis.document.visibilityState === 'visible') await refresh();
-      if (active) pollTimer = globalThis.setTimeout(() => { void poll(); }, 750);
+      if (!active) return;
+      const current = viewRef.current;
+      const ownSeat = current?.seats.find((seat) => seat.playerId === current.playerId);
+      const ownTurn = current && ownSeat && !current.gameCompleted && current.street !== 'showdown'
+        && !current.allInRunout && ownSeat.seatNumber === current.currentActorSeat;
+      const delay = ownTurn ? 750 : current?.street === 'showdown' ? 2_000 : 1_500;
+      pollTimer = globalThis.setTimeout(() => { void poll(); }, delay);
     };
     void poll();
     globalThis.addEventListener('focus', restoreAfterResume);
@@ -1223,7 +1270,7 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
                     {seat.seatNumber === view.bigBlindSeat ? <i className="seat-role blind-button">BB</i> : null}
                   </>}
                 </span>
-                <ProfileImage className="table-seat-avatar" dataUrl={seat.avatarDataUrl} fallback={seat.playerName.slice(0, 1)} />
+                <ProfileImage className="table-seat-avatar" dataUrl={avatarByPlayerId[seat.playerId] ?? seat.avatarDataUrl} fallback={seat.playerName.slice(0, 1)} />
                 <div className="table-seat-info">
                   <strong>{seat.playerName}{isYou ? ' · אתם' : ''}</strong>
                   <small>{seat.isSittingOut ? 'יושב/ת בחוץ · לא מקבל/ת קלפים' : <><span className="seat-stack-chips"><i aria-hidden="true" />{seat.stack.toLocaleString('he-IL')} צ׳יפים</span><span className="seat-stack-blinds" aria-label={`${formatChipsInBigBlinds(seat.stack, view.bigBlind)} ביג בליינדים`}>{formatChipsInBigBlinds(seat.stack, view.bigBlind)}</span></>}</small>

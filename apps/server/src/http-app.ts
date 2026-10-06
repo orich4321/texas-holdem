@@ -662,6 +662,28 @@ export function createApp({ roomRepository, accountRepository, socialRepository,
     }
   });
 
+  routes.get('/rooms/:joinId/avatars', async (request, response) => {
+    try {
+      const player = await findAuthenticatedPlayer(request.params.joinId, request.headers.cookie);
+      if (!player) {
+        response.status(401).json({ error: { code: 'UNAUTHORIZED' } });
+        return;
+      }
+      const avatars = await roomRepository.findRoomAvatarsForPlayer(player.roomId, player.id);
+      if (!avatars) {
+        response.status(404).json({ error: { code: 'ROOM_NOT_FOUND' } });
+        return;
+      }
+      // The roster signature in the URL changes when a member joins or leaves.
+      // Player avatars are immutable for the duration of a room.
+      response.setHeader('Cache-Control', 'private, max-age=86400');
+      response.json({ avatars });
+    } catch (error) {
+      console.error('Room avatar lookup failed', error);
+      response.status(500).json({ error: { code: 'INTERNAL_ERROR' } });
+    }
+  });
+
   // HTTP is the portable realtime transport for the Vercel deployment. The
   // response is always scoped to the authenticated player, so polling never
   // exposes another player's hole cards.
@@ -685,8 +707,9 @@ export function createApp({ roomRepository, accountRepository, socialRepository,
         response.status(409).json({ error: { code: 'GAME_NOT_AVAILABLE' } });
         return;
       }
-      const currentTag = await roomRepository.findGameRefreshTag?.(player.roomId, player.id);
-      if (currentTag) response.setHeader('ETag', currentTag);
+      // Keep the marker from before recovery. If an action lands during the
+      // read, the next poll sees its newer marker and cannot skip that state.
+      if (refreshTag) response.setHeader('ETag', refreshTag);
       response.json(view);
     } catch (error) {
       console.error('Game state lookup failed', error);
