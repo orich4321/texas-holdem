@@ -22,10 +22,11 @@ export type Lobby = {
   players: Array<{ id?: string; displayName: string; avatarDataUrl?: string | null; initialStack: number; currentStack: number }>;
 };
 
-type ResponseBoundary = { status: number; json: () => Promise<unknown> };
+type ResponseBoundary = { status: number; headers?: { get: (name: string) => string | null }; json: () => Promise<unknown> };
 type FetchBoundary = (input: string, init: RequestInit) => Promise<ResponseBoundary>;
 type Boundaries = { fetch: FetchBoundary };
 type Result<T> = { ok: true; lobby: T } | { ok: false; message: string };
+const lobbyCache = new Map<string, { etag: string; lobby: Lobby }>();
 
 function isPlayer(value: unknown): value is Lobby['players'][number] {
   if (value === null || typeof value !== 'object') return false;
@@ -116,19 +117,29 @@ export async function loadLobby(
   signal?: AbortSignal,
 ): Promise<Result<Lobby>> {
   try {
+    const cached = lobbyCache.get(joinId);
     const response = await boundaries.fetch(`${SERVER_URL}/rooms/${encodeURIComponent(joinId)}`, {
       credentials: 'include',
-      // The lobby is shared, mutable state. A cached room projection can hide
-      // the second player from the host and therefore suppress the start
-      // button after they join.
+      // Every reuse is validated against the current server-side room marker.
+      // A new player or changed host permission produces a fresh 200 response.
       cache: 'no-store',
+      ...(cached ? { headers: { 'If-None-Match': cached.etag } } : {}),
       ...(signal ? { signal } : {}),
     });
+    if (response.status === 304 && cached) return { ok: true, lobby: cached.lobby };
     if (response.status !== 200) return { ok: false, message: LOBBY_LOAD_ERROR_MESSAGE };
     const lobby = await response.json();
-    return isLobby(lobby, joinId)
-      ? { ok: true, lobby }
-      : { ok: false, message: LOBBY_LOAD_ERROR_MESSAGE };
+    if (!isLobby(lobby, joinId)) {
+      lobbyCache.delete(joinId);
+      return { ok: false, message: LOBBY_LOAD_ERROR_MESSAGE };
+    }
+    const etag = response.headers?.get('etag');
+    if (etag) {
+      if (!lobbyCache.has(joinId) && lobbyCache.size >= 4) lobbyCache.delete(lobbyCache.keys().next().value!);
+      lobbyCache.set(joinId, { etag, lobby });
+    }
+    else lobbyCache.delete(joinId);
+    return { ok: true, lobby };
   } catch {
     return { ok: false, message: LOBBY_LOAD_ERROR_MESSAGE };
   }

@@ -220,6 +220,27 @@ test('lobby request loads a validated public waiting-room projection with browse
   assert.deepEqual(result, { ok: true, lobby: projection });
 });
 
+test('lobby polling reuses a validated roster after an unchanged response', async () => {
+  const { loadLobby } = await lobbyApi();
+  const joinId = 'conditional-room';
+  const projection = {
+    joinId, status: 'WAITING', isHost: false, isParticipant: false, canStart: false,
+    settings: { initialStack: 500, smallBlind: 1, bigBlind: 2, maxPlayers: 9 },
+    host: { displayName: 'אורי' },
+    players: [{ displayName: 'אורי', initialStack: 500, currentStack: 500 }],
+  };
+  const requests = [];
+  const boundaries = { fetch: async (_url, init) => {
+    requests.push(init);
+    return requests.length === 1
+      ? { status: 200, headers: { get: () => '"lobby-test"' }, json: async () => projection }
+      : { status: 304, json: async () => { throw new Error('A 304 has no body'); } };
+  } };
+  assert.deepEqual(await loadLobby(joinId, boundaries), { ok: true, lobby: projection });
+  assert.deepEqual(await loadLobby(joinId, boundaries), { ok: true, lobby: projection });
+  assert.deepEqual(requests[1].headers, { 'If-None-Match': '"lobby-test"' });
+});
+
 test('lobby request hides backend details for malformed, rejected, and network responses', async () => {
   const { loadLobby, LOBBY_LOAD_ERROR_MESSAGE } = await lobbyApi();
   const privateDetail = 'database connection string';

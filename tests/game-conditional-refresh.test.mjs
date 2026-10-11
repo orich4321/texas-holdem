@@ -6,18 +6,22 @@ import { test } from 'node:test';
 import { createApp } from '../apps/server/src/http-app.ts';
 import { RoomRepository } from '../apps/server/src/persistence/room-repository.ts';
 
-test('frequent refresh markers read only the room clock and latest sequence', async () => {
+test('frequent refresh markers query only one latest snapshot row', async () => {
   let latestSequence = 7;
   let updatedAt = new Date('2026-10-01T12:00:00.000Z');
   const repository = new RoomRepository({
     room: {
       async findFirst({ select }) {
-        assert.deepEqual(select, {
-          status: true,
-          updatedAt: true,
-          snapshots: { select: { sequence: true }, orderBy: { sequence: 'desc' }, take: 1 },
-        });
-        return { status: 'IN_PROGRESS', updatedAt, snapshots: [{ sequence: latestSequence }] };
+        assert.deepEqual(select, { status: true, updatedAt: true });
+        return { status: 'IN_PROGRESS', updatedAt };
+      },
+    },
+    gameSnapshot: {
+      async findFirst({ where, orderBy, select }) {
+        assert.deepEqual(where, { roomId: 'room' });
+        assert.deepEqual(orderBy, { sequence: 'desc' });
+        assert.deepEqual(select, { sequence: true });
+        return { sequence: latestSequence };
       },
     },
   });
@@ -27,6 +31,40 @@ test('frequent refresh markers read only the room clock and latest sequence', as
   latestSequence -= 1;
   updatedAt = new Date(updatedAt.getTime() + 1);
   assert.notEqual(await repository.findGameRefreshTag('room', 'player'), first);
+});
+
+test('unchanged lobby reads skip the full room and profile images', async () => {
+  const joinId = '0123456789abcdef';
+  const tag = '"lobby-first"';
+  let fullRoomReads = 0;
+  const app = createApp({ roomRepository: {
+    async findPlayerByRoomJoinIdAndAccessToken() { return null; },
+    async findLobbyRefreshTag() { return tag; },
+    async findRoomByJoinId() {
+      fullRoomReads += 1;
+      return {
+        joinId, status: 'WAITING', hostPlayerId: 'host',
+        initialStack: 500, smallBlind: 1, bigBlind: 2, maxPlayers: 9,
+        players: [{ id: 'host', displayName: 'אורי', avatarDataUrl: 'data:image/png;base64,AA==', initialStack: 500, currentStack: 500, isSittingOut: false }],
+      };
+    },
+  } });
+  const server = createServer(app);
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  try {
+    const url = `http://127.0.0.1:${server.address().port}/rooms/${joinId}`;
+    const first = await globalThis.fetch(url);
+    assert.equal(first.status, 200);
+    assert.equal(first.headers.get('etag'), tag);
+    await first.json();
+    const unchanged = await globalThis.fetch(url, { headers: { 'if-none-match': tag } });
+    assert.equal(unchanged.status, 304);
+    assert.equal(fullRoomReads, 1);
+  } finally {
+    server.close();
+    await once(server, 'close');
+  }
 });
 
 test('unchanged authenticated table reads skip private game recovery and queued action work', async () => {

@@ -419,6 +419,23 @@ export class RoomRepository {
     });
   }
 
+  /** Cheap lobby revision; avoids re-reading profile images on unchanged polls. */
+  async findLobbyRefreshTag(joinId: string, viewerPlayerId: string | null): Promise<string | null> {
+    const room = await this.db.room.findUnique({
+      where: { joinId },
+      select: {
+        status: true, hostPlayerId: true, updatedAt: true,
+        players: { where: { leftAt: null }, orderBy: { id: 'asc' }, select: { id: true, updatedAt: true } },
+      },
+    });
+    if (!room) return null;
+    const revision = JSON.stringify([
+      viewerPlayerId, room.status, room.hostPlayerId, room.updatedAt.getTime(),
+      room.players.map((player) => [player.id, player.updatedAt.getTime()]),
+    ]);
+    return `"lobby-${createHash('sha256').update(revision).digest('base64url').slice(0, 22)}"`;
+  }
+
   /** An authenticated account always resumes its existing player, regardless of another room's cookie. */
   async findPlayerByRoomJoinIdAndAccountId(joinId: string, accountId: string) {
     return this.db.player.findFirst({
@@ -593,18 +610,21 @@ export class RoomRepository {
 
   /** Small change marker for frequent conditional reads; no snapshot or images leave PostgreSQL. */
   async findGameRefreshTag(roomId: string, playerId: string): Promise<string | null> {
-    const room = await this.db.room.findFirst({
-      where: { id: roomId, status: { in: ['IN_PROGRESS', 'COMPLETED'] }, players: { some: { id: playerId, leftAt: null } } },
-      select: {
-        status: true,
-        updatedAt: true,
-        snapshots: { select: { sequence: true }, orderBy: { sequence: 'desc' }, take: 1 },
-      },
-    });
-    if (!room?.snapshots[0]) return null;
+    // Prisma's nested `take: 1` relation query can fetch every snapshot for
+    // the room and truncate in memory. A direct findFirst emits SQL LIMIT 1.
+    const [room, latest] = await Promise.all([
+      this.db.room.findFirst({
+        where: { id: roomId, status: { in: ['IN_PROGRESS', 'COMPLETED'] }, players: { some: { id: playerId, leftAt: null } } },
+        select: { status: true, updatedAt: true },
+      }),
+      this.db.gameSnapshot.findFirst({
+        where: { roomId }, orderBy: { sequence: 'desc' }, select: { sequence: true },
+      }),
+    ]);
+    if (!room || !latest) return null;
     // Room.updatedAt catches management and timer changes; sequence catches
     // fast consecutive actions even if the timestamp has the same millisecond.
-    const revision = JSON.stringify([playerId, room.status, room.updatedAt.getTime(), room.snapshots[0].sequence]);
+    const revision = JSON.stringify([playerId, room.status, room.updatedAt.getTime(), latest.sequence]);
     return `"poker-${createHash('sha256').update(revision).digest('base64url').slice(0, 22)}"`;
   }
 
@@ -630,7 +650,7 @@ export class RoomRepository {
     // The room projection and signed snapshot are independent reads. Running
     // them together removes a full database round trip from every live-state
     // refresh while each query still scopes itself to the participant.
-    const [room, latest, gameStarted] = await Promise.all([
+    const [room, latest, gameStarted, recentEvents] = await Promise.all([
       this.db.room.findFirst({
         where: { id: roomId, status: { in: ['IN_PROGRESS', 'COMPLETED'] }, players: { some: { id: playerId, leftAt: null } } },
         select: {
@@ -642,12 +662,6 @@ export class RoomRepository {
             orderBy: { createdAt: 'asc' },
             select: { id: true, displayName: true, currentStack: true, isSittingOut: true, rebuyDecisionPending: true, timeCardsRemaining: true, preAction: { select: { type: true, street: true, quotedToCall: true } } },
           },
-          events: {
-            where: { type: 'PLAYER_ACTION' },
-            orderBy: { sequence: 'desc' },
-            take: 12,
-            select: { sequence: true, payload: true },
-          },
         },
       }),
       this.recoverLatestHandForPlayer(roomId, playerId),
@@ -655,6 +669,14 @@ export class RoomRepository {
         where: { roomId, type: 'GAME_STARTED' },
         orderBy: { createdAt: 'asc' },
         select: { createdAt: true },
+      }),
+      // Fetch the bounded action history directly. A nested relation limit
+      // otherwise transfers the full event history across the pooler.
+      this.db.gameEvent.findMany({
+        where: { roomId, type: 'PLAYER_ACTION' },
+        orderBy: { sequence: 'desc' },
+        take: 12,
+        select: { sequence: true, payload: true },
       }),
     ]);
     if (!room || !latest) return null;
@@ -685,10 +707,10 @@ export class RoomRepository {
     const safeView = seatedInHand
       ? { ...baseView, isSittingOut: (member?.isSittingOut ?? false) && !(member?.rebuyDecisionPending ?? false) }
       : { ...baseView, playerId, holeCards: [] as const, toCall: 0, raise: undefined, allInRaiseTo: undefined, isSittingOut: true };
-    const latestAction = room.events[0]?.sequence === latest.sequence
-      ? actionNotificationFromEvent(room.events[0], room.players)
+    const latestAction = recentEvents[0]?.sequence === latest.sequence
+      ? actionNotificationFromEvent(recentEvents[0], room.players)
       : undefined;
-    const recentActions = room.events.filter((event) => event.sequence <= latest.sequence)
+    const recentActions = recentEvents.filter((event) => event.sequence <= latest.sequence)
       .map((event) => actionNotificationFromEvent(event, room.players))
       .filter((event): event is PlayerActionNotification => Boolean(event))
       .reverse();

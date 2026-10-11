@@ -1156,6 +1156,14 @@ export function createApp({ roomRepository, accountRepository, socialRepository,
 
   routes.get('/rooms/:joinId', async (request, response) => {
     try {
+      const sessionPlayer = await findAuthenticatedPlayer(request.params.joinId, request.headers.cookie);
+      response.setHeader('Cache-Control', 'private, no-store');
+      const refreshTag = await roomRepository.findLobbyRefreshTag?.(request.params.joinId, sessionPlayer?.id ?? null);
+      if (refreshTag && request.headers['if-none-match'] === refreshTag) {
+        response.setHeader('ETag', refreshTag);
+        response.status(304).end();
+        return;
+      }
       const room = await roomRepository.findRoomByJoinId(request.params.joinId);
       if (!room || (room.status !== 'WAITING' && room.status !== 'IN_PROGRESS' && room.status !== 'COMPLETED')) {
         response.status(404).json({ error: { code: 'ROOM_NOT_FOUND' } });
@@ -1166,8 +1174,10 @@ export function createApp({ roomRepository, accountRepository, socialRepository,
         response.status(404).json({ error: { code: 'ROOM_NOT_FOUND' } });
         return;
       }
-      const sessionPlayer = await findAuthenticatedPlayer(room.joinId, request.headers.cookie);
       const isHost = sessionPlayer?.id === room.hostPlayerId;
+      // The marker is from before the full read. A concurrent join must be
+      // observed on the next poll rather than hidden behind a newer ETag.
+      if (refreshTag) response.setHeader('ETag', refreshTag);
       response.json({
         joinId: room.joinId,
         status: room.status,

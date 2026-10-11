@@ -69,6 +69,7 @@ function createDb({ latest = { sequence: 0, state: initial }, currentHandStart =
     },
     gameEvent: {
       create: async (args) => { calls.push(['gameEvent.create', args]); return args.data; },
+      findMany: async (args) => { calls.push(['gameEvent.findMany', args]); return []; },
       findFirst: async (args) => {
         calls.push(['gameEvent.findFirst', args]);
         if (args.where.clientActionId) return duplicateAction
@@ -166,7 +167,7 @@ test('a busted seat stays visually active while the host reviews the hand, then 
   const repository = new RoomRepository({
     room: { findFirst: async () => ({ status: 'IN_PROGRESS', hostPlayerId: room.hostPlayerId, finalSummaryVisible: false, players: players.map((player) => ({ ...player, rebuyDecisionPending: player.id === 'player-1' && decisionPending })), events: [] }) },
     gameSnapshot: { findFirst: async () => ({ sequence: 4, state: snapshot }) },
-    gameEvent: { findFirst: async () => ({ createdAt: new Date('2026-01-01T12:00:00.000Z') }) },
+    gameEvent: { findFirst: async () => ({ createdAt: new Date('2026-01-01T12:00:00.000Z') }), findMany: async () => [] },
   }, undefined, undefined, undefined, keyring);
 
   const pendingView = await repository.recoverLatestPlayerViewForPlayer(room.id, 'host-id');
@@ -222,6 +223,12 @@ test('live game recovery and action responses never repeat player profile images
   assert.doesNotMatch(JSON.stringify(action.view), /data:image\/png/);
   const actionRead = db.calls.find(([name]) => name === 'room.findUnique');
   assert.equal(actionRead[1].select.players.select.avatarDataUrl, undefined);
+  const actionHistoryRead = db.calls.find(([name]) => name === 'gameEvent.findMany');
+  assert.deepEqual(actionHistoryRead[1], {
+    where: { roomId: room.id, type: 'PLAYER_ACTION' },
+    orderBy: { sequence: 'desc' }, take: 12,
+    select: { sequence: true, payload: true },
+  });
 });
 
 test('a preflop wager over the blinds is identified publicly as a raise', async () => {
