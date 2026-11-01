@@ -105,10 +105,120 @@ test('presets, friendships, and invitations persist across accounts and join thr
   assert.equal(await prisma.player.count({ where: { roomId: room.id, accountId: b.id } }), 1);
   assert.equal((await rooms.joinWaitingRoom(room.joinId, { id: randomUUID(), accountId: b.id, displayName: 'Duplicate' })).kind, 'already-joined');
   await rooms.removeWaitingPlayerForHostAtomically({ joinId: room.joinId, hostPlayerId: room.hostPlayerId, targetPlayerId: guestId });
-  assert.deepEqual(await rooms.listRemovedWaitingPlayersForHost(room.joinId, room.hostPlayerId), [{ id: guestId, displayName: 'חבר' }]);
+  assert.deepEqual(await rooms.listRemovedWaitingPlayersForHost(room.joinId, room.hostPlayerId), [{ id: guestId, displayName: 'חבר', currentStack: 500, rejoinRequestedAt: null }]);
   assert.equal(await rooms.listRemovedWaitingPlayersForHost(room.joinId, guestId), null);
   assert.deepEqual(await rooms.restoreWaitingPlayerForHostAtomically({ joinId: room.joinId, hostPlayerId: room.hostPlayerId, targetPlayerId: guestId }), { restoredPlayerId: guestId });
   assert.equal((await rooms.findPlayerByRoomJoinIdAndAccountId(room.joinId, b.id))?.id, guestId);
+});
+
+test('removed player requests and rejoins a running game with the original stack, identity and history', { skip: !integrationEnabled }, async () => {
+  const rooms = new RoomRepository(prisma, undefined, undefined, undefined, snapshotKeyring);
+  const accounts = new AccountRepository(prisma);
+  const profile = (await accounts.createSession(randomUUID(), 'returning@example.com')).profile;
+  const guestId = randomUUID();
+  const otherId = randomUUID();
+  const room = await rooms.createRoom({ status: 'WAITING', host: { id: randomUUID(), displayName: 'Host', initialStack: 500 }, players: [
+    { id: guestId, accountId: profile.id, displayName: 'Returning guest', initialStack: 500 },
+    { id: otherId, displayName: 'Other guest', initialStack: 500 },
+  ] });
+  const host = { joinId: room.joinId, hostPlayerId: room.hostPlayerId };
+  async function finishHand() {
+    for (let i = 0; i < 4; i += 1) {
+      const { recovery: { hand } } = await rooms.recoverLatestHandForPlayer(room.id, room.hostPlayerId);
+      if (hand.street === 'showdown') return;
+      const actor = hand.seats.find((seat) => seat.seatNumber === hand.currentActorSeat);
+      await rooms.persistPlayerActionAtomically({ roomId: room.id, playerId: actor.playerId, action: { type: 'fold' } });
+    }
+    assert.fail('hand did not finish');
+  }
+  await rooms.startGameForHostAtomically(host);
+  await finishHand();
+  await rooms.removePlayerBetweenHandsForHostAtomically({ ...host, targetPlayerId: guestId });
+  await rooms.startNextHandForHostAtomically(host);
+  const before = await prisma.player.findUniqueOrThrow({ where: { id: guestId } });
+  assert.ok(before.leftAt);
+  assert.equal(await rooms.findPlayerByRoomJoinIdAndAccountId(room.joinId, profile.id), null);
+  assert.equal(await rooms.recoverLatestPlayerViewForPlayer(room.id, guestId), null);
+  assert.equal((await rooms.joinWaitingRoom(room.joinId, { id: randomUUID(), accountId: profile.id, displayName: 'Duplicate' })).kind, 'removed');
+  assert.equal((await rooms.findPlayerForRejoin(room.joinId, profile.id))?.id, guestId);
+  const marker = await rooms.findGameRefreshTag(room.id, room.hostPlayerId);
+  await rooms.requestRejoin(room.joinId, guestId);
+  const requested = await rooms.findPlayerForRejoin(room.joinId, profile.id);
+  await rooms.requestRejoin(room.joinId, guestId);
+  assert.deepEqual((await rooms.findPlayerForRejoin(room.joinId, profile.id)).rejoinRequestedAt, requested.rejoinRequestedAt);
+  assert.notEqual(await rooms.findGameRefreshTag(room.id, room.hostPlayerId), marker);
+  assert.equal((await rooms.recoverLatestPlayerViewForPlayer(room.id, room.hostPlayerId)).rejoinRequestCount, 1);
+  assert.equal((await rooms.recoverLatestPlayerViewForPlayer(room.id, otherId)).rejoinRequestCount, undefined);
+  assert.equal((await rooms.getHostManagement(room.joinId, room.hostPlayerId)).removedPlayers[0].id, guestId);
+  await assert.rejects(rooms.restoreWaitingPlayerForHostAtomically({ ...host, hostPlayerId: otherId, targetPlayerId: guestId }));
+  const snapshotCount = await prisma.gameSnapshot.count({ where: { roomId: room.id } });
+  await rooms.restoreWaitingPlayerForHostAtomically({ ...host, targetPlayerId: guestId });
+  await rooms.restoreWaitingPlayerForHostAtomically({ ...host, targetPlayerId: guestId });
+  const after = await prisma.player.findUniqueOrThrow({ where: { id: guestId } });
+  assert.equal(after.currentStack, before.currentStack);
+  assert.equal(after.initialStack, before.initialStack);
+  assert.equal(after.timeCardsRemaining, before.timeCardsRemaining);
+  assert.equal(after.accessTokenHash, before.accessTokenHash);
+  assert.equal(after.leftAt, null);
+  assert.equal(after.rejoinRequestedAt, null);
+  assert.equal(await prisma.player.count({ where: { roomId: room.id, accountId: profile.id } }), 1);
+  assert.equal(await prisma.gameSnapshot.count({ where: { roomId: room.id } }), snapshotCount);
+  assert.equal(await rooms.recoverLatestPlayerViewForPlayer(room.id, guestId), null, 'restoration cannot deal into the hand in progress');
+  await finishHand();
+  await rooms.startNextHandForHostAtomically(host);
+  const view = await rooms.recoverLatestPlayerViewForPlayer(room.id, guestId);
+  assert.equal(view.playerId, guestId);
+  assert.equal(view.holeCards.length, 2);
+  assert.equal(view.seats.length, 3);
+  assert.equal(view.seats.reduce((sum, seat) => sum + seat.stack, view.pot), 1500);
+  assert.ok((await rooms.listHandsForAccount(profile.id, room.joinId)).hands.length >= 2);
+});
+
+test('restoration is capacity-safe under concurrent requests, and closed rooms reject re-entry', { skip: !integrationEnabled }, async () => {
+  const rooms = new RoomRepository(prisma);
+  const a = randomUUID();
+  const b = randomUUID();
+  const room = await rooms.createRoom({ status: 'IN_PROGRESS', host: { id: randomUUID(), displayName: 'Host', initialStack: 500 },
+    settings: { initialStack: 500, smallBlind: 1, bigBlind: 2, maxPlayers: 2 },
+    players: [{ id: a, displayName: 'A', initialStack: 300 }, { id: b, displayName: 'B', initialStack: 200 }],
+  });
+  await prisma.player.updateMany({ where: { id: { in: [a, b] } }, data: { leftAt: new Date() } });
+  const results = await Promise.allSettled([a, b].map((targetPlayerId) => rooms.restoreWaitingPlayerForHostAtomically({ joinId: room.joinId, hostPlayerId: room.hostPlayerId, targetPlayerId })));
+  assert.equal(results.filter((result) => result.status === 'fulfilled').length, 1);
+  assert.equal(await prisma.player.count({ where: { roomId: room.id, leftAt: null } }), 2);
+  const removed = await prisma.player.findFirstOrThrow({ where: { roomId: room.id, leftAt: { not: null } } });
+  await prisma.player.update({ where: { id: removed.id }, data: { currentStack: 0 } });
+  await rooms.restoreWaitingPlayerForHostAtomically({ joinId: room.joinId, hostPlayerId: room.hostPlayerId, targetPlayerId: removed.id });
+  const seatedOut = await prisma.player.findUniqueOrThrow({ where: { id: removed.id } });
+  assert.equal(seatedOut.isSittingOut, true);
+  assert.equal(seatedOut.currentStack, 0, 'returning does not replenish chips');
+  await prisma.player.update({ where: { id: removed.id }, data: { leftAt: new Date() } });
+  await prisma.room.update({ where: { id: room.id }, data: { status: 'COMPLETED' } });
+  await assert.rejects(rooms.requestRejoin(room.joinId, removed.id));
+  await assert.rejects(rooms.restoreWaitingPlayerForHostAtomically({ joinId: room.joinId, hostPlayerId: room.hostPlayerId, targetPlayerId: removed.id }));
+});
+
+test('a non-host invitation cannot bypass removal, and host invitation preserves the original chips', { skip: !integrationEnabled }, async () => {
+  const accounts = new AccountRepository(prisma);
+  const social = new SocialRepository(prisma);
+  const rooms = new RoomRepository(prisma);
+  const hostAccount = (await accounts.createSession(randomUUID(), 'owner@example.com')).profile;
+  const guestAccount = (await accounts.createSession(randomUUID(), 'removed@example.com')).profile;
+  const friendAccount = (await accounts.createSession(randomUUID(), 'friend@example.com')).profile;
+  const guestId = randomUUID();
+  const room = await rooms.createRoom({ status: 'IN_PROGRESS', host: { id: randomUUID(), accountId: hostAccount.id, displayName: 'Host', initialStack: 500 },
+    players: [{ id: guestId, accountId: guestAccount.id, displayName: 'Guest', initialStack: 500 }],
+  });
+  await prisma.player.update({ where: { id: guestId }, data: { leftAt: new Date(), currentStack: 0, rejoinRequestedAt: new Date() } });
+  const invite = await prisma.gameInvite.create({ data: { roomId: room.id, fromAccountId: friendAccount.id, toAccountId: guestAccount.id } });
+  assert.equal(await social.answerGameInvite(guestAccount.id, invite.id, true), null);
+  assert.equal(await rooms.findPlayerByRoomJoinIdAndAccountId(room.joinId, guestAccount.id), null);
+  await prisma.gameInvite.update({ where: { id: invite.id }, data: { fromAccountId: hostAccount.id } });
+  assert.equal(await social.answerGameInvite(guestAccount.id, invite.id, true), room.joinId);
+  const guest = await prisma.player.findUniqueOrThrow({ where: { id: guestId } });
+  assert.equal(guest.currentStack, 0);
+  assert.equal(guest.isSittingOut, true);
+  assert.equal(guest.rejoinRequestedAt, null);
 });
 
 test('room repository persists a room with two players and retrieves it by join ID', { skip: !integrationEnabled }, async () => {

@@ -157,6 +157,7 @@ export type HostManagementView = Readonly<{
   smallBlind: number;
   bigBlind: number;
   nextHandIsFinal: boolean;
+  removedPlayers: readonly Readonly<{ id: string; displayName: string; currentStack: number; rejoinRequestedAt: string | null }>[];
   players: readonly Readonly<{
     id: string;
     displayName: string;
@@ -444,6 +445,36 @@ export class RoomRepository {
     });
   }
 
+  /** Identity lookup for re-entry only. Removed seats still cannot read or act in a game. */
+  async findPlayerForRejoin(joinId: string, accountId: string | undefined, accessToken: unknown) {
+    if (!accountId && !isValidPlayerAccessToken(accessToken)) return null;
+    return this.db.player.findFirst({
+      where: {
+        room: { joinId },
+        ...(accountId ? { accountId } : { accountId: null, accessTokenHash: this.hashAccessToken(accessToken as string).toString('hex') }),
+      },
+      select: { id: true, leftAt: true, rejoinRequestedAt: true, room: { select: { status: true } } },
+    });
+  }
+
+  async requestRejoin(joinId: string, playerId: string) {
+    return this.db.$transaction(async (tx) => {
+      const room = await tx.room.findUnique({ where: { joinId }, select: { id: true } });
+      if (!room) throw new Error('Rejoin unavailable');
+      const locked = await tx.room.updateMany({
+        where: { id: room.id, status: { in: ['WAITING', 'IN_PROGRESS'] }, players: { some: { id: playerId, leftAt: { not: null } } } },
+        data: { updatedAt: new Date() },
+      });
+      if (locked.count !== 1) throw new Error('Rejoin unavailable');
+      // Repeated requests keep the original request time and never create another seat.
+      await tx.player.updateMany({
+        where: { id: playerId, roomId: room.id, leftAt: { not: null }, rejoinRequestedAt: null },
+        data: { rejoinRequestedAt: new Date() },
+      });
+      return { pending: true };
+    });
+  }
+
   /** Opt-in migration of an already authenticated legacy seat to its Google account. */
   async linkLegacyPlayerToAccount(playerId: string, accountId: string): Promise<boolean> {
     const result = await this.db.player.updateMany({
@@ -660,7 +691,7 @@ export class RoomRepository {
           turnDeadlineAt: true,
           players: {
             orderBy: { createdAt: 'asc' },
-            select: { id: true, displayName: true, currentStack: true, isSittingOut: true, rebuyDecisionPending: true, timeCardsRemaining: true, preAction: { select: { type: true, street: true, quotedToCall: true } } },
+            select: { id: true, displayName: true, currentStack: true, isSittingOut: true, rebuyDecisionPending: true, timeCardsRemaining: true, leftAt: true, rejoinRequestedAt: true, preAction: { select: { type: true, street: true, quotedToCall: true } } },
           },
         },
       }),
@@ -714,7 +745,10 @@ export class RoomRepository {
       .map((event) => actionNotificationFromEvent(event, room.players))
       .filter((event): event is PlayerActionNotification => Boolean(event))
       .reverse();
-    return this.decorateView(safeView, latest.sequence, room.hostPlayerId, room.status === 'COMPLETED', room.status === 'COMPLETED' && room.finalSummaryVisible, latestAction, room.players, gameStarted?.createdAt.toISOString(), room.turnDeadlineAt, recentActions);
+    return {
+      ...this.decorateView(safeView, latest.sequence, room.hostPlayerId, room.status === 'COMPLETED', room.status === 'COMPLETED' && room.finalSummaryVisible, latestAction, room.players.filter((player) => !player.leftAt), gameStarted?.createdAt.toISOString(), room.turnDeadlineAt, recentActions),
+      ...(playerId === room.hostPlayerId ? { rejoinRequestCount: room.players.filter((player) => player.leftAt && player.rejoinRequestedAt).length } : {}),
+    };
   }
 
   /** Applies an authenticated action to the latest verified state and commits its successor atomically. */
@@ -1245,7 +1279,7 @@ export class RoomRepository {
         bigBlind: true,
         nextHandIsFinal: true,
         hostPlayerId: true,
-        players: { where: { leftAt: null }, orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, currentStack: true, leaveAfterHand: true, isSittingOut: true, rebuyDecisionPending: true } },
+        players: { orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, currentStack: true, leaveAfterHand: true, isSittingOut: true, rebuyDecisionPending: true, leftAt: true, rejoinRequestedAt: true } },
         chipAdjustments: { where: { status: 'PENDING' }, select: { playerId: true, amount: true } },
       },
     });
@@ -1256,7 +1290,8 @@ export class RoomRepository {
       smallBlind: room.smallBlind,
       bigBlind: room.bigBlind,
       nextHandIsFinal: room.nextHandIsFinal,
-      players: Object.freeze(room.players.map((player) => Object.freeze({
+      removedPlayers: room.players.filter((player) => player.leftAt).map((player) => ({ id: player.id, displayName: player.displayName, currentStack: player.currentStack, rejoinRequestedAt: player.rejoinRequestedAt?.toISOString() ?? null })),
+      players: Object.freeze(room.players.filter((player) => !player.leftAt).map((player) => Object.freeze({
         id: player.id,
         displayName: player.displayName,
         currentStack: player.currentStack,
@@ -1316,7 +1351,7 @@ export class RoomRepository {
       if (locked.count !== 1) throw new Error('Waiting-room removal is unavailable');
       const removed = await tx.player.updateMany({
         where: { id: targetPlayerId, roomId: room.id, leftAt: null },
-        data: { leftAt: new Date() },
+        data: { leftAt: new Date(), rejoinRequestedAt: null },
       });
       if (removed.count !== 1) throw new Error('Waiting-room removal is unavailable');
       const removedPlayer = await tx.player.findUnique({ where: { id: targetPlayerId }, select: { accountId: true } });
@@ -1332,8 +1367,8 @@ export class RoomRepository {
 
   async listRemovedWaitingPlayersForHost(joinId: string, hostPlayerId: string) {
     const room = await this.db.room.findFirst({
-      where: { joinId, hostPlayerId, status: 'WAITING' },
-      select: { players: { where: { leftAt: { not: null } }, orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true } } },
+      where: { joinId, hostPlayerId, status: { in: ['WAITING', 'IN_PROGRESS'] } },
+      select: { players: { where: { leftAt: { not: null } }, orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, currentStack: true, rejoinRequestedAt: true } } },
     });
     return room?.players ?? null;
   }
@@ -1342,18 +1377,21 @@ export class RoomRepository {
   async restoreWaitingPlayerForHostAtomically({ joinId, hostPlayerId, targetPlayerId }: RemovePlayerForHostInput) {
     return this.db.$transaction(async (tx) => {
       const room = await tx.room.findUnique({ where: { joinId }, select: { id: true, hostPlayerId: true, status: true, maxPlayers: true } });
-      if (!room || room.hostPlayerId !== hostPlayerId || room.status !== 'WAITING' || targetPlayerId === hostPlayerId) {
+      if (!room || room.hostPlayerId !== hostPlayerId || !['WAITING', 'IN_PROGRESS'].includes(room.status) || targetPlayerId === hostPlayerId) {
         throw new Error('Waiting-room restoration is unavailable');
       }
       const locked = await tx.room.updateMany({
-        where: { id: room.id, hostPlayerId, status: 'WAITING' }, data: { updatedAt: new Date() },
+        where: { id: room.id, hostPlayerId, status: room.status }, data: { updatedAt: new Date() },
       });
       if (locked.count !== 1) throw new Error('Waiting-room restoration is unavailable');
+      const player = await tx.player.findFirst({ where: { id: targetPlayerId, roomId: room.id }, select: { leftAt: true, currentStack: true } });
+      if (!player) throw new Error('Player restoration is unavailable');
+      if (!player.leftAt) return { restoredPlayerId: targetPlayerId };
       const activeCount = await tx.player.count({ where: { roomId: room.id, leftAt: null, isSittingOut: false } });
-      if (activeCount >= room.maxPlayers) throw new Error('Waiting room is full');
+      if (player.currentStack > 0 && activeCount >= room.maxPlayers) throw new Error('Waiting room is full');
       const restored = await tx.player.updateMany({
         where: { id: targetPlayerId, roomId: room.id, leftAt: { not: null } },
-        data: { leftAt: null, isSittingOut: false, leaveAfterHand: false },
+        data: { leftAt: null, isSittingOut: player.currentStack === 0, rebuyDecisionPending: false, leaveAfterHand: false, rejoinRequestedAt: null },
       });
       if (restored.count !== 1) throw new Error('Waiting-room restoration is unavailable');
       return { restoredPlayerId: targetPlayerId };

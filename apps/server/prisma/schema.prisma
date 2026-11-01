@@ -50,6 +50,7 @@ model Player {
   currentStack              Int
   accessTokenHash           String           @unique
   leftAt                    DateTime?
+  rejoinRequestedAt         DateTime?
   leaveAfterHand            Boolean          @default(false)
   isSittingOut              Boolean          @default(false)
   rebuyDecisionPending      Boolean          @default(false)

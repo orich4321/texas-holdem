@@ -52,7 +52,7 @@ export async function removeWaitingPlayer(joinId: string, playerId: string, boun
   }
 }
 
-export type RemovedLobbyPlayer = { id: string; displayName: string };
+export type RemovedLobbyPlayer = { id: string; displayName: string; rejoinRequestedAt?: string | null };
 
 export async function loadRemovedWaitingPlayers(joinId: string, boundaries: Boundaries): Promise<RemovedLobbyPlayer[]> {
   const response = await boundaries.fetch(`${SERVER_URL}/rooms/${encodeURIComponent(joinId)}/lobby/removed-players`, {
@@ -150,7 +150,7 @@ export async function joinLobby(
   nickname: string,
   boundaries: Boundaries,
   avatarDataUrl?: string,
-): Promise<{ ok: true } | { ok: false; message: string }> {
+): Promise<{ ok: true } | { ok: false; message: string; removed?: boolean }> {
   const displayName = nickname.trim();
   if (!displayName) return { ok: false, message: EMPTY_NICKNAME_MESSAGE };
 
@@ -166,7 +166,10 @@ export async function joinLobby(
       const body = await response.json().catch(() => undefined) as { error?: { code?: string } } | undefined;
       return { ok: false, message: body?.error?.code === 'ROOM_NOT_JOINABLE' ? ROOM_NOT_JOINABLE_MESSAGE : ROOM_FULL_MESSAGE };
     }
-    if (response.status === 403) return { ok: false, message: PLAYER_REMOVED_MESSAGE };
+    if (response.status === 403) {
+      const body = await response.json().catch(() => undefined) as { error?: { code?: string } } | undefined;
+      return { ok: false, message: PLAYER_REMOVED_MESSAGE, removed: body?.error?.code === 'PLAYER_REMOVED' };
+    }
     return { ok: false, message: LOBBY_JOIN_ERROR_MESSAGE };
   } catch {
     return { ok: false, message: LOBBY_JOIN_ERROR_MESSAGE };

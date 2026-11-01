@@ -591,7 +591,7 @@ export function createApp({ roomRepository, accountRepository, socialRepository,
         request.params.joinId,
         parseCookieHeader(request.headers.cookie).poker_player_token,
       )) {
-        response.status(409).json({ error: { code: 'ALREADY_JOINED' } });
+        response.status(403).json({ error: { code: 'PLAYER_REMOVED' } });
         return;
       }
       const result = await roomRepository.joinWaitingRoom(request.params.joinId, {
@@ -625,6 +625,31 @@ export function createApp({ roomRepository, accountRepository, socialRepository,
       console.error('Room join failed');
       response.status(500).json({ error: { code: 'INTERNAL_ERROR' } });
     }
+  });
+
+  const findRejoinIdentity = async (joinId: string, cookieHeader: unknown) => {
+    const account = await findAccountIdentity(cookieHeader);
+    return roomRepository.findPlayerForRejoin(joinId, account?.id, parseCookieHeader(cookieHeader).poker_player_token);
+  };
+
+  routes.get('/rooms/:joinId/rejoin', async (request, response) => {
+    response.setHeader('Cache-Control', 'private, no-store');
+    try {
+      const player = await findRejoinIdentity(request.params.joinId, request.headers.cookie);
+      if (!player) { response.status(401).json({ error: { code: 'AUTH_REQUIRED' } }); return; }
+      response.json({
+        status: !['WAITING', 'IN_PROGRESS'].includes(player.room.status) ? 'closed' : player.leftAt ? 'removed' : 'joined',
+        pending: Boolean(player.leftAt && player.rejoinRequestedAt),
+      });
+    } catch { response.status(500).json({ error: { code: 'INTERNAL_ERROR' } }); }
+  });
+
+  routes.post('/rooms/:joinId/rejoin', async (request, response) => {
+    try {
+      const player = await findRejoinIdentity(request.params.joinId, request.headers.cookie);
+      if (!player) { response.status(401).json({ error: { code: 'AUTH_REQUIRED' } }); return; }
+      response.json(await roomRepository.requestRejoin(request.params.joinId, player.id));
+    } catch { response.status(409).json({ error: { code: 'REJOIN_UNAVAILABLE' } }); }
   });
 
   routes.post('/rooms/:joinId/start', async (request, response) => {
@@ -928,7 +953,7 @@ export function createApp({ roomRepository, accountRepository, socialRepository,
     response.json({ players });
   });
 
-  routes.post('/rooms/:joinId/lobby/players/:playerId/restore', async (request, response) => {
+  routes.post(['/rooms/:joinId/lobby/players/:playerId/restore', '/rooms/:joinId/management/players/:playerId/restore'], async (request, response) => {
     if (!PLAYER_ID_PATTERN.test(request.params.playerId)) {
       response.status(400).json({ error: { code: 'INVALID_REQUEST' } }); return;
     }

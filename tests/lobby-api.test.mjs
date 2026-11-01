@@ -335,6 +335,15 @@ test('host start sends only an authenticated, cookie-backed request and keeps fa
   assert.doesNotMatch(failed.message, /private database detail/);
 });
 
+test('a removed player is offered the return-request flow rather than another seat', async () => {
+  const { joinLobby } = await lobbyApi();
+  const result = await joinLobby('0123456789abcdef', 'Returning', {
+    fetch: async () => ({ status: 403, json: async () => ({ error: { code: 'PLAYER_REMOVED' } }) }),
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.removed, true);
+});
+
 test('waiting-room removal sends the selected seat to a host-only endpoint', async () => {
   const { removeWaitingPlayer } = await lobbyApi();
   const requests = [];

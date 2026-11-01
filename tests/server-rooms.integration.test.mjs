@@ -305,7 +305,8 @@ test('host removes a waiting guest without deleting the account or dealing them 
   assert.equal(guestView.isParticipant, false);
   assert.equal('id' in guestView.players[0], false);
   const removedRejoin = await globalThis.fetch(`${baseUrl}/rooms/${roomId}/join`, { method: 'POST', headers: { cookie: firstGuestCookie, 'content-type': 'application/json' }, body: JSON.stringify({ displayName: 'Second seat' }) });
-  assert.equal(removedRejoin.status, 409);
+  assert.equal(removedRejoin.status, 403);
+  assert.equal((await removedRejoin.json()).error.code, 'PLAYER_REMOVED');
   assert.equal((await postStart(roomId, hostCookie)).status, 409);
 
   const replacement = await postJoin(roomId, { displayName: 'Replacement' });
@@ -315,6 +316,21 @@ test('host removes a waiting guest without deleting the account or dealing them 
   const afterStart = await globalThis.fetch(`${baseUrl}/rooms/${roomId}/lobby/players/${replacementId}/remove`, { method: 'POST', headers: { cookie: hostCookie } });
   assert.equal(afterStart.status, 409);
   assert.deepEqual((await repository.findRoomByJoinId(roomId)).players.map((player) => player.displayName), ['Host', 'Replacement']);
+  const rejoinUrl = `${baseUrl}/rooms/${roomId}/rejoin`;
+  const rejoinState = await globalThis.fetch(rejoinUrl, { headers: { cookie: firstGuestCookie } });
+  assert.deepEqual(await rejoinState.json(), { status: 'removed', pending: false });
+  const requestReturn = await globalThis.fetch(rejoinUrl, { method: 'POST', headers: { cookie: firstGuestCookie } });
+  assert.deepEqual(await requestReturn.json(), { pending: true });
+  const restoreUrl = `${baseUrl}/rooms/${roomId}/management/players/${firstGuestId}/restore`;
+  assert.equal((await globalThis.fetch(restoreUrl, { method: 'POST', headers: { cookie: firstGuestCookie } })).status, 403);
+  assert.equal((await globalThis.fetch(restoreUrl, { method: 'POST', headers: { cookie: hostCookie } })).status, 200);
+  const accepted = await globalThis.fetch(rejoinUrl, { headers: { cookie: firstGuestCookie } });
+  assert.deepEqual(await accepted.json(), { status: 'joined', pending: false });
+  const waitingForDeal = await globalThis.fetch(`${baseUrl}/rooms/${roomId}/game`, { headers: { cookie: firstGuestCookie } });
+  assert.equal(waitingForDeal.status, 409);
+  assert.equal((await waitingForDeal.json()).error.code, 'GAME_NOT_AVAILABLE');
+  assert.equal((await prisma.player.findUniqueOrThrow({ where: { id: firstGuestId } })).currentStack, 500);
+  assert.equal(await prisma.player.count({ where: { roomId: waitingRoom.id } }), 3);
 });
 
 test('POST /rooms/:joinId/join caps a waiting room at nine players', { skip: !integrationEnabled }, async () => {

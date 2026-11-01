@@ -125,7 +125,7 @@ export class SocialRepository {
     return this.db.$transaction(async (tx) => {
       const invite = await tx.gameInvite.findFirst({ where: {
         id: inviteId, toAccountId: accountId, status: 'PENDING', room: { status: { in: ['WAITING', 'IN_PROGRESS'] } },
-      }, select: { roomId: true, room: { select: { joinId: true, status: true, maxPlayers: true } } } });
+      }, select: { roomId: true, fromAccountId: true, room: { select: { joinId: true, status: true, maxPlayers: true, hostPlayer: { select: { accountId: true } } } } } });
       if (!invite) return null;
       // Serialize acceptance with joining, starting, and host removal. A fresh
       // invitation may reinstate the account's existing seat, never create one.
@@ -135,11 +135,13 @@ export class SocialRepository {
       if (locked.count !== 1) return null;
       const previousSeat = accept
         ? await tx.player.findFirst({
-          where: { roomId: invite.roomId, accountId }, select: { id: true, leftAt: true },
+          where: { roomId: invite.roomId, accountId }, select: { id: true, leftAt: true, currentStack: true },
         }) : null;
       if (previousSeat?.leftAt) {
+        // An invitation from another guest cannot override a host's removal.
+        if (invite.fromAccountId !== invite.room.hostPlayer?.accountId) return null;
         const activeCount = await tx.player.count({ where: { roomId: invite.roomId, leftAt: null, isSittingOut: false } });
-        if (activeCount >= invite.room.maxPlayers) return null;
+        if (previousSeat.currentStack > 0 && activeCount >= invite.room.maxPlayers) return null;
       }
       const changed = await tx.gameInvite.updateMany({
         where: { id: inviteId, toAccountId: accountId, status: 'PENDING' },
@@ -149,7 +151,7 @@ export class SocialRepository {
       if (previousSeat?.leftAt) {
         await tx.player.update({
           where: { id: previousSeat.id },
-          data: { leftAt: null, isSittingOut: false, leaveAfterHand: false },
+          data: { leftAt: null, isSittingOut: previousSeat.currentStack === 0, leaveAfterHand: false, rebuyDecisionPending: false, rejoinRequestedAt: null },
         });
       }
       return invite.room.joinId;

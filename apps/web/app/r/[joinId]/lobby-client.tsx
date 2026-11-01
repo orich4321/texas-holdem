@@ -19,6 +19,7 @@ import { ProfileImage } from '../../profile-image';
 import { unlockActionAudio } from '../../action-sounds';
 import { googleLoginPath, loadAccount, profilePath, type AccountState } from '../../account-api';
 import { usePageActivity } from '../../use-page-activity';
+import { RejoinPanel } from '../../rejoin-panel';
 import { inviteFriend, loadSocial, type SocialAccount } from '../../social-api';
 
 type LobbyClientProps = { joinId: string; isHostRoute?: boolean };
@@ -39,6 +40,7 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
   const [joinMessage, setJoinMessage] = useState<string>();
   const [loading, setLoading] = useState(true);
   const [joining, setJoining] = useState(false);
+  const [removed, setRemoved] = useState(false);
   const [starting, setStarting] = useState(false);
   const [removingPlayerId, setRemovingPlayerId] = useState<string>();
   const [restoringPlayerId, setRestoringPlayerId] = useState<string>();
@@ -49,11 +51,17 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
   const [invitingFriendId, setInvitingFriendId] = useState<string>();
   const [inviteMessage, setInviteMessage] = useState('');
   const autoJoinAttempted = useRef(false);
+  const wasParticipant = useRef(false);
   const wasNetworkActive = useRef(activity.networkActive);
 
   useEffect(() => {
     void loadAccount().then(setAccount).catch(() => setJoinMessage('לא הצלחנו לבדוק את החשבון. נסו לרענן את הדף.'));
   }, []);
+
+  useEffect(() => {
+    if (wasParticipant.current && lobby && !lobby.isParticipant) setRemoved(true);
+    wasParticipant.current = Boolean(lobby?.isParticipant);
+  }, [lobby]);
 
   useEffect(() => {
     if (!account?.profile?.id || !lobby?.isHost || lobby.status !== 'WAITING') return;
@@ -67,7 +75,7 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
 
   useEffect(() => {
     if (lobby?.isHost && lobby.status === 'WAITING') void refreshRemovedPlayers();
-  }, [lobby?.isHost, lobby?.status, refreshRemovedPlayers]);
+  }, [lobby, refreshRemovedPlayers]);
 
   async function sendInvite(friend: SocialAccount) {
     setInvitingFriendId(friend.id);
@@ -96,7 +104,7 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
   }, [refreshLobby]);
 
   useEffect(() => {
-    if (lobby?.status !== 'WAITING' || !activity.networkActive) return undefined;
+    if (lobby?.status !== 'WAITING' || !activity.networkActive || removed) return undefined;
     let active = true;
     let timer: ReturnType<typeof globalThis.setTimeout>;
     const poll = async () => {
@@ -105,7 +113,7 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
     };
     timer = globalThis.setTimeout(() => { void poll(); }, 2_000);
     return () => { active = false; globalThis.clearTimeout(timer); };
-  }, [lobby?.status, refreshLobby, activity.networkActive]);
+  }, [lobby?.status, refreshLobby, activity.networkActive, removed]);
 
   useEffect(() => {
     if (activity.networkActive && !wasNetworkActive.current && lobby?.status === 'WAITING') void refreshLobby();
@@ -133,7 +141,7 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
     void joinLobby(joinId, account.profile.displayName, { fetch: (...args) => globalThis.fetch(...args) }, account.profile.avatarDataUrl ?? undefined)
       .then(async (result) => {
         if (result.ok) await refreshLobby();
-        else setJoinMessage(result.message);
+        else { setJoinMessage(result.message); setRemoved(Boolean(result.removed)); }
       })
       .finally(() => setJoining(false));
   }, [account, isHostRoute, joinId, lobby, refreshLobby]);
@@ -156,6 +164,7 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
       await refreshLobby();
     } else {
       setJoinMessage(result.message);
+      setRemoved(Boolean(result.removed));
     }
     setJoining(false);
   }
@@ -229,6 +238,8 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
   }
 
   if (!lobby) return null;
+
+  if (removed && !lobby.isParticipant) return <RejoinPanel joinId={joinId} networkActive={activity.networkActive} />;
 
   if (isHostRoute && !lobby.isHost) {
     return <StateScreen icon="♠" title="בודקים הרשאות"><p role="status">מעבירים אתכם למסך ההזמנה…</p></StateScreen>;
@@ -314,7 +325,8 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
               <ul>{removedPlayers.filter((player) => !lobby.players.some((active) => active.id === player.id)).map((player) => <li key={player.id}>
                 <ProfileImage className="lobby-player-avatar" fallback={player.displayName.slice(0, 1)} />
                 <strong>{player.displayName}</strong>
-                <button type="button" className="lobby-remove-player" disabled={Boolean(restoringPlayerId) || starting} onClick={() => void handleRestorePlayer(player.id)}>{restoringPlayerId === player.id ? 'מחזירים…' : 'אפשר חזרה'}</button>
+                {player.rejoinRequestedAt ? <span>מבקש לחזור</span> : null}
+                <button type="button" className="lobby-remove-player" disabled={Boolean(restoringPlayerId) || starting} onClick={() => void handleRestorePlayer(player.id)}>{restoringPlayerId === player.id ? 'מחזירים…' : 'החזרה למשחק'}</button>
               </li>)}</ul>
               <p>החזרת שחקן שומרת על אותו חשבון ומושב. אפשר לשלוח לו שוב קישור או הזמנה דרך האתר.</p>
             </section> : null}

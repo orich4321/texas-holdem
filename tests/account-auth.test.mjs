@@ -275,6 +275,34 @@ test('the same Google account rejoins its existing seat and a different account 
   });
 });
 
+test('removed accounts can request only their own seat, without regaining game or host access', async () => {
+  const requests = [];
+  const rooms = {
+    async findPlayerForRejoin(requestedJoinId, accountId) {
+      return requestedJoinId === joinId && accountId === account.id
+        ? { id: 'removed-seat', leftAt: new Date(), rejoinRequestedAt: null, room: { status: 'IN_PROGRESS' } } : null;
+    },
+    async requestRejoin(requestedJoinId, playerId) { requests.push([requestedJoinId, playerId]); return { pending: true }; },
+    async findPlayerByRoomJoinIdAndAccountId() { return null; },
+    async findPlayerByRoomJoinIdAndAccessToken() { return null; },
+  };
+  const accounts = { async findBySession(token) { return token === accountToken ? account : null; } };
+  await withServer(rooms, accounts, async (base) => {
+    const url = `${base}/rooms/${joinId}`;
+    assert.equal((await globalThis.fetch(`${url}/rejoin`, { method: 'POST' })).status, 401);
+    const headers = { cookie: `poker_account_token=${accountToken}`, 'content-type': 'application/json' };
+    const status = await globalThis.fetch(`${url}/rejoin`, { headers });
+    assert.deepEqual(await status.json(), { status: 'removed', pending: false });
+    const result = await globalThis.fetch(`${url}/rejoin`, { method: 'POST', headers, body: JSON.stringify({ playerId: 'host-seat' }) });
+    assert.equal(result.status, 200);
+    assert.deepEqual(requests, [[joinId, 'removed-seat']]);
+    assert.equal((await globalThis.fetch(`${url}/game`, { headers })).status, 401);
+    assert.equal((await globalThis.fetch(`${url}/management`, { headers })).status, 403);
+    assert.equal((await globalThis.fetch(`${url}/management/players/018f7b16-690c-4d1f-9d0b-a8c4a14ae999/restore`, { method: 'POST', headers })).status, 403);
+    assert.equal((await globalThis.fetch(`${base}/rooms/ffffffffffffffff/rejoin`, { method: 'POST', headers })).status, 401);
+  });
+});
+
 test('OAuth callback issues only an opaque httpOnly account cookie and profile edits require it', async () => {
   const updates = [];
   const accounts = {

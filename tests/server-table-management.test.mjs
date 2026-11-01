@@ -26,6 +26,7 @@ test('host management projection aggregates only pending chip additions', async 
   const repository = new RoomRepository(db);
   const management = await repository.getHostManagement(joinId, hostId);
   assert.deepEqual(management, {
+    removedPlayers: [],
     smallBlind: 10,
     bigBlind: 20,
     nextHandIsFinal: true,

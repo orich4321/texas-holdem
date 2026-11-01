@@ -139,6 +139,8 @@ button:disabled { cursor: wait; opacity: 0.55; }
 .lobby-roster li small { color: var(--muted); font-size: .55rem; }
 .lobby-remove-player { min-height: 32px; padding: 0 9px; border: 1px solid rgba(205,136,128,.35); border-radius: 8px; color: #e6b6b0; background: rgba(112,47,42,.14); cursor: pointer; font-size: .62rem; font-weight: 800; }
 .lobby-remove-player:disabled { opacity: .55; cursor: default; }
+.table-management-button { position: relative; }
+.rejoin-request-badge { position: absolute; inset-block-start: -5px; inset-inline-end: -5px; min-width: 20px; height: 20px; padding-inline: 4px; display: grid; place-items: center; border-radius: 50%; background: #b39555; color: #101b16; font-size: 12px; font-weight: 800; }
 .lobby-settings { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 7px; }
 .lobby-settings > p { grid-column: 1/-1; margin: 0 2px; color: var(--muted); font-size: .63rem; font-weight: 900; }
 .lobby-settings > div { display: grid; padding: 10px; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.025); text-align: center; }

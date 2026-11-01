@@ -136,7 +136,7 @@ test('only the host can list and restore removed waiting-room seats', async () =
   };
   await withServer(repository, async (baseUrl) => {
     const listUrl = `${baseUrl}/rooms/${joinId}/lobby/removed-players`;
-    const restoreUrl = `${baseUrl}/rooms/${joinId}/lobby/players/${targetPlayerId}/restore`;
+    const restoreUrl = `${baseUrl}/rooms/${joinId}/management/players/${targetPlayerId}/restore`;
     assert.equal((await globalThis.fetch(listUrl, { headers: { cookie: `poker_player_token=${guestToken}` } })).status, 403);
     assert.equal((await globalThis.fetch(restoreUrl, { method: 'POST', headers: { cookie: `poker_player_token=${guestToken}` } })).status, 403);
     const listed = await globalThis.fetch(listUrl, { headers: { cookie: `poker_player_token=${hostToken}` } });

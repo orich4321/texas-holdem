@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { io } from 'socket.io-client';
 import { parsePositiveInteger } from '../../numeric-input';
 import { ProfileImage } from '../../profile-image';
+import { RejoinPanel } from '../../rejoin-panel';
 import { formatChipsInBigBlinds } from '../../chips-in-blinds';
 import { actionAudioIsReady, playActionSound, unlockActionAudio } from '../../action-sounds';
 import { CHIP_VALUES, breakChip, chipTotal, clearChipSelection, createChipTray, displayChipCounts, returnChip, selectAllChips, selectChip, type ChipValue } from '../../betting-chips';
@@ -58,6 +59,7 @@ type FinalSummary = {
   };
 };
 type PlayerView = {
+  rejoinRequestCount?: number;
   sequence?: number;
   hostPlayerId?: string;
   gameCompleted?: boolean;
@@ -90,6 +92,7 @@ type PlayerView = {
   showdown?: Showdown;
 };
 type ManagementView = {
+  removedPlayers?: readonly { id: string; displayName: string; currentStack: number; rejoinRequestedAt: string | null }[];
   smallBlind: number;
   bigBlind: number;
   nextHandIsFinal: boolean;
@@ -299,6 +302,8 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
   const [revealingCardIndex, setRevealingCardIndex] = useState<0 | 1>();
   const [cardDrag, setCardDrag] = useState<{ x: number; y: number }>();
   const [waitingForNextHand, setWaitingForNextHand] = useState(false);
+  const [membershipLost, setMembershipLost] = useState(false);
+  const [restorationError, setRestorationError] = useState('');
   const [seatActions, setSeatActions] = useState<ReadonlyMap<string, PlayerActionNotification>>(() => new Map());
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [turnSeconds, setTurnSeconds] = useState(60);
@@ -428,7 +433,7 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
   }, [avatarRoster, joinId, networkActive]);
 
   useEffect(() => {
-    if (!networkActive) return;
+    if (!networkActive || membershipLost) return;
     let active = true;
     let refreshing = false;
     const controller = new AbortController();
@@ -442,6 +447,10 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
           ...(refreshTag ? { headers: { 'If-None-Match': refreshTag } } : {}),
         });
         if (response.status === 304) return;
+        if (response.status === 401) {
+          if (active) setMembershipLost(true);
+          return;
+        }
         const next = await response.json();
         if (response.status === 409 && (next as { error?: { code?: string } })?.error?.code === 'GAME_NOT_AVAILABLE') {
           refreshTag = undefined;
@@ -527,7 +536,7 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
       globalThis.removeEventListener('online', restoreAfterResume);
       globalThis.document.removeEventListener('visibilitychange', onVisibilityChange);
     };
-  }, [joinId, networkActive]);
+  }, [joinId, networkActive, membershipLost]);
 
   useEffect(() => {
     if (!view) return;
@@ -759,6 +768,10 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
     if (isCurrentHost && view?.street === 'showdown' && !view.finalSummaryVisible) void loadManagement();
   }, [isCurrentHost, view?.street, view?.sequence, view?.finalSummaryVisible]);
 
+  useEffect(() => {
+    if (isCurrentHost && managementOpen) void loadManagement();
+  }, [isCurrentHost, managementOpen, view?.rejoinRequestCount]);
+
   function handleTablePointerUp(event: ReactPointerEvent<HTMLElement>) {
     if (!isTurn || view?.toCall !== 0 || actionPendingRef.current || cardDragRef.current?.moved) {
       lastTapRef.current = undefined;
@@ -983,6 +996,19 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
     }
   }
 
+  async function restoreRemovedPlayer(playerId: string) {
+    if (!isCurrentHost || managementBusy) return;
+    setManagementBusy(true);
+    setRestorationError('');
+    try {
+      const response = await globalThis.fetch(`${SERVER_URL}/rooms/${encodeURIComponent(joinId)}/management/players/${encodeURIComponent(playerId)}/restore`, { method: 'POST', credentials: 'include' });
+      if (!response.ok) throw new Error();
+      await loadManagement();
+      setStatus('השחקן חזר עם היתרה שלו ויוכל להשתתף מהיד הבאה.');
+    } catch { setRestorationError('לא הצלחנו להחזיר את השחקן. בדקו שיש מקום בשולחן ושהמשחק עדיין פעיל.'); }
+    finally { setManagementBusy(false); }
+  }
+
   async function scheduleFinalHand(enabled: boolean) {
     if (!isCurrentHost || managementBusy) return;
     if (enabled && !globalThis.confirm('לסמן את היד הבאה כיד האחרונה של המשחק?')) return;
@@ -1198,6 +1224,7 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
     }
   }
 
+  if (membershipLost) return <RejoinPanel joinId={joinId} networkActive={networkActive} />;
   if (!view) return <main className="table-shell"><p className="table-connection" role="status">{waitingForNextHand ? '♠ ' : ''}{status}</p></main>;
 
   const turnMessage = view.street === 'showdown'
@@ -1223,7 +1250,7 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
         {isCurrentHost ? <button type="button" className="table-management-button" aria-label="ניהול שולחן" title="ניהול שולחן" aria-expanded={managementOpen} onClick={() => {
           setManagementOpen(true);
           void loadManagement();
-        }}><span aria-hidden="true">⚙</span></button> : null}
+        }}><span aria-hidden="true">⚙</span>{(view.rejoinRequestCount ?? 0) > 0 ? <span className="rejoin-request-badge" aria-label={`${view.rejoinRequestCount} בקשות חזרה למשחק`}>{view.rejoinRequestCount}</span> : null}</button> : null}
         <div className="table-timer"><span>זמן משחק</span><strong dir="ltr">{gameTime}</strong></div>
         {view.street !== 'showdown' && !view.allInRunout ? <div className={`turn-clock${turnSeconds <= 10 ? ' turn-clock-urgent' : ''}`} aria-label={`נותרו ${turnSeconds} שניות לתור`}><span>זמן לתור</span><strong dir="ltr">{Math.floor(turnSeconds / 60).toString().padStart(2, '0')}:{(turnSeconds % 60).toString().padStart(2, '0')}</strong>{isTurn ? <button type="button" disabled={usingTimeCard || (view.timeCardsRemaining ?? 0) < 1} onClick={() => void useTimeCard()} title="שימוש בכרטיס זמן מוסיף דקה אחת לתור">כרטיס זמן: עוד דקה · נותרו {view.timeCardsRemaining ?? 0}</button> : null}</div> : null}
         <div className="table-round"><span>שלב במשחק</span><strong>{streetNames[view.street]}</strong></div>
@@ -1340,6 +1367,11 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
       }}><section className="management-sheet" role="dialog" aria-modal="true" aria-labelledby="management-title">
         <header><div><small>הרשאות מארח</small><h2 id="management-title">ניהול שולחן</h2></div><button type="button" aria-label="סגירת ניהול" onClick={() => setManagementOpen(false)}>×</button></header>
         <p className="management-note">שינויים בערימות, בליינדים ויציאות יחולו לפני היד הבאה.</p>
+        {management?.removedPlayers?.length ? <section className="management-players"><h3>החזרת שחקנים למשחק</h3><p>חוזרים עם אותה יתרת צ׳יפים, מהיד הבאה. ללא צ׳יפים, חוזרים בהמתנה לתוספת.</p>{management.removedPlayers.map((player) => <article key={player.id}>
+          <div><strong>{player.displayName}</strong><small>{player.currentStack.toLocaleString('he-IL')} צ׳יפים · {player.rejoinRequestedAt ? 'מבקש לחזור למשחק' : 'מחוץ לשולחן'}</small></div>
+          <button type="button" disabled={managementBusy} onClick={() => void restoreRemovedPlayer(player.id)}>החזרה למשחק</button>
+        </article>)}</section> : null}
+        {restorationError ? <p role="alert">{restorationError}</p> : null}
         <div className="management-grid">
           <section className="management-card"><h3>היד האחרונה</h3><p>{management?.nextHandIsFinal ? 'היד הבאה מסומנת כאחרונה.' : 'המשחק ימשיך כרגיל.'}</p><button type="button" className={management?.nextHandIsFinal ? 'management-cancel' : 'management-gold'} disabled={managementBusy} onClick={() => void scheduleFinalHand(!management?.nextHandIsFinal)}>{management?.nextHandIsFinal ? 'ביטול הסימון' : 'סימון סיבוב אחרון'}</button></section>
           <section className="management-card"><h3>בליינדים מהיד הבאה</h3><div className="blind-inputs"><label>סמול<input type="number" inputMode="numeric" min="1" value={smallBlind} onChange={(event) => setSmallBlind(event.target.value)} /></label><label>ביג<input type="number" inputMode="numeric" min="2" value={bigBlind} onChange={(event) => setBigBlind(event.target.value)} /></label></div><button type="button" disabled={managementBusy || !validBlinds} onClick={() => void saveBlinds()}>שמירת בליינדים</button></section>
