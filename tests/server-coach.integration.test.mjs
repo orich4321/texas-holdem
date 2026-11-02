@@ -5,7 +5,7 @@ import { test, after, beforeEach } from 'node:test';
 import { hand, decision, evaluation, narrative } from './fixtures/coach.mjs';
 import { CoachRepository } from '../apps/server/src/coach/repository.ts';
 import { CoachService } from '../apps/server/src/coach/service.ts';
-import { CoachProviderError } from '../apps/server/src/coach/gemini.ts';
+import { CoachProviderError, createGeminiProvider } from '../apps/server/src/coach/gemini.ts';
 import { decisionPayload } from '../apps/server/src/coach/authorized-data.ts';
 
 const enabled = Boolean(globalThis.process.env.TEST_DATABASE_URL);
@@ -141,4 +141,61 @@ test('coach DB: project quota is atomic across replicas, respects day/month caps
   assert.equal((await repo.reserveCall(now)).toISOString(), '2026-12-01T00:00:00.000Z');
   const tables = await prisma.$queryRaw`SELECT relname, relrowsecurity FROM pg_class WHERE relname IN ('CoachReport','CoachHand','CoachQuota','CoachPublicHand')`;
   assert.equal(tables.length, 4); assert.ok(tables.every((t) => t.relrowsecurity));
+});
+
+test('coach DB: 61 mixed hands resume a rejected request through the real SDK, durable queue and final report', { skip: !enabled }, async (t) => {
+  const { room, profiles, repo } = await fixture();
+  const model = 'gemini-3.5-flash-lite';
+  const job = await repo.request(profiles[0].id, room.joinId, model);
+  const manifest = Array.from({ length: 61 }, (_, index) => ({ key: `hand-${index}`, number: index + 1 }));
+  await prisma.coachReport.update({ where: { id: job.id }, data: { manifest, totalHands: 61 } });
+  const successfulKeys = [];
+  let failOnce = true;
+  t.mock.method(globalThis, 'fetch', async (input, init) => {
+    const request = input instanceof globalThis.Request ? input : new globalThis.Request(input, init);
+    const body = await request.json();
+    if (failOnce) {
+      failOnce = false;
+      return new globalThis.Response(JSON.stringify({ error: { code: 400, status: 'INVALID_ARGUMENT', message: 'Rejected schema.' } }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } });
+    }
+    assert.equal(JSON.stringify(body.generationConfig.responseJsonSchema).includes('maxItems'), false);
+    const payload = JSON.parse(body.contents[0].parts[0].text);
+    assert.equal(JSON.stringify(payload).includes('holeCards'), false);
+    const output = payload.hands ? { hands: payload.hands.map((h) => {
+      successfulKeys.push(h.handKey);
+      return { handKey: h.handKey, summary: 'בדיקה מלאכותית.', evaluations: h.decisions.map((d) => evaluation(d.id)) };
+    }) } : narrative;
+    return new globalThis.Response(JSON.stringify({ candidates: [{ finishReason: 'STOP', content: {
+      role: 'model', parts: [{ text: JSON.stringify(output) }],
+    } }] }), { headers: { 'Content-Type': 'application/json' } });
+  });
+  const rooms = { getHandForAccount: async (_account, _room, key) => {
+    const index = Number(key.slice(5));
+    return { coach: hand({ key, number: index + 1, ownPlayerId: room.hostPlayerId,
+      decisions: Array.from({ length: [6, 1, 1, 0][index % 4] }, (_, sequence) => decision(`${key}:${sequence + 1}`)),
+    }) };
+  } };
+  const sdk = createGeminiProvider('synthetic-test-key');
+  const settings = { enabled: true, model };
+  await new CoachService(repo, rooms, sdk, settings).runOne();
+  const failed = await repo.state(profiles[0].id, room.joinId);
+  assert.equal(failed.status, 'FAILED'); assert.equal(failed.errorCode, 'CONFIGURATION'); assert.equal(failed.completedHands, 0);
+  await prisma.coachReport.update({ where: { id: job.id }, data: { nextAttemptAt: new Date(0) } });
+  await repo.request(profiles[0].id, room.joinId, model);
+  for (let checkpoint = 0; checkpoint < 65; checkpoint++) {
+    await ungate();
+    await new CoachService(new CoachRepository(prisma), rooms, sdk, settings).runOne();
+    const state = await repo.state(profiles[0].id, room.joinId);
+    assert.notEqual(state.status, 'FAILED');
+    if (state.status === 'COMPLETED') break;
+  }
+  const completed = await repo.state(profiles[0].id, room.joinId);
+  assert.equal(completed.status, 'COMPLETED'); assert.equal(completed.completedHands, 61);
+  const saved = await repo.readReport(profiles[0].id, room.joinId);
+  assert.equal(saved.hands.length, 61);
+  assert.equal(new Set(successfulKeys).size, successfulKeys.length);
+  assert.equal(successfulKeys.length, manifest.filter((_, index) => index % 4 !== 3).length);
+  for (const h of saved.hands) assert.equal(h.analysis.evaluations.length, h.decisions.length);
+  assert.equal(await repo.readReport(profiles[1].id, room.joinId), null);
 });

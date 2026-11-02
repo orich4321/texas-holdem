@@ -142,7 +142,7 @@ test('coach: Gemini payment-required errors stop as configuration failures witho
   assert.equal(calls, 1);
 });
 
-test('coach: Gemini response schema follows the current batch size while exact decision validation remains enforced', async (t) => {
+test('coach: Gemini wire schema avoids nested array maxima while exact decision validation remains enforced', async (t) => {
   const hands = [hand({ decisions: [decision()] }), hand({ key: 'hand-1', decisions: [decision('hand-1:1'), decision('hand-1:2'), decision('hand-1:3')] })];
   let captured;
   let omitDecision = false;
@@ -159,13 +159,43 @@ test('coach: Gemini response schema follows the current batch size while exact d
   const provider = createGeminiProvider('synthetic-test-key');
   const result = await provider.analyze(hands, 'gemini-3.8-flash');
   const schema = captured.generationConfig.responseJsonSchema;
-  assert.equal(schema.properties.hands.maxItems, 2);
-  assert.equal(schema.properties.hands.items.properties.evaluations.maxItems, 3);
+  assert.equal(JSON.stringify(schema).includes('maxItems'), false);
+  assert.equal(schema.properties.hands.additionalProperties, undefined);
+  assert.equal(schema.properties.hands.items.additionalProperties, false);
+  assert.equal(schema.properties.hands.items.properties.evaluations.items.properties.dimensions.minItems, 1);
   assert.equal('temperature' in captured.generationConfig, false);
   assert.deepEqual(result.analyses.map((h) => h.evaluations.length), [1, 3]);
   assert.equal((await provider.analyze(hands, 'gemini-3.5-flash-lite')).analyses.length, 2);
   omitDecision = true;
   await assert.rejects(provider.analyze(hands, 'gemini-3.8-flash'), (error) => error.kind === 'INVALID_OUTPUT');
+});
+
+test('coach: mixed 6/1/1 decision batches survive Gemini schema compilation without dropping any decision', async (t) => {
+  const hands = [6, 1, 1].map((count, index) => hand({ key: `hand-${index}`, decisions:
+    Array.from({ length: count }, (_, sequence) => decision(`hand-${index}:${sequence + 1}`)),
+  }));
+  let calls = 0;
+  t.mock.method(globalThis, 'fetch', async (input, init) => {
+    calls++;
+    const request = input instanceof globalThis.Request ? input : new globalThis.Request(input, init);
+    const payload = await request.json();
+    const schema = payload.generationConfig.responseJsonSchema;
+    const evaluations = schema.properties.hands.items.properties.evaluations;
+    // Reject exactly the old shape observed failing in the live comparison;
+    // this fixture does not assert any undocumented Google complexity limit.
+    const rejectedShape = schema.properties.hands.maxItems === 3 && evaluations.maxItems === 6
+      && evaluations.items.properties.dimensions.maxItems === 7;
+    if (rejectedShape) return new globalThis.Response(JSON.stringify({ error: {
+      code: 400, status: 'INVALID_ARGUMENT', message: 'Request contains an invalid argument.',
+    } }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+    const output = { hands: hands.map((h) => ({ handKey: h.key, summary: 'בדיקה מלאכותית.', evaluations: h.decisions.map((d) => evaluation(d.id)) })) };
+    return new globalThis.Response(JSON.stringify({ candidates: [{ finishReason: 'STOP', content: {
+      role: 'model', parts: [{ text: JSON.stringify(output) }],
+    } }] }), { headers: { 'Content-Type': 'application/json' } });
+  });
+  const result = await createGeminiProvider('synthetic-test-key').analyze(hands, 'gemini-3.5-flash-lite');
+  assert.deepEqual(result.analyses.map((h) => h.evaluations.length), [6, 1, 1]);
+  assert.equal(calls, 1);
 });
 
 test('coach: narrative schema compiles without nested array maxima but oversized model output is still rejected', async (t) => {

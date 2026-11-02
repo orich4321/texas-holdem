@@ -41,10 +41,11 @@ export function createGeminiProvider(apiKey: string): CoachProvider {
       client ??= new GoogleGenAI({ apiKey, vertexai: false, httpOptions: { timeout: 55_000, retryOptions: { attempts: 1 } } });
       const jsonSchema = z.toJSONSchema(schema);
       delete jsonSchema.$schema;
-      // Deeply nested finite array bounds can make Gemini's schema compiler
-      // reject the narrative with INVALID_ARGUMENT. Omit only those wire hints;
-      // narrativeSchema/validateNarrative still enforce every bound afterwards.
-      if (schema === narrativeSchema) omitWireArrayMaximums(jsonSchema);
+      // Nested finite array bounds also reject mixed hand batches (e.g. six,
+      // one and one decisions), even when the real batch has only eight choices.
+      // Omit only these wire hints for ALL requests. The unchanged Zod schemas
+      // and exact coverage/reference checks enforce every limit afterwards.
+      omitWireArrayMaximums(jsonSchema);
       const result = await client.models.generateContent({
         model, contents: serialized,
         config: { systemInstruction: instructions, responseMimeType: 'application/json', responseJsonSchema: jsonSchema,
@@ -66,14 +67,7 @@ export function createGeminiProvider(apiKey: string): CoachProvider {
   }
   return {
     async analyze(hands, model) {
-      // Gemini compiles structured-output schemas before generation. Advertising
-      // 6 * 200 evaluations for an eight-decision job can exceed its schema
-      // complexity limit. Bound generation to this batch, not archive capacity;
-      // validateBatch still independently enforces exact coverage and references.
-      const responseSchema = batchSchema.extend({ hands: z.array(batchSchema.shape.hands.element.extend({
-        evaluations: batchSchema.shape.hands.element.shape.evaluations.max(Math.max(0, ...hands.map((hand) => hand.decisions.length))),
-      })).max(hands.length) });
-      const result = await generate(responseSchema, { task: 'נתח את כל ההחלטות בידיים הבאות. ליד ללא החלטות החזר הסבר קצר ורשימה ריקה.', hands: hands.map(decisionPayload) }, model);
+      const result = await generate(batchSchema, { task: 'נתח את כל ההחלטות בידיים הבאות. ליד ללא החלטות החזר סיכום קצר ורשימה ריקה. החזר בדיוק את הידיים וההחלטות שנשלחו, ללא תוספות.', hands: hands.map(decisionPayload) }, model);
       try { return { ...result, analyses: validateBatch(result.value, hands) }; }
       catch { throw new CoachProviderError('INVALID_OUTPUT'); }
     },
