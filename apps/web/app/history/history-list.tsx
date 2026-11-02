@@ -3,8 +3,9 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { googleLoginPath, SERVER_URL } from '../account-api';
+import { CoachButton } from '../coach/coach-button';
 
-type Game = { joinId: string; status: string; createdAt: string; handCount: number; yourNet: number };
+type Game = { joinId: string; status: string; createdAt: string; handCount: number; yourNet: number; coach?: { status: string; overallScore: number | null } };
 
 export function HistoryList({ onSelectGame }: { onSelectGame?: (joinId: string) => void }) {
   const [games, setGames] = useState<Game[]>();
@@ -49,7 +50,7 @@ export function HistoryList({ onSelectGame }: { onSelectGame?: (joinId: string) 
       const label = <><span><b>{new Date(game.createdAt).toLocaleDateString('he-IL')}</b><small>{game.handCount} ידיים · {game.status === 'COMPLETED' ? 'הסתיים' : game.status === 'IN_PROGRESS' ? 'משחק פעיל' : game.status === 'CANCELLED' ? 'בוטל' : 'ממתין'}</small></span><strong className={game.yourNet >= 0 ? 'history-positive' : 'history-negative'} dir="ltr">{game.yourNet >= 0 ? '+' : ''}{game.yourNet.toLocaleString('he-IL')} צ׳יפים</strong><span aria-hidden="true">←</span></>;
       const gameLink = onSelectGame ? <button type="button" className="history-game" onClick={() => onSelectGame(game.joinId)}>{label}</button>
         : <Link className="history-game" href={`/history/${encodeURIComponent(game.joinId)}`}>{label}</Link>;
-      return <div className="history-game-row" key={game.joinId}>{gameLink}<button type="button" className="history-delete" aria-label={`מחיקת המשחק מ${game.createdAt}`} onClick={() => { setDeleteError(''); setConfirmGame(game); }}>מחיקה</button></div>;
+      return <div className="history-game-row" key={game.joinId}>{gameLink}{game.status === 'COMPLETED' && game.handCount > 0 ? <CoachButton joinId={game.joinId} status={game.coach?.status} score={game.coach?.overallScore} /> : null}<button type="button" className="history-delete" aria-label={`מחיקת המשחק מ${game.createdAt}`} onClick={() => { setDeleteError(''); setConfirmGame(game); }}>מחיקה</button></div>;
     })}</div>
     {confirmGame ? <div className="modal-backdrop" role="presentation"><section className="history-delete-dialog" role="alertdialog" aria-modal="true" aria-labelledby="history-delete-title">
       <h2 id="history-delete-title">למחוק מההיסטוריה?</h2><p>המשחק יוסתר רק מהארכיון שלך. הוא לא יימחק לשאר המשתתפים ולא ישנה שום תוצאה.</p>

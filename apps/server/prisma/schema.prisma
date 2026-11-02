@@ -35,6 +35,8 @@ model Room {
   gameInvites         GameInvite[]
   hiddenForAccounts   AccountHiddenGame[]
   jackpotHands        JackpotHand[]
+  coachReports        CoachReport[]
+  coachPublicHands    CoachPublicHand[]
   createdAt           DateTime            @default(now())
   updatedAt           DateTime            @updatedAt
 
@@ -63,6 +65,7 @@ model Player {
   receivedChipAdjustments   ChipAdjustment[] @relation("ChipRecipient")
   authorizedChipAdjustments ChipAdjustment[] @relation("ChipAuthorizer")
   preAction                 PreAction?
+  coachReports              CoachReport[]
   createdAt                 DateTime         @default(now())
   updatedAt                 DateTime         @updatedAt
 
@@ -89,6 +92,7 @@ model Account {
   sentGameInvites             GameInvite[]        @relation("GameInviteSender")
   receivedGameInvites         GameInvite[]        @relation("GameInviteRecipient")
   hiddenGames                 AccountHiddenGame[]
+  coachReports                CoachReport[]
   createdAt                   DateTime            @default(now())
   updatedAt                   DateTime            @updatedAt
 
@@ -263,4 +267,71 @@ model JackpotHand {
   room          Room     @relation(fields: [roomId], references: [id], onDelete: Restrict)
 
   @@id([roomId, handSequence])
+}
+
+// Server-only durable jobs. Never exposed through the Supabase Data API.
+model CoachReport {
+  id             String   @id @default(uuid()) @db.Uuid
+  roomId         String   @db.Uuid
+  playerId       String   @db.Uuid
+  accountId      String   @db.Uuid
+  status         String   @default("PENDING")
+  model          String
+  engineVersion  String
+  totalHands     Int      @default(0)
+  completedHands Int      @default(0)
+  attempts       Int      @default(0)
+  nextAttemptAt  DateTime @default(now())
+  leaseToken     String?  @db.Uuid
+  leaseUntil     DateTime?
+  errorCode      String?
+  inputTokens    Int      @default(0)
+  outputTokens   Int      @default(0)
+  overallScore   Int?
+  manifest       Json
+  identity       Json
+  report         Json?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  completedAt    DateTime?
+  room           Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  player         Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+  account        Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  hands          CoachHand[]
+
+  @@unique([roomId, playerId])
+  @@index([accountId, roomId])
+  @@index([playerId])
+  @@index([status, nextAttemptAt])
+}
+
+model CoachHand {
+  reportId String @db.Uuid
+  handKey  String
+  number   Int
+  complete Boolean @default(false)
+  data     Json
+  report   CoachReport @relation(fields: [reportId], references: [id], onDelete: Cascade)
+
+  @@id([reportId, handKey])
+}
+
+// Global persistent request gate: protects the FREE project across instances.
+model CoachQuota {
+  id            String   @id
+  nextRequestAt DateTime
+  day           String
+  dailyCalls    Int      @default(0)
+  month         String
+  monthlyCalls  Int      @default(0)
+}
+
+// Shared verified PUBLIC geometry/actions only. No hole cards or deck.
+model CoachPublicHand {
+  roomId  String @db.Uuid
+  handKey String
+  data    Json
+  room    Room @relation(fields: [roomId], references: [id], onDelete: Cascade)
+
+  @@id([roomId, handKey])
 }

@@ -7,6 +7,9 @@ export type ReplayFrame = {
   street: string;
   board: readonly Card[];
   pot: number;
+  currentBet?: number;
+  minimumIncrement?: number;
+  raiseLockedSeats?: readonly number[];
   seats: readonly { playerId: string; seatNumber: number; stack: number; currentBet: number; totalCommitted: number; isFolded: boolean }[];
 };
 
@@ -52,6 +55,9 @@ export function projectHandHistory(result: unknown, ownPlayerIds: ReadonlySet<st
     revealed.set(payload.playerId, indices);
   }
   return {
+    uncalledReturns: (Array.isArray(stored.uncalledReturns) ? stored.uncalledReturns : []).map(record)
+      .filter((entry): entry is Record<string, unknown> => entry !== null)
+      .map((entry) => ({ seatNumber: int(entry.seatNumber), amount: amount(entry.amount) })),
     board: cards(stored.board).filter((value): value is Card => value !== null),
     players: players.map((player) => {
       const playerId = typeof player.playerId === 'string' ? player.playerId : '';

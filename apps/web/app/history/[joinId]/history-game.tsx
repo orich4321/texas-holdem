@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { googleLoginPath, SERVER_URL } from '../../account-api';
 import { AppBrand } from '../../ui';
+import { CoachButton } from '../../coach/coach-button';
 
 type Card = { rank: string; suit: string } | null;
 type HandList = { joinId: string; status: string; hands: { key: string; number: number; settledAt: string }[] };
@@ -73,6 +74,7 @@ export default function HistoryGame({ joinId, onBack }: { joinId: string; onBack
       {signInRequired ? <a className="entry-primary" href={googleLoginPath(`/history/${joinId}`)}>התחברות עם Google לצפייה בידיים</a> : null}
       {!game && !error && !signInRequired ? <p role="status">טוענים את המשחק…</p> : null}
       {game?.hands.length === 0 ? <p>עדיין לא הסתיימה יד במשחק הזה.</p> : null}
+      {game?.status === 'COMPLETED' && game.hands.length > 0 ? <CoachButton joinId={joinId} /> : null}
       <div className="history-hand-picker" aria-label="בחירת יד">{game?.hands.map((hand) => <button type="button" key={hand.key} className={selected === hand.key ? 'is-selected' : ''} onClick={() => { setDetail(undefined); setSelected(hand.key); }}>יד {hand.number}</button>)}</div>
       {detail && activeStep ? <div className="history-hand-content">
         <div className="history-replay-status"><strong>{stepLabel}</strong><span>{streetNames[activeStep.street] ?? activeStep.street} · {activeStep.kind === 'result' ? 'הקופה חולקה' : `קופה ${activeStep.pot.toLocaleString('he-IL')}`}</span></div>

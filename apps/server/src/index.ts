@@ -10,6 +10,10 @@ import { SocialRepository } from './persistence/social-repository.js';
 import { GoogleOAuth } from './google-oauth.js';
 import { createPrivateSnapshotKeyring } from './persistence/private-snapshot-keyring.js';
 import { attachSocketSessionTransport } from './socket-transport.js';
+import { waitUntil } from '@vercel/functions';
+import { CoachRepository } from './coach/repository.js';
+import { CoachService } from './coach/service.js';
+import { coachConfiguration, createGeminiProvider } from './coach/gemini.js';
 
 // Keep the framework import visible to Vercel's Express entrypoint detector.
 void express;
@@ -20,6 +24,32 @@ const roomRepository = new RoomRepository(prisma, undefined, undefined, undefine
 const supabaseUrl = process.env.SUPABASE_URL;
 const publishableKey = process.env.SUPABASE_PUBLISHABLE_KEY;
 const appOrigin = process.env.PUBLIC_APP_ORIGIN;
+const coachConfig = coachConfiguration();
+const coachService = new CoachService(new CoachRepository(prisma), roomRepository,
+  coachConfig.enabled ? createGeminiProvider(process.env.GEMINI_API_KEY!) : undefined, coachConfig);
+let coachRunning = false;
+function wakeCoach() {
+  if (!coachConfig.enabled || coachRunning) return;
+  coachRunning = true;
+  const work = (async () => {
+    try {
+      await coachService.runWindow();
+      const next = await coachService.repository.nextWake();
+      // Chain bounded server invocations while there is ready work. No paid
+      // queue is needed. Cron recovers expired leases / longer quota cooldowns.
+      if (next && next.getTime() - Date.now() <= 15_000 && appOrigin && process.env.CRON_SECRET && process.env.VERCEL) {
+        const delay = Math.max(0, next.getTime() - Date.now());
+        if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+        coachRunning = false;
+        await fetch(new URL('/server/internal/coach/run', appOrigin), { method: 'POST', redirect: 'error',
+          headers: { Authorization: `Bearer ${process.env.CRON_SECRET}` }, signal: AbortSignal.timeout(10_000) });
+      }
+    } catch { console.error('Coach worker interrupted; durable checkpoints retained'); }
+    finally { coachRunning = false; }
+  })();
+  if (process.env.VERCEL) waitUntil(work);
+  else void work;
+}
 // Keep room creation available if the Supabase Google provider has not yet
 // been enabled. Explicitly switch over only after the provider is verified.
 const accountRepository = process.env.GOOGLE_AUTH_ENABLED === 'true' && supabaseUrl && publishableKey && appOrigin
@@ -36,6 +66,8 @@ const app = createApp({
   accountRepository,
   socialRepository,
   googleOAuth,
+  coachService,
+  wakeCoach,
   publicAppOrigin: appOrigin,
   isOriginAllowed,
   basePath: serviceBasePath,
@@ -67,6 +99,7 @@ attachSocketSessionTransport(io, roomRepository, accountRepository);
 // Vercel invokes the exported HTTP server. Local development retains a normal
 // listener so the Socket.IO transport can be exercised outside its runtime.
 if (!process.env.VERCEL) {
+  if (coachConfig.enabled) { setInterval(wakeCoach, 30_000).unref(); wakeCoach(); }
   httpServer.listen(port, () => {
     console.log(`Server listening on http://localhost:${port}`);
   });

@@ -7,6 +7,7 @@ import { parsePositiveInteger } from '../../numeric-input';
 import { ProfileImage } from '../../profile-image';
 import { RejoinPanel } from '../../rejoin-panel';
 import { JackpotBadge } from '../../jackpot-badge';
+import { CoachButton } from '../../coach/coach-button';
 import { formatChipsInBigBlinds } from '../../chips-in-blinds';
 import { actionAudioIsReady, playActionSound, unlockActionAudio } from '../../action-sounds';
 import { CHIP_VALUES, breakChip, chipTotal, clearChipSelection, createChipTray, displayChipCounts, returnChip, selectAllChips, selectChip, isChipAmount, type ChipValue } from '../../betting-chips';
@@ -1410,7 +1411,7 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
           </li>;
         })}</ul>
         <small className="final-summary-note">הדירוג מסודר לפי הרווח הנקי{isCurrentHost ? ' · פירוט מלא נשמר בקובץ JSON.' : '.'}</small>
-        <div className="final-summary-actions"><Link href="/">חזרה למסך הראשי</Link><Link href={`/history/${encodeURIComponent(joinId)}`}>צפייה בידיים במשחק</Link>
+        <div className="final-summary-actions"><Link href="/">חזרה למסך הראשי</Link><Link href={`/history/${encodeURIComponent(joinId)}`}>צפייה בידיים במשחק</Link><CoachButton joinId={joinId} />
           {isCurrentHost ? <button type="button" disabled={downloadingSummary} onClick={() => void downloadFinalSummary()}>{downloadingSummary ? 'מורידים…' : 'הורדת סיכום JSON'}</button> : null}
         </div>
       </section></div> : null}

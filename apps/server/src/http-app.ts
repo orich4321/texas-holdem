@@ -7,6 +7,7 @@ import { GoogleOAuth, newCodeVerifier, safeAuthDestination } from './google-oaut
 import type { AccountRepository } from './persistence/account-repository.js';
 import type { SocialRepository } from './persistence/social-repository.js';
 import type { RoomRepository } from './persistence/room-repository.js';
+import type { CoachService } from './coach/service.js';
 import { parseCookieHeader } from './socket-session.js';
 
 const MAX_REQUEST_BODY_SIZE = '80kb';
@@ -31,6 +32,8 @@ type CreateAppDependencies = {
   roomRepository: RoomRepository;
   accountRepository?: AccountRepository;
   socialRepository?: SocialRepository;
+  coachService?: CoachService;
+  wakeCoach?: () => void;
   googleOAuth?: GoogleOAuth;
   publicAppOrigin?: string;
   isOriginAllowed?: OriginPolicy;
@@ -210,7 +213,7 @@ function setPlayerSessionCookie(response: express.Response, accessToken: string)
 }
 
 /** Builds the HTTP API independently from the Socket.IO transport. */
-export function createApp({ roomRepository, accountRepository, socialRepository, googleOAuth, publicAppOrigin, isOriginAllowed = createOriginPolicy(), basePath }: CreateAppDependencies) {
+export function createApp({ roomRepository, accountRepository, socialRepository, coachService, wakeCoach, googleOAuth, publicAppOrigin, isOriginAllowed = createOriginPolicy(), basePath }: CreateAppDependencies) {
   const app = express();
   const routes = express.Router();
 
@@ -495,6 +498,57 @@ export function createApp({ roomRepository, accountRepository, socialRepository,
       response.json({ games: await roomRepository.listGamesForAccount(account.id) });
     } catch { response.status(500).json({ error: { code: 'INTERNAL_ERROR' } }); }
   });
+
+  routes.get('/auth/history/:joinId/coach', async (request, response) => {
+    response.setHeader('Cache-Control', 'private, no-store');
+    try {
+      const account = await findAccountIdentity(request.headers.cookie);
+      if (!account) { response.status(401).json({ error: { code: 'AUTH_REQUIRED' } }); return; }
+      if (!coachService) { response.status(503).json({ error: { code: 'COACH_NOT_CONFIGURED' } }); return; }
+      const state = await coachService.state(account.id, request.params.joinId);
+      if (!state) { response.status(404).json({ error: { code: 'HISTORY_NOT_FOUND' } }); return; }
+      response.json(state);
+      if (['PENDING', 'PROCESSING', 'RATE_LIMITED'].includes(state.status)) wakeCoach?.();
+    } catch { response.status(500).json({ error: { code: 'COACH_UNAVAILABLE' } }); }
+  });
+
+  routes.get('/auth/history/:joinId/coach/report', async (request, response) => {
+    response.setHeader('Cache-Control', 'private, no-store');
+    try {
+      const account = await findAccountIdentity(request.headers.cookie);
+      if (!account) { response.status(401).json({ error: { code: 'AUTH_REQUIRED' } }); return; }
+      const report = await coachService?.repository.readReport(account.id, request.params.joinId);
+      if (!report) { response.status(404).json({ error: { code: 'REPORT_NOT_FOUND' } }); return; }
+      response.json(report);
+    } catch { response.status(500).json({ error: { code: 'COACH_UNAVAILABLE' } }); }
+  });
+
+  routes.post('/auth/history/:joinId/coach', async (request, response) => {
+    response.setHeader('Cache-Control', 'private, no-store');
+    try {
+      const account = await findAccountIdentity(request.headers.cookie);
+      if (!account) { response.status(401).json({ error: { code: 'AUTH_REQUIRED' } }); return; }
+      // No player/account/model IDs or overrides accepted from a client.
+      if (request.body && Object.keys(request.body).length) { response.status(400).json({ error: { code: 'INVALID_COACH_REQUEST' } }); return; }
+      if (!coachService) { response.status(503).json({ error: { code: 'COACH_NOT_CONFIGURED' } }); return; }
+      const state = await coachService.state(account.id, request.params.joinId);
+      if (!state) { response.status(404).json({ error: { code: 'HISTORY_NOT_FOUND' } }); return; }
+      if (!state.available && state.status !== 'COMPLETED') { response.status(503).json({ error: { code: 'COACH_NOT_CONFIGURED' } }); return; }
+      const job = await coachService.request(account.id, request.params.joinId);
+      if (!job) { response.status(409).json({ error: { code: 'NO_COMPLETED_HANDS' } }); return; }
+      response.status(job.status === 'COMPLETED' ? 200 : 202).json({ ...job, available: state.available });
+      if (job.status !== 'COMPLETED') wakeCoach?.();
+    } catch { response.status(500).json({ error: { code: 'COACH_UNAVAILABLE' } }); }
+  });
+
+  const coachCron: RequestHandler = (request, response) => {
+    const secret = process.env.CRON_SECRET;
+    if (!secret || request.headers.authorization !== `Bearer ${secret}`) { response.status(401).json({ error: { code: 'AUTH_REQUIRED' } }); return; }
+    wakeCoach?.();
+    response.status(202).json({ accepted: true });
+  };
+  routes.get('/internal/coach/run', coachCron);
+  routes.post('/internal/coach/run', coachCron);
 
   routes.get('/auth/history/:joinId', async (request, response) => {
     try {
