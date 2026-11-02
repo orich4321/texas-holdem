@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { coachLabels, coachPath, type Card, type CoachReport, type CoachState, type Insight } from './coach-api';
+import { coachLabels, coachPath, coachProgressText, type Card, type CoachReport, type CoachState, type Insight } from './coach-api';
 import { evaluationSeverity as severity, filterCoachHands } from './coach-view';
 
 const ratingNames: Record<string, string> = { excellent: 'טובה מאוד', good: 'טובה', reasonable: 'סבירה', borderline: 'גבולית', small_mistake: 'טעות קטנה', major_mistake: 'טעות משמעותית', severe_mistake: 'טעות חמורה', uncertain: 'לא ניתן להעריך' };
@@ -89,7 +89,7 @@ export function CoachScreen({ joinId }: { joinId: string }) {
         <p className="coach-privacy">{state.privacyNotice}</p><p>דוח אחד לכל משחק, נשמר בחשבון שלך. זהו ניתוח AI ולא חישוב Solver.</p>
         {!state.available ? <p className="coach-message">היועץ מוכן באתר, אך עדיין לא הופעל מפתח Gemini מפרויקט חינמי. לא בוצעה קריאת AI ולא נוצר חיוב.</p> : <button type="button" className="coach-primary" disabled={busy || state.nextAttemptAt != null && Date.parse(state.nextAttemptAt) > Date.now()} onClick={() => void generate()}>{busy ? 'מכינים ניתוח…' : state.status === 'FAILED' ? 'המשך מהנקודה שנשמרה' : 'יצירת הדוח האישי שלי'}</button>}
         {state.status === 'FAILED' ? <p>הניתוח נעצר; כל הידיים שכבר נותחו נשמרו. {state.nextAttemptAt ? `אפשר לנסות שוב אחרי ${new Date(state.nextAttemptAt).toLocaleTimeString('he-IL')}.` : ''}</p> : null}
-      </> : <div className="coach-progress" role="status"><progress max={state.totalHands || 1} value={state.completedHands || 0} /><strong>{state.completedHands ?? 0} מתוך {state.totalHands ?? 0} ידיים נשמרו</strong><p>{state.status === 'RATE_LIMITED' ? 'ממתינים למכסה החינמית. אין מעבר למסלול בתשלום.' : 'הניתוח ממשיך בשרת. אפשר לסגור את המסך ולחזור מההיסטוריה.'}</p>{state.nextAttemptAt && Date.parse(state.nextAttemptAt) > Date.now() ? <small>ניסיון חוזר לא לפני {new Date(state.nextAttemptAt).toLocaleString('he-IL')}</small> : null}</div>}
+      </> : <div className="coach-progress" role="status"><progress max={state.totalHands || 1} value={state.completedHands || 0} /><strong>{state.completedHands ?? 0} מתוך {state.totalHands ?? 0} ידיים נשמרו</strong><p>{coachProgressText(state)}</p>{state.status !== 'PROCESSING' && state.nextAttemptAt && Date.parse(state.nextAttemptAt) > Date.now() ? <small>חלון העיבוד הבא: {new Date(state.nextAttemptAt).toLocaleString('he-IL')}</small> : null}</div>}
     </section> : null}
     {report ? <>
       <section className="coach-hero"><div><span className="coach-eyebrow">הדוח האישי של {report.identity.displayName}</span><h1>לשחק טוב יותר.<br />החלטה אחרי החלטה.</h1><p>{new Date(report.identity.date).toLocaleDateString('he-IL')} · {report.identity.participants} שחקנים · {report.hands.length} ידיים נסקרו</p><small>ביטחון בהערכה: {confidence[report.scores.overall.confidence]}</small></div><div className="coach-score"><strong>{report.scores.overall.score ?? 'N/A'}</strong><span>{report.scores.overall.score == null ? 'אין מספיק החלטות להערכה' : 'איכות החלטות / 100'}</span></div></section>

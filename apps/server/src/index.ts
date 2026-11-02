@@ -27,10 +27,11 @@ const appOrigin = process.env.PUBLIC_APP_ORIGIN;
 const coachConfig = coachConfiguration();
 const coachService = new CoachService(new CoachRepository(prisma), roomRepository,
   coachConfig.enabled ? createGeminiProvider(process.env.GEMINI_API_KEY!) : undefined, coachConfig);
-let coachRunning = false;
+let coachRunning: symbol | null = null;
 function wakeCoach() {
   if (!coachConfig.enabled || coachRunning) return;
-  coachRunning = true;
+  const run = Symbol('coach-window');
+  coachRunning = run;
   const work = (async () => {
     try {
       await coachService.runWindow();
@@ -40,12 +41,12 @@ function wakeCoach() {
       if (next && next.getTime() - Date.now() <= 15_000 && appOrigin && process.env.CRON_SECRET && process.env.VERCEL) {
         const delay = Math.max(0, next.getTime() - Date.now());
         if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
-        coachRunning = false;
+        if (coachRunning === run) coachRunning = null;
         await fetch(new URL('/server/internal/coach/run', appOrigin), { method: 'POST', redirect: 'error',
           headers: { Authorization: `Bearer ${process.env.CRON_SECRET}` }, signal: AbortSignal.timeout(10_000) });
       }
     } catch { console.error('Coach worker interrupted; durable checkpoints retained'); }
-    finally { coachRunning = false; }
+    finally { if (coachRunning === run) coachRunning = null; }
   })();
   if (process.env.VERCEL) waitUntil(work);
   else void work;

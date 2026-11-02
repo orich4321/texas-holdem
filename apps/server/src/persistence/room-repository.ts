@@ -2,7 +2,7 @@ import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { projectHandHistory, projectHandReplay, type ReplayFrame } from './hand-history.js';
 import { buildGameRecap } from './game-recap.js';
 import { buildAuthorizedCoachHand } from '../coach/authorized-data.js';
-import { publicCoachCache, type PublicCoachCache } from '../coach/public-cache.js';
+import { SharedCoachCache, packPublicCoachCache, publicCoachCache, unpackPublicCoachCache } from '../coach/public-cache.js';
 import type { Prisma, PrismaClient, RoomStatus } from '@prisma/client';
 import {
   createPlayerAccessToken,
@@ -1566,66 +1566,83 @@ export class RoomRepository {
     };
   }
 
+  private readonly sharedCoachHands = new SharedCoachCache();
+
   async getHandForAccount(accountId: string, joinId: string, handKey: string, coachHandNumber?: number) {
     if (!/^hand-\d+$/.test(handKey)) return null;
     const room = await this.db.room.findFirst({
       where: { joinId, players: { some: { accountId } }, hiddenForAccounts: { none: { accountId } } },
-      select: { id: true, players: { where: { accountId }, select: { id: true } },
+      select: { id: true, status: true, finalSummaryVisible: true, updatedAt: true, players: { where: { accountId }, select: { id: true } },
         settlements: { where: { idempotencyKey: handKey }, take: 1, select: { result: true, createdAt: true } } },
     });
     const settlement = room?.settlements[0];
     if (!room || !settlement) return null;
-    if (coachHandNumber !== undefined) {
-      const cached = await this.db.coachPublicHand.findUnique({ where: { roomId_handKey: { roomId: room.id, handKey } }, select: { data: true } });
-      if (cached) {
-        const publicData = cached.data as unknown as PublicCoachCache;
+    if (coachHandNumber !== undefined && room.status === 'COMPLETED' && room.finalSummaryVisible) {
+      const sourceVersion = room.updatedAt.toISOString();
+      const publicData = await this.sharedCoachHands.get(`${room.id}:${handKey}:${sourceVersion}`, () => this.db.$transaction(async (tx) => {
+        // Serialize only a PUBLIC cache miss for this hand, including replicas.
+        // No Google request or account-specific data enters this transaction.
+        await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`coach-public:${room.id}:${handKey}`}, 0))::text`;
+        const cached = await tx.coachPublicHand.findUnique({ where: { roomId_handKey: { roomId: room.id, handKey } }, select: { data: true } });
+        const data = unpackPublicCoachCache(cached?.data, sourceVersion);
+        if (data) return data;
+        const history = await this.loadHandGeometry(tx, room.id, handKey, true);
+        const prepared = publicCoachCache(history.frames, history.coachConfig, history.events, sourceVersion);
+        const packed = packPublicCoachCache(prepared);
+        if (prepared.config.bigBlind > 0) await tx.coachPublicHand.upsert({
+          where: { roomId_handKey: { roomId: room.id, handKey } },
+          create: { roomId: room.id, handKey, data: packed },
+          update: { data: packed },
+        });
+        return prepared;
+      }, { timeout: 20_000 }));
         const cachedEvents = publicData.events.map((e) => ({ ...e, createdAt: new Date(e.createdAt) }));
         const safe = { key: handKey, ...projectHandHistory(settlement.result, new Set(room.players.map((p) => p.id)), cachedEvents) };
         return { ...safe, settledAt: settlement.createdAt.toISOString(), replay: [],
-          coach: buildAuthorizedCoachHand(safe, publicData.frames, publicData.config, room.players[0].id, coachHandNumber) };
-      }
+          ...(publicData.config.bigBlind > 0 ? { coach: buildAuthorizedCoachHand(safe, publicData.frames, publicData.config, room.players[0].id, coachHandNumber, publicData.actions) } : {}) };
     }
-    const finalSequence = Number(handKey.slice(5)) + 1;
-    const start = await this.db.gameEvent.findFirst({
-      where: { roomId: room.id, sequence: { lte: finalSequence }, type: { in: ['GAME_STARTED', 'HAND_STARTED', 'FINAL_HAND_STARTED'] } },
-      orderBy: { sequence: 'desc' }, select: { sequence: true },
-    });
-    const next = await this.db.gameEvent.findFirst({
-      where: { roomId: room.id, sequence: { gt: finalSequence }, type: { in: ['HAND_STARTED', 'FINAL_HAND_STARTED'] } },
-      orderBy: { sequence: 'asc' }, select: { sequence: true },
-    });
-    const events = await this.db.gameEvent.findMany({
-      where: { roomId: room.id, sequence: { gte: start?.sequence ?? finalSequence, ...(next ? { lt: next.sequence } : {}) }, type: { in: ['GAME_STARTED', 'HAND_STARTED', 'FINAL_HAND_STARTED', 'PLAYER_ACTION', 'ALL_IN_RUNOUT_ADVANCED', 'UNCONTESTED_RUNOUT_ADVANCED', 'SHOWDOWN_CARD_REVEALED'] } },
-      orderBy: { sequence: 'asc' }, select: { sequence: true, type: true, payload: true, createdAt: true },
-    });
-    const snapshots = await this.db.gameSnapshot.findMany({
-      where: { roomId: room.id, sequence: { gte: start?.sequence ?? finalSequence, ...(next ? { lt: next.sequence } : {}) } },
-      orderBy: { sequence: 'asc' }, select: { sequence: true, state: true },
-    });
-    let coachConfig = { bigBlind: 0, dealerSeat: 0 };
-    const frames: ReplayFrame[] = snapshots.map((snapshot, index) => {
-      const recovery = hydrateSignedPrivateHandSnapshot(snapshot.state as unknown as SignedPrivateHandSnapshot,
-        { roomId: room.id, sequence: snapshot.sequence }, this.privateSnapshotKeyring);
-      const hand = recovery.hand;
-      if (index === 0) coachConfig = { bigBlind: hand.bigBlindAmount / recovery.chipScale, dealerSeat: hand.dealerSeat };
-      return chipsFromEngine({
-        sequence: snapshot.sequence, street: hand.street, board: hand.communityCards.map((card) => ({ ...card })), pot: hand.pot,
-        ...(coachHandNumber !== undefined ? { currentBet: hand.currentBet, minimumIncrement: hand.minimumRaiseIncrement, raiseLockedSeats: hand.raiseLockedSeats } : {}),
-        seats: hand.seats.map((seat) => ({ playerId: seat.playerId, seatNumber: seat.seatNumber, stack: seat.stack,
-          currentBet: seat.currentBet, totalCommitted: seat.totalCommitted, isFolded: seat.isFolded === true })),
-      }, recovery.chipScale);
-    });
+    const { frames, coachConfig, events } = await this.loadHandGeometry(this.db, room.id, handKey, coachHandNumber !== undefined);
     const ownPlayerIds = new Set(room.players.map((player) => player.id));
     const safe = { key: handKey, ...projectHandHistory(settlement.result, ownPlayerIds, events) };
-    if (coachHandNumber !== undefined && coachConfig.bigBlind > 0) {
-      await this.db.coachPublicHand.createMany({ skipDuplicates: true,
-        data: [{ roomId: room.id, handKey, data: JSON.parse(JSON.stringify(publicCoachCache(frames, coachConfig, events))) as Prisma.InputJsonValue }] });
-    }
     return { ...safe, settledAt: settlement.createdAt.toISOString(),
       replay: projectHandReplay(settlement.result, ownPlayerIds, events, frames),
       ...(coachHandNumber !== undefined && coachConfig.bigBlind > 0 ? {
         coach: buildAuthorizedCoachHand(safe, frames, coachConfig, room.players[0].id, coachHandNumber),
       } : {}) };
+  }
+
+  private async loadHandGeometry(db: Prisma.TransactionClient, roomId: string, handKey: string, coach: boolean) {
+    const finalSequence = Number(handKey.slice(5)) + 1;
+    const start = await db.gameEvent.findFirst({
+      where: { roomId, sequence: { lte: finalSequence }, type: { in: ['GAME_STARTED', 'HAND_STARTED', 'FINAL_HAND_STARTED'] } },
+      orderBy: { sequence: 'desc' }, select: { sequence: true },
+    });
+    const next = await db.gameEvent.findFirst({
+      where: { roomId, sequence: { gt: finalSequence }, type: { in: ['HAND_STARTED', 'FINAL_HAND_STARTED'] } },
+      orderBy: { sequence: 'asc' }, select: { sequence: true },
+    });
+    const events = await db.gameEvent.findMany({
+      where: { roomId, sequence: { gte: start?.sequence ?? finalSequence, ...(next ? { lt: next.sequence } : {}) }, type: { in: ['GAME_STARTED', 'HAND_STARTED', 'FINAL_HAND_STARTED', 'PLAYER_ACTION', 'ALL_IN_RUNOUT_ADVANCED', 'UNCONTESTED_RUNOUT_ADVANCED', 'SHOWDOWN_CARD_REVEALED'] } },
+      orderBy: { sequence: 'asc' }, select: { sequence: true, type: true, payload: true, createdAt: true },
+    });
+    const snapshots = await db.gameSnapshot.findMany({
+      where: { roomId, sequence: { gte: start?.sequence ?? finalSequence, ...(next ? { lt: next.sequence } : {}) } },
+      orderBy: { sequence: 'asc' }, select: { sequence: true, state: true },
+    });
+    let coachConfig = { bigBlind: 0, dealerSeat: 0 };
+    const frames: ReplayFrame[] = snapshots.map((snapshot, index) => {
+      const recovery = hydrateSignedPrivateHandSnapshot(snapshot.state as unknown as SignedPrivateHandSnapshot,
+        { roomId, sequence: snapshot.sequence }, this.privateSnapshotKeyring);
+      const hand = recovery.hand;
+      if (index === 0) coachConfig = { bigBlind: hand.bigBlindAmount / recovery.chipScale, dealerSeat: hand.dealerSeat };
+      return chipsFromEngine({
+        sequence: snapshot.sequence, street: hand.street, board: hand.communityCards.map((card) => ({ ...card })), pot: hand.pot,
+        ...(coach ? { currentBet: hand.currentBet, minimumIncrement: hand.minimumRaiseIncrement, raiseLockedSeats: hand.raiseLockedSeats } : {}),
+        seats: hand.seats.map((seat) => ({ playerId: seat.playerId, seatNumber: seat.seatNumber, stack: seat.stack,
+          currentBet: seat.currentBet, totalCommitted: seat.totalCommitted, isFolded: seat.isFolded === true })),
+      }, recovery.chipScale);
+    });
+    return { frames, coachConfig, events };
   }
 
   /** Hides a game only from this account's archive; it never deletes shared data. */

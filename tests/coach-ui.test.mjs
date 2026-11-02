@@ -5,6 +5,7 @@ import { URL } from 'node:url';
 import { CoachButton } from '../apps/web/app/coach/coach-button.tsx';
 import { CoachScreen } from '../apps/web/app/coach/coach-screen.tsx';
 import { filterCoachHands } from '../apps/web/app/coach/coach-view.ts';
+import { coachProgressText } from '../apps/web/app/coach/coach-api.ts';
 import { hand, decision, evaluation } from './fixtures/coach.mjs';
 const requireWeb = createRequire(new URL('../apps/web/package.json', import.meta.url));
 const React = requireWeb('react');
@@ -25,6 +26,13 @@ test('coach UI: loading renders accessibly without starting inference during ser
   assert.match(markup, /role="status"/);
   assert.match(markup, /טוענים את היועץ האישי/);
   assert.match(markup, /dir="rtl"/);
+});
+
+test('coach UI: queued, active, quota and retry states explain the actual wait', () => {
+  assert.match(coachProgressText({ status: 'PENDING', queueState: 'WAITING' }), /בתור לעיבוד/);
+  assert.match(coachProgressText({ status: 'PROCESSING', queueState: 'RUNNING' }), /מנתחים כעת/);
+  assert.match(coachProgressText({ status: 'PENDING', queueState: 'QUOTA_WAIT' }), /מכסה החינמית/);
+  assert.match(coachProgressText({ status: 'PENDING', queueState: 'RETRY_WAIT' }), /לניסיון נוסף/);
 });
 test('coach UI: hand filters and severity ordering preserve all-hand coverage and never mutate stored data', () => {
   const hs = [hand({ number: 1, key: 'a', position: 'BB', decisions: [decision('a:1', { street: 'river' })], analysis: { evaluations: [evaluation('a:1', { rating: 'good', confidence: 'high' })] } }),

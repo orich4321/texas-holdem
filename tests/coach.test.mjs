@@ -3,11 +3,11 @@ import { test } from 'node:test';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { buildAuthorizedCoachHand, decisionPayload, positionFor } from '../apps/server/src/coach/authorized-data.ts';
-import { publicCoachCache } from '../apps/server/src/coach/public-cache.ts';
+import { SharedCoachCache, packPublicCoachCache, publicCoachCache, unpackPublicCoachCache } from '../apps/server/src/coach/public-cache.ts';
 import { calculateStatistics } from '../apps/server/src/coach/statistics.ts';
 import { buildFinalReport, calculateScores, validateBatch, validateNarrative } from '../apps/server/src/coach/analysis.ts';
 import { coachConfiguration, createGeminiProvider } from '../apps/server/src/coach/gemini.ts';
-import { retryDelay } from '../apps/server/src/coach/service.ts';
+import { CoachService, retryDelay } from '../apps/server/src/coach/service.ts';
 import { createApp } from '../apps/server/src/http-app.ts';
 import { hand, action, decision, evaluation, narrative } from './fixtures/coach.mjs';
 
@@ -78,6 +78,49 @@ test('coach: shared public cache strips every hole card, deck, avatar and unreco
   const frame = { sequence: 1, street: 'preflop', board: [], pot: 3, remainingDeck: ['SECRET'], seats: [{ playerId: 'hero', seatNumber: 1, stack: 10, currentBet: 2, totalCommitted: 2, isFolded: false, holeCards: ['PRIVATE'], avatarDataUrl: 'PICTURE' }] };
   const cache = JSON.stringify(publicCoachCache([frame], { bigBlind: 2, dealerSeat: 1 }, [{ sequence: 1, type: 'PLAYER_ACTION', payload: { actorPlayerId: 'hero', action: { type: 'call', hidden: 'OTHER' }, holeCards: ['SECRET2'], deck: ['DECK'] }, createdAt: new Date() }]));
   for (const secret of ['SECRET', 'PRIVATE', 'PICTURE', 'OTHER', 'DECK', 'holeCards', 'remainingDeck']) assert.equal(cache.includes(secret), false);
+});
+test('coach: shared public memory cache coalesces requests, isolates mutations, bounds memory and retries failed loads', async () => {
+  const cache = new SharedCoachCache(4096, 1);
+  let reads = 0;
+  const load = async () => { reads++; return publicCoachCache([], { bigBlind: 2, dealerSeat: 1 }, [], 'source-v1'); };
+  const [a, b] = await Promise.all([cache.get('room:hand:v1', load), cache.get('room:hand:v1', load)]);
+  assert.equal(reads, 1);
+  a.config.bigBlind = 500;
+  assert.equal(b.config.bigBlind, 2);
+  assert.equal((await cache.get('room:hand:v1', load)).config.bigBlind, 2);
+  await cache.get('room:hand:v2', load);
+  await cache.get('room:hand:v1', load);
+  assert.equal(reads, 3); // Source version changes / evicted entry reload.
+  await assert.rejects(cache.get('bad', async () => { throw new Error('interrupted'); }));
+  await cache.get('bad', load);
+  assert.equal(reads, 4);
+  const tiny = new SharedCoachCache(1, 1);
+  await tiny.get('large', load); await tiny.get('large', load);
+  assert.equal(reads, 6); // An oversized value is not retained.
+});
+
+test('coach: packed shared data round-trips and source/version/corruption mismatches rebuild safely', () => {
+  const source = publicCoachCache([], { bigBlind: 2, dealerSeat: 1 }, [], 'v1');
+  const packed = packPublicCoachCache(source);
+  assert.deepEqual(unpackPublicCoachCache(packed, 'v1'), source);
+  assert.equal(unpackPublicCoachCache(packed, 'v2'), null);
+  assert.equal(unpackPublicCoachCache({ ...packed, version: 1 }, 'v1'), null);
+  assert.equal(unpackPublicCoachCache({ ...packed, payload: 'not-gzip' }, 'v1'), null);
+  assert.equal(unpackPublicCoachCache(source, 'v1'), null);
+});
+
+test('coach: one background window starts concurrent work and waits for every worker before returning', async () => {
+  let started = 0, release;
+  const barrier = new Promise((resolve) => { release = resolve; });
+  const service = new CoachService({}, {}, undefined, { enabled: false, model: 'unused' });
+  service.runOne = async () => {
+    if (++started <= 3) { await barrier; return { worked: true }; }
+    return { worked: false };
+  };
+  const running = service.runWindow(66_000);
+  assert.equal(started, 3);
+  release(); await running;
+  assert.equal(started, 6);
 });
 test('coach: model allowlist drops future accidentally added private fields at every level', () => {
   const secret = 'DO_NOT_SEND_TO_MODEL';

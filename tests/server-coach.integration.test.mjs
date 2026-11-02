@@ -7,6 +7,7 @@ import { CoachRepository } from '../apps/server/src/coach/repository.ts';
 import { CoachService } from '../apps/server/src/coach/service.ts';
 import { CoachProviderError, createGeminiProvider } from '../apps/server/src/coach/gemini.ts';
 import { decisionPayload } from '../apps/server/src/coach/authorized-data.ts';
+import { unpackPublicCoachCache } from '../apps/server/src/coach/public-cache.ts';
 
 const enabled = Boolean(globalThis.process.env.TEST_DATABASE_URL);
 const { prisma } = enabled ? await import('../apps/server/src/persistence/prisma.ts') : {};
@@ -23,15 +24,15 @@ if (enabled) {
   after(async () => { await prisma.$disconnect(); });
 }
 
-async function fixture() {
+async function fixture(count = 3) {
   const accounts = new AccountRepository(prisma);
   const profiles = [];
-  for (let i = 0; i < 3; i++) profiles.push((await accounts.createSession(randomUUID(), `coach-${randomUUID()}@example.com`)).profile);
+  for (let i = 0; i < count; i++) profiles.push((await accounts.createSession(randomUUID(), `coach-${randomUUID()}@example.com`)).profile);
   const rooms = new RoomRepository(prisma, undefined, undefined, undefined, keys);
   const room = await rooms.createRoom({ status: 'WAITING', host: { id: randomUUID(), accountId: profiles[0].id, displayName: 'Hero', initialStack: 500 },
     players: profiles.slice(1).map((p, i) => ({ id: randomUUID(), accountId: p.id, displayName: `Opponent ${i}`, initialStack: 500 })) });
   await rooms.startGameForHostAtomically({ joinId: room.joinId, hostPlayerId: room.hostPlayerId });
-  for (let i = 0; i < 2; i++) {
+  for (let i = 0; i < count - 1; i++) {
     const { recovery: { hand } } = await rooms.recoverLatestHandForPlayer(room.id, room.hostPlayerId);
     const actor = hand.seats.find((s) => s.seatNumber === hand.currentActorSeat);
     await rooms.persistPlayerActionAtomically({ roomId: room.id, playerId: actor.playerId, action: { type: 'fold' } });
@@ -39,7 +40,8 @@ async function fixture() {
   await rooms.revealShowdownCardAtomically({ roomId: room.id, playerId: room.players[1].id, cardIndex: 0 });
   await rooms.closeRoomForHost(room.joinId, room.hostPlayerId);
   const hands = await rooms.listHandsForAccount(profiles[0].id, room.joinId);
-  return { rooms, room, profiles, key: hands.hands[0].key, repo: new CoachRepository(prisma) };
+  const players = await prisma.player.findMany({ where: { roomId: room.id }, select: { id: true, accountId: true } });
+  return { rooms, room, profiles, playerIds: new Map(players.map((p) => [p.accountId, p.id])), key: hands.hands[0].key, repo: new CoachRepository(prisma) };
 }
 const provider = (counter = { analyses: 0, summaries: 0 }) => ({
   analyze: async (hands) => { counter.analyses++; return { analyses: hands.map((h) => ({ handKey: h.key, summary: 'החלטות נבחנו בלי לדעת תוצאה.', evaluations: h.decisions.map((d) => evaluation(d.id)) })), inputTokens: 100, outputTokens: 100 }; },
@@ -47,7 +49,7 @@ const provider = (counter = { analyses: 0, summaries: 0 }) => ({
 });
 async function ungate() {
   await prisma.coachQuota.updateMany({ data: { nextRequestAt: new Date(0) } });
-  await prisma.coachReport.updateMany({ where: { status: { in: ['PENDING', 'RATE_LIMITED'] } }, data: { nextAttemptAt: new Date(0) } });
+  await prisma.coachReport.updateMany({ where: { status: { in: ['PENDING', 'RATE_LIMITED'] }, nextAttemptAt: { gt: new Date() } }, data: { nextAttemptAt: new Date(0) } });
 }
 
 test('coach DB: real signed history, partial reveals and shared cache do not disclose private cards', { skip: !enabled }, async () => {
@@ -88,6 +90,124 @@ test('coach DB: ten simultaneous requests create one job, atomic leases exclude 
   assert.equal((await repo.state(profiles[0].id, room.joinId)).errorCode, 'ENGINE_VERSION_REQUIRES_REVIEW');
   assert.deepEqual(counter, { analyses: 0, summaries: 0 });
   assert.equal(await repo.nextWake(), null);
+});
+
+test('coach DB: a 7-hand report starts while a 61-hand report is running; a closed gate preserves fairness and reads no hands', { skip: !enabled }, async () => {
+  const long = await fixture(), short = await fixture();
+  const jobs = await Promise.all([long, short].map((f) => f.repo.request(f.profiles[0].id, f.room.joinId, config.model)));
+  for (const [i, total] of [61, 7].entries()) await prisma.coachReport.update({ where: { id: jobs[i].id }, data: {
+    manifest: Array.from({ length: total }, (_, n) => ({ key: `hand-${n}`, number: n + 1 })), totalHands: total,
+    updatedAt: new Date(Date.now() - 10_000 + i),
+  } });
+  const loads = [];
+  const fakeRooms = { getHandForAccount: async (account, joinId, key, number) => {
+    const f = joinId === long.room.joinId ? long : short;
+    assert.equal(account, f.profiles[0].id);
+    loads.push(joinId);
+    return { coach: hand({ key, number, ownPlayerId: f.room.hostPlayerId,
+      decisions: [decision(`${key}:1`, { playerId: f.room.hostPlayerId })] }) };
+  } };
+  let started, release;
+  const firstStarted = new Promise((resolve) => { started = resolve; });
+  const held = new Promise((resolve) => { release = resolve; });
+  const normal = provider(); let first = true;
+  const model = { ...normal, analyze: async (hands) => {
+    if (first) { first = false; started(); await held; }
+    return normal.analyze(hands);
+  } };
+  const service = () => new CoachService(new CoachRepository(prisma), fakeRooms, model, config);
+  const running = service().runOne();
+  await firstStarted;
+  try {
+    const waitingBefore = await prisma.coachReport.findUnique({ where: { id: jobs[1].id } });
+    const readsBefore = loads.length;
+    const blocked = await service().runOne();
+    assert.equal(blocked.worked, false); assert.ok(blocked.retryAt instanceof Date);
+    assert.equal(loads.length, readsBefore);
+    const waitingAfter = await prisma.coachReport.findUnique({ where: { id: jobs[1].id } });
+    assert.equal(waitingAfter.updatedAt.getTime(), waitingBefore.updatedAt.getTime());
+    assert.equal(waitingAfter.status, 'PENDING');
+    assert.equal((await short.repo.state(short.profiles[0].id, short.room.joinId)).queueState, 'WAITING');
+    await ungate();
+    await service().runOne();
+    assert.equal((await short.repo.state(short.profiles[0].id, short.room.joinId)).completedHands, 4);
+    assert.equal((await long.repo.state(long.profiles[0].id, long.room.joinId)).status, 'PROCESSING');
+  } finally { release(); await running; }
+  for (let i = 0; i < 10; i++) {
+    await ungate(); await service().runOne();
+    if ((await short.repo.state(short.profiles[0].id, short.room.joinId)).status === 'COMPLETED') break;
+  }
+  assert.equal((await short.repo.state(short.profiles[0].id, short.room.joinId)).status, 'COMPLETED');
+  assert.ok((await long.repo.state(long.profiles[0].id, long.room.joinId)).completedHands < 61);
+  assert.equal((await short.repo.readReport(short.profiles[0].id, short.room.joinId)).hands.length, 7);
+});
+
+test('coach DB: six reports from one table have distinct identities, three global slots and atomic shared dispatch quota', { skip: !enabled }, async () => {
+  const { repo, profiles, room, playerIds } = await fixture(6);
+  const jobs = await Promise.all(profiles.map((p) => repo.request(p.id, room.joinId, config.model)));
+  assert.equal(new Set(jobs.map((j) => j.id)).size, 6);
+  const now = new Date();
+  const wave = await Promise.all(Array.from({ length: 8 }, () => new CoachRepository(prisma).claimForDispatch(now)));
+  assert.equal(wave.filter((r) => r.job).length, 1);
+  const running = [wave.find((r) => r.job).job];
+  for (let i = 1; i < 3; i++) running.push((await repo.claimForDispatch(new Date(now.getTime() + i * 12_000))).job);
+  assert.equal(new Set(running.map((j) => j.id)).size, 3);
+  const capped = await repo.claimForDispatch(new Date(now.getTime() + 36_000));
+  assert.equal(capped.job, null); assert.ok(capped.retryAt instanceof Date);
+  assert.equal((await prisma.coachQuota.findUnique({ where: { id: 'gemini-free' } })).dailyCalls, 3);
+  for (const j of running) {
+    const owner = profiles.find((p) => p.id === j.accountId);
+    assert.equal(j.playerId, playerIds.get(owner.id));
+  }
+  // Finish/resume all six; no completed report can satisfy another account.
+  for (const j of running) await repo.defer(j.id, j.token, 'PENDING', 'TEST_RELEASE', new Date(0), false);
+  const normal = provider();
+  for (let i = 0; i < 16; i++) { await ungate(); await new CoachService(repo, { getHandForAccount: async (account, _join, key, number) => {
+    const playerId = playerIds.get(account);
+    return { coach: hand({ key, number, ownPlayerId: playerId, decisions: [decision(`${key}:1`, { playerId })] }) };
+  } }, normal, config).runOne(); }
+  for (const p of profiles) {
+    const report = await repo.readReport(p.id, room.joinId);
+    assert.equal(report.identity.playerId, playerIds.get(p.id));
+  }
+  assert.equal(await repo.readReport(randomUUID(), room.joinId), null);
+});
+
+test('coach DB: concurrent public preparation across replicas reads snapshots once, reuses fewer bytes, and still checks archive access', { skip: !enabled }, async (t) => {
+  const { room, profiles, key, playerIds } = await fixture(6);
+  let snapshotReads = 0, snapshotBytes = 0, cacheBytes = 0;
+  // Prisma transaction clients use the same query extension, covering all replicas.
+  const db = prisma.$extends({ query: {
+    gameSnapshot: { async findMany({ args, query }) { snapshotReads++; const rows = await query(args); snapshotBytes += Buffer.byteLength(JSON.stringify(rows)); return rows; } },
+    coachPublicHand: { async findUnique({ args, query }) { const row = await query(args); cacheBytes += Buffer.byteLength(JSON.stringify(row)); return row; } },
+  } });
+  const replicas = profiles.map(() => new RoomRepository(db, undefined, undefined, undefined, keys));
+  const results = await Promise.all(profiles.map((p, i) => replicas[i].getHandForAccount(p.id, room.joinId, key, 1)));
+  assert.equal(snapshotReads, 1);
+  const firstReadBytes = snapshotBytes + cacheBytes;
+  const oldTransfers = snapshotBytes * profiles.length;
+  assert.ok(firstReadBytes < oldTransfers, `shared=${firstReadBytes}, repeated=${oldTransfers}`);
+  const saved = await prisma.coachPublicHand.findUniqueOrThrow({ where: { roomId_handKey: { roomId: room.id, handKey: key } } });
+  const decoded = unpackPublicCoachCache(saved.data, saved.data.sourceVersion);
+  const shared = JSON.stringify(decoded);
+  assert.ok(decoded.actions.length > 0);
+  const oldCache = { config: decoded.config, frames: decoded.frames, events: decoded.events };
+  const previousCacheTransfers = snapshotBytes + Buffer.byteLength(JSON.stringify(oldCache)) * (profiles.length - 1);
+  assert.ok(firstReadBytes < previousCacheTransfers, `shared=${firstReadBytes}, previous=${previousCacheTransfers}`);
+  for (const field of ['holeCards', 'ownCards', 'remainingDeck', 'avatarDataUrl']) assert.equal(shared.includes(field), false);
+  for (const [i, result] of results.entries()) {
+    assert.equal(result.coach.ownPlayerId, playerIds.get(profiles[i].id));
+    assert.ok(result.coach.ownCards.every(Boolean));
+    const payload = JSON.stringify(decisionPayload(result.coach));
+    assert.equal(payload.includes('holeCards'), false);
+  }
+  const bytesBeforeWarmRead = cacheBytes;
+  await replicas[0].getHandForAccount(profiles[0].id, room.joinId, key, 1);
+  assert.equal(cacheBytes, bytesBeforeWarmRead);
+  await replicas[0].hideGameForAccount(profiles[0].id, room.joinId);
+  assert.equal(await replicas[0].getHandForAccount(profiles[0].id, room.joinId, key, 1), null);
+  assert.equal(await replicas[1].getHandForAccount(randomUUID(), room.joinId, key, 1), null);
+  t.diagnostic(`snapshot bytes=${snapshotBytes}; shared preparation reads=${firstReadBytes}; previous public cache=${previousCacheTransfers}; six repeated archives=${oldTransfers}`);
 });
 test('coach DB: completed report survives restart/version change; read and create remain account scoped', { skip: !enabled }, async () => {
   const { room, profiles, repo, rooms } = await fixture();

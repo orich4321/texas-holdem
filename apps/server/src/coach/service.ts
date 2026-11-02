@@ -1,6 +1,6 @@
 import { buildFinalReport, validateBatch, validateNarrative } from './analysis.js';
 import { CoachProviderError, coachConfiguration, type CoachProvider } from './gemini.js';
-import { CoachRepository } from './repository.js';
+import { COACH_CONCURRENCY, CoachRepository } from './repository.js';
 import type { RoomRepository } from '../persistence/room-repository.js';
 import { ENGINE_VERSION, type CoachHand, type StoredCoachHand } from './types.js';
 
@@ -23,8 +23,9 @@ export class CoachService {
    */
   async runOne(): Promise<{ worked: boolean; retryAt?: Date }> {
     if (!this.config.enabled || !this.provider) return { worked: false };
-    const job = await this.repository.claim();
-    if (!job) return { worked: false };
+    const dispatch = await this.repository.claimForDispatch();
+    const job = dispatch.job;
+    if (!job) return { worked: false, retryAt: dispatch.retryAt };
     try {
       if (job.engineVersion !== ENGINE_VERSION) {
         await this.repository.defer(job.id, job.token, 'FAILED', 'ENGINE_VERSION_REQUIRES_REVIEW', new Date(Date.now() + 24 * 60 * 60_000));
@@ -38,9 +39,8 @@ export class CoachService {
       const done = new Set(checkpoints.filter((c) => c.complete).map((c) => c.handKey));
       const pending = job.manifest.filter((h) => !done.has(h.key));
       if (pending.length === 0) {
-        const wait = await this.repository.reserveCall();
-        if (wait) { await this.waitForGate(job.id, job.token, wait); return { worked: true, retryAt: wait }; }
         const stored = await this.repository.storedHands(job.id);
+        if (!await this.repository.renew(job.id, job.token)) return { worked: true };
         const result = await this.provider.summarize(stored, job.playerId, job.model);
         const narrative = validateNarrative({ ...result.narrative,
           opponents: result.narrative.opponents.map(({ playerId, explanation }) => ({ playerId, explanation })),
@@ -72,8 +72,7 @@ export class CoachService {
         if (remaining === 0) break;
       }
       if (parts.length) {
-        const wait = await this.repository.reserveCall();
-        if (wait) { await this.waitForGate(job.id, job.token, wait); return { worked: true, retryAt: wait }; }
+        if (!await this.repository.renew(job.id, job.token)) return { worked: true };
         const result = await this.provider.analyze(parts, job.model);
         const validated = validateBatch({ hands: result.analyses }, parts);
         for (const analysis of validated) {
@@ -95,18 +94,23 @@ export class CoachService {
 
   async runWindow(milliseconds = 180_000) {
     const deadline = Date.now() + milliseconds;
-    while (Date.now() < deadline - 65_000) {
-      const result = await this.runOne();
-      if (!result.worked) break;
-      if (result.retryAt) {
-        const delay = result.retryAt.getTime() - Date.now();
-        if (delay > 15_000 || Date.now() + delay > deadline - 65_000) break;
-        if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+    const workers = await Promise.allSettled(Array.from({ length: COACH_CONCURRENCY }, async () => {
+      while (Date.now() < deadline - 65_000) {
+        const result = await this.runOne();
+        if (!result.worked && !result.retryAt) break;
+        if (result.retryAt) {
+          const delay = result.retryAt.getTime() - Date.now();
+          // A failed job's cooldown must not stop other ready reports.
+          const next = result.worked ? await this.repository.nextWake() : result.retryAt;
+          if (!next) break;
+          const wait = next.getTime() - Date.now();
+          if (wait > 15_000 || Date.now() + Math.max(0, wait) > deadline - 65_000) break;
+          if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+          else if (delay <= 0 && !result.worked) break;
+        }
       }
-    }
-  }
-  private async waitForGate(id: string, token: string, until: Date) {
-    const spacing = until.getTime() - Date.now() <= 15_000;
-    await this.repository.defer(id, token, spacing ? 'PENDING' : 'RATE_LIMITED', spacing ? 'REQUEST_SPACING' : 'FREE_TIER_WAIT', until, false);
+    }));
+    const failed = workers.find((result) => result.status === 'rejected');
+    if (failed?.status === 'rejected') throw failed.reason;
   }
 }

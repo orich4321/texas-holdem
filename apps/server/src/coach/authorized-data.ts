@@ -20,38 +20,55 @@ type SafeHistory = {
   uncalledReturns: { seatNumber: number; amount: number }[];
 };
 
+/** Reusable, card-free facts for every actor. Derived once from verified public
+ * frames, before any account's private cards are attached. */
+export function prepareCoachActions(source: readonly Action[], frames: readonly ReplayFrame[]): CoachHand['actions'] {
+  const ordered = [...frames].sort((a, b) => a.sequence - b.sequence);
+  const actions: CoachHand['actions'] = [];
+  for (const eventAction of source) {
+    const before = ordered.filter((f) => f.sequence < eventAction.sequence).at(-1);
+    if (!before || !['preflop', 'flop', 'turn', 'river'].includes(before.street)) continue;
+    const actor = before.seats.find((s) => s.playerId === eventAction.playerId);
+    const afterActor = ordered.find((f) => f.sequence === eventAction.sequence)?.seats.find((s) => s.playerId === eventAction.playerId);
+    if (!actor || !afterActor) continue;
+    const currentBet = before.currentBet ?? Math.max(0, ...before.seats.map((s) => s.currentBet));
+    const paid = Math.round((actor.stack - afterActor.stack) * 10) / 10;
+    const target = Math.round((actor.currentBet + paid) * 10) / 10;
+    const toCall = Math.round(Math.min(actor.stack, Math.max(0, currentBet - actor.currentBet)) * 10) / 10;
+    actions.push({ sequence: eventAction.sequence, playerId: eventAction.playerId,
+      type: paid > 0 && paid === actor.stack ? 'all-in' : eventAction.type,
+      amount: Math.max(0, paid), raiseTo: paid > 0 && target > currentBet ? target : 0,
+      street: before.street as Street, pot: before.pot, toCall,
+      canRaise: actor.stack > toCall && !before.raiseLockedSeats?.includes(actor.seatNumber)
+        && before.seats.some((s) => s.playerId !== actor.playerId && !s.isFolded && s.stack > 0),
+      activePlayers: before.seats.filter((s) => !s.isFolded).length });
+  }
+  return actions;
+}
+
 /** This function accepts ONLY the existing account-safe projector, plus public
  * monetary frames from HMAC-verified snapshots. Never a deck/settlement JSON.
  * The coach's decision payload deliberately excludes ALL opponent hole cards,
  * including cards eventually shown. No later board/outcome can enter a decision.
  */
-export function buildAuthorizedCoachHand(history: SafeHistory, frames: readonly ReplayFrame[], config: { bigBlind: number; dealerSeat: number }, ownPlayerId: string, number: number): CoachHand {
+export function buildAuthorizedCoachHand(history: SafeHistory, frames: readonly ReplayFrame[], config: { bigBlind: number; dealerSeat: number }, ownPlayerId: string, number: number, preparedActions?: Readonly<CoachHand['actions']>): CoachHand {
   const ordered = [...frames].sort((a, b) => a.sequence - b.sequence);
   const first = ordered[0];
   const own = history.players.find((s) => s.playerId === ownPlayerId);
   const ownCards = own?.holeCards ?? [null, null];
   const position = own ? positionFor(history.players, config.dealerSeat, own.seatNumber) : 'N/A';
   const decisions: Decision[] = [];
-  const actions: CoachHand['actions'] = [];
-  for (const eventAction of history.actions) {
-    const before = ordered.filter((f) => f.sequence < eventAction.sequence).at(-1);
-    if (!before || !['preflop', 'flop', 'turn', 'river'].includes(before.street)) continue;
-    const actor = before.seats.find((s) => s.playerId === eventAction.playerId);
-    if (!actor) continue;
+  const actions = preparedActions ? structuredClone([...preparedActions]) : prepareCoachActions(history.actions, ordered);
+  for (const [index, action] of actions.entries()) {
+    if (action.playerId !== ownPlayerId) continue;
+    const before = ordered.filter((f) => f.sequence < action.sequence).at(-1)!;
+    const actor = before.seats.find((s) => s.playerId === ownPlayerId)!;
     const currentBet = before.currentBet ?? Math.max(0, ...before.seats.map((s) => s.currentBet));
-    const afterActor = ordered.find((f) => f.sequence === eventAction.sequence)?.seats.find((s) => s.playerId === eventAction.playerId);
-    if (!afterActor) continue; // no reliable incremental payment without both verified states
-    const paid = Math.round((actor.stack - afterActor.stack) * 10) / 10;
-    const target = Math.round((actor.currentBet + paid) * 10) / 10;
-    const action: Action = { ...eventAction, amount: Math.max(0, paid),
-      type: paid > 0 && paid === actor.stack ? 'all-in' : eventAction.type,
-      raiseTo: paid > 0 && target > currentBet ? target : 0 };
-    const toCall = Math.round(Math.min(actor.stack, Math.max(0, currentBet - actor.currentBet)) * 10) / 10;
+    const toCall = action.toCall!;
     const street = before.street as Street;
     const canRaise = actor.stack > toCall && !before.raiseLockedSeats?.includes(actor.seatNumber) && before.seats.some((s) => s.playerId !== actor.playerId && !s.isFolded && s.stack > 0);
     const activePlayers = before.seats.filter((s) => !s.isFolded).length;
-    actions.push({ ...action, street, pot: before.pot, toCall, canRaise, activePlayers });
-    if (action.playerId === ownPlayerId) decisions.push({
+    decisions.push({
       id: `${history.key}:${action.sequence}`, handKey: history.key, playerId: ownPlayerId,
       street, position, board: before.board.map((c) => ({ ...c })), ownCards,
       pot: before.pot, stack: actor.stack, stackBB: actor.stack / config.bigBlind,
@@ -59,7 +76,7 @@ export function buildAuthorizedCoachHand(history: SafeHistory, frames: readonly 
       seats: before.seats.map((s) => ({ playerId: s.playerId, seatNumber: s.seatNumber, stack: s.stack, currentBet: s.currentBet, totalCommitted: s.totalCommitted, isFolded: s.isFolded })),
       minRaiseTo: canRaise ? Math.round((currentBet + (before.minimumIncrement ?? config.bigBlind)) * 10) / 10 : null,
       maxRaiseTo: canRaise ? Math.round((actor.currentBet + actor.stack) * 10) / 10 : null,
-      priorActions: actions.slice(0, -1).map(({ sequence, playerId, type, amount, raiseTo, street }) => ({ sequence, playerId, type, amount, raiseTo, street })),
+      priorActions: actions.slice(0, index).map(({ sequence, playerId, type, amount, raiseTo, street }) => ({ sequence, playerId, type, amount, raiseTo, street })),
       action,
     });
   }

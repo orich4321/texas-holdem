@@ -5,7 +5,15 @@ export const coachLabels: Record<string, string> = {
   COMPLETED: 'צפה בדוח AI', FAILED: 'נסה שוב', RATE_LIMITED: 'ממתין למכסת AI',
 };
 export type CoachState = { status: string; available: boolean; totalHands?: number; completedHands?: number;
+  queueState?: 'RUNNING' | 'WAITING' | 'QUOTA_WAIT' | 'RETRY_WAIT';
   overallScore?: number | null; errorCode?: string | null; nextAttemptAt?: string; privacyNotice?: string };
+
+export function coachProgressText(state: CoachState) {
+  if (state.queueState === 'RUNNING' || state.status === 'PROCESSING') return 'מנתחים כעת את ההחלטות שלך. ההתקדמות נשמרת אוטומטית.';
+  if (state.queueState === 'RETRY_WAIT') return 'הניתוח ממתין לניסיון נוסף. הידיים שכבר נותחו נשמרו.';
+  if (state.queueState === 'QUOTA_WAIT' || state.status === 'RATE_LIMITED') return 'ממתינים למכסה החינמית. הניתוח ימשיך אוטומטית כשיתאפשר.';
+  return 'הדוח בתור לעיבוד ומתקדם לצד דוחות נוספים. אפשר לסגור את המסך ולחזור מההיסטוריה.';
+}
 export type Card = { rank: string; suit: string } | null;
 export type Evaluation = { decisionId: string; rating: string; confidence: string; dimensions: string[]; explanation: string; alternative: string; assumptions: string; nextTime: string };
 export type Insight = { title: string; explanation: string; decisionIds: string[]; exercise: string };
