@@ -37,7 +37,7 @@ export function createGeminiProvider(apiKey: string): CoachProvider {
       const result = await client.models.generateContent({
         model, contents: serialized,
         config: { systemInstruction: instructions, responseMimeType: 'application/json', responseJsonSchema: jsonSchema,
-          maxOutputTokens: 16384, thinkingConfig: { thinkingLevel: ThinkingLevel.LOW }, temperature: 0.2 },
+          maxOutputTokens: 16384, thinkingConfig: { thinkingLevel: ThinkingLevel.LOW } },
       });
       if (result.candidates?.[0]?.finishReason !== 'STOP' || !result.text || result.text.length > 150_000) throw new CoachProviderError('INVALID_OUTPUT');
       return { value: JSON.parse(result.text) as unknown, inputTokens: result.usageMetadata?.promptTokenCount ?? 0,
@@ -55,7 +55,14 @@ export function createGeminiProvider(apiKey: string): CoachProvider {
   }
   return {
     async analyze(hands, model) {
-      const result = await generate(batchSchema, { task: 'נתח את כל ההחלטות בידיים הבאות. ליד ללא החלטות החזר הסבר קצר ורשימה ריקה.', hands: hands.map(decisionPayload) }, model);
+      // Gemini compiles structured-output schemas before generation. Advertising
+      // 6 * 200 evaluations for an eight-decision job can exceed its schema
+      // complexity limit. Bound generation to this batch, not archive capacity;
+      // validateBatch still independently enforces exact coverage and references.
+      const responseSchema = batchSchema.extend({ hands: z.array(batchSchema.shape.hands.element.extend({
+        evaluations: batchSchema.shape.hands.element.shape.evaluations.max(Math.max(0, ...hands.map((hand) => hand.decisions.length))),
+      })).max(hands.length) });
+      const result = await generate(responseSchema, { task: 'נתח את כל ההחלטות בידיים הבאות. ליד ללא החלטות החזר הסבר קצר ורשימה ריקה.', hands: hands.map(decisionPayload) }, model);
       try { return { ...result, analyses: validateBatch(result.value, hands) }; }
       catch { throw new CoachProviderError('INVALID_OUTPUT'); }
     },

@@ -140,6 +140,31 @@ test('coach: Gemini payment-required errors stop as configuration failures witho
     (error) => error.kind === 'CONFIGURATION');
   assert.equal(calls, 1);
 });
+
+test('coach: Gemini response schema follows the current batch size while exact decision validation remains enforced', async (t) => {
+  const hands = [hand({ decisions: [decision()] }), hand({ key: 'hand-1', decisions: [decision('hand-1:1'), decision('hand-1:2'), decision('hand-1:3')] })];
+  let captured;
+  let omitDecision = false;
+  t.mock.method(globalThis, 'fetch', async (input, init) => {
+    const request = input instanceof globalThis.Request ? input : new globalThis.Request(input, init);
+    captured = await request.json();
+    const output = { hands: hands.map((h) => ({ handKey: h.key, summary: 'בדיקה מלאכותית.',
+      evaluations: h.decisions.map((d) => evaluation(d.id)) })) };
+    if (omitDecision) output.hands[1].evaluations.pop();
+    return new globalThis.Response(JSON.stringify({ candidates: [{ finishReason: 'STOP', content: {
+      role: 'model', parts: [{ text: JSON.stringify(output) }],
+    } }] }), { headers: { 'Content-Type': 'application/json' } });
+  });
+  const provider = createGeminiProvider('synthetic-test-key');
+  const result = await provider.analyze(hands, 'gemini-3.8-flash');
+  const schema = captured.generationConfig.responseJsonSchema;
+  assert.equal(schema.properties.hands.maxItems, 2);
+  assert.equal(schema.properties.hands.items.properties.evaluations.maxItems, 3);
+  assert.equal('temperature' in captured.generationConfig, false);
+  assert.deepEqual(result.analyses.map((h) => h.evaluations.length), [1, 3]);
+  omitDecision = true;
+  await assert.rejects(provider.analyze(hands, 'gemini-3.8-flash'), (error) => error.kind === 'INVALID_OUTPUT');
+});
 test('coach HTTP: unauthenticated, foreign-game and spoofed-player requests are denied server-side', async () => {
   let calls = 0;
   const app = createApp({ roomRepository: {}, accountRepository: { findIdentityBySession: async (token) => token === 'valid' ? { id: 'self' } : null },
