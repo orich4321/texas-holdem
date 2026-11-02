@@ -6,7 +6,7 @@ import { buildAuthorizedCoachHand, decisionPayload, positionFor } from '../apps/
 import { publicCoachCache } from '../apps/server/src/coach/public-cache.ts';
 import { calculateStatistics } from '../apps/server/src/coach/statistics.ts';
 import { buildFinalReport, calculateScores, validateBatch, validateNarrative } from '../apps/server/src/coach/analysis.ts';
-import { coachConfiguration } from '../apps/server/src/coach/gemini.ts';
+import { coachConfiguration, createGeminiProvider } from '../apps/server/src/coach/gemini.ts';
 import { retryDelay } from '../apps/server/src/coach/service.ts';
 import { createApp } from '../apps/server/src/http-app.ts';
 import { hand, action, decision, evaluation, narrative } from './fixtures/coach.mjs';
@@ -127,6 +127,18 @@ test('coach: all model calls are disabled without explicit free-project confirma
   assert.equal(coachConfiguration({ ...env, GEMINI_COACH_MODEL: 'gemini-pro-paid' }).enabled, false);
   assert.equal(coachConfiguration({ ...env, GEMINI_FREE_TIER_CONFIRMED: 'false' }).enabled, false);
   assert.ok(retryDelay(2, true) > retryDelay(1, true));
+});
+
+test('coach: Gemini payment-required errors stop as configuration failures without automatic SDK retries', async (t) => {
+  let calls = 0;
+  t.mock.method(globalThis, 'fetch', async () => {
+    calls++;
+    return new globalThis.Response(JSON.stringify({ error: { code: 402, message: 'Prepayment credits depleted.', status: 'RESOURCE_EXHAUSTED' } }),
+      { status: 402, headers: { 'Content-Type': 'application/json' } });
+  });
+  await assert.rejects(createGeminiProvider('synthetic-test-key').analyze([hand({ decisions: [decision()] })], 'gemini-3.8-flash'),
+    (error) => error.kind === 'CONFIGURATION');
+  assert.equal(calls, 1);
 });
 test('coach HTTP: unauthenticated, foreign-game and spoofed-player requests are denied server-side', async () => {
   let calls = 0;

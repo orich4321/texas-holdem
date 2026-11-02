@@ -46,7 +46,9 @@ export function createGeminiProvider(apiKey: string): CoachProvider {
       if (error instanceof CoachProviderError) throw error;
       const status = error && typeof error === 'object' && 'status' in error ? Number(error.status) : 0;
       if (status === 429) throw new CoachProviderError('RATE_LIMITED');
-      if ([400, 401, 403, 404].includes(status)) throw new CoachProviderError('CONFIGURATION');
+      // Payment-required is not a transient outage: never retry to recover a
+      // depleted paid account or suggest a paid fallback for this free-only feature.
+      if ([400, 401, 402, 403, 404].includes(status)) throw new CoachProviderError('CONFIGURATION');
       if (error instanceof SyntaxError || error instanceof z.ZodError) throw new CoachProviderError('INVALID_OUTPUT');
       throw new CoachProviderError('TRANSIENT'); // Never log SDK errors: they may include prompts/key URLs.
     }
