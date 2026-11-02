@@ -20,6 +20,7 @@ import { unlockActionAudio } from '../../action-sounds';
 import { googleLoginPath, loadAccount, profilePath, type AccountState } from '../../account-api';
 import { usePageActivity } from '../../use-page-activity';
 import { RejoinPanel } from '../../rejoin-panel';
+import { JackpotBadge } from '../../jackpot-badge';
 import { inviteFriend, loadSocial, type SocialAccount } from '../../social-api';
 
 type LobbyClientProps = { joinId: string; isHostRoute?: boolean };
@@ -257,7 +258,7 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
     return (
       <main className="entry-shell join-entry-shell">
         <div className="app-aurora" aria-hidden="true" />
-        <header className="entry-topbar"><AppBrand compact /><span>הזמנה פרטית</span></header>
+        <header className="entry-topbar"><AppBrand compact /><JackpotBadge active={activity.networkActive} /><span>הזמנה פרטית</span></header>
         <section className="entry-stage">
           <div className="entry-panel join-entry-panel" aria-labelledby="join-title">
             <div className="entry-host" aria-label={`המארח: ${lobby.host.displayName}`}>
@@ -287,7 +288,7 @@ export default function LobbyClient({ joinId, isHostRoute = false }: LobbyClient
   return (
     <main className="lobby-shell">
       <div className="app-aurora" aria-hidden="true" />
-      <header className="lobby-topbar"><AppBrand compact /><span className="private-pill"><i /> שולחן פרטי</span></header>
+      <header className="lobby-topbar"><AppBrand compact /><JackpotBadge active={activity.networkActive} /><span className="private-pill"><i /> שולחן פרטי</span></header>
       <section className="lobby-card" aria-labelledby="lobby-title">
         <header className="lobby-header">
           <p className="lobby-kicker">LOBBY · {joinId.slice(0, 6).toUpperCase()}</p>

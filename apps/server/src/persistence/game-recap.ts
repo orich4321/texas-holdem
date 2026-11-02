@@ -1,10 +1,11 @@
 /** Aggregate only public settlement accounting; never expose settlement cards here. */
+import { isChipAmount } from '../chip-amounts.js';
 function record(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null;
 }
 
 function chips(value: unknown): number {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : 0;
+  return isChipAmount(value) ? value : 0;
 }
 
 export function buildGameRecap(settlements: readonly { result: unknown }[], playerIds: readonly string[]) {

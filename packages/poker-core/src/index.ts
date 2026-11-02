@@ -436,7 +436,9 @@ export function hydrateStartedHandForVerifiedServerRecovery(snapshot: unknown): 
     const seat = seatsByNumber.get(reveal.seatNumber);
     return !seat || !seat.holeCards || !Array.isArray(reveal.cardIndexes) || reveal.cardIndexes.length < 1 || reveal.cardIndexes.length > 2 || new Set(reveal.cardIndexes).size !== reveal.cardIndexes.length || reveal.cardIndexes.some((index: unknown) => index !== 0 && index !== 1);
   }));
-  if (!validBlindSeats || hand.smallBlindSeat === hand.bigBlindSeat || (!validUncontestedBoard && (hand.communityCards.length !== communityCardCount || hand.burnedCards.length !== burnedCardCount)) || committed !== hand.pot || currentBet !== hand.currentBet || hand.streetPot > hand.pot || pendingUnique.size !== hand.pendingActorSeats.length || locksUnique.size !== hand.raiseLockedSeats.length || invalidReveals || hand.pendingActorSeats.some((seatNumber) => {
+  const shortBlindTarget = hand.street === 'preflop' && hand.currentBet === hand.bigBlindAmount && currentBet < hand.bigBlindAmount
+    && seatsByNumber.get(hand.bigBlindSeat)?.stack === 0;
+  if (!validBlindSeats || hand.smallBlindSeat === hand.bigBlindSeat || (!validUncontestedBoard && (hand.communityCards.length !== communityCardCount || hand.burnedCards.length !== burnedCardCount)) || committed !== hand.pot || (currentBet !== hand.currentBet && !shortBlindTarget) || hand.streetPot > hand.pot || pendingUnique.size !== hand.pendingActorSeats.length || locksUnique.size !== hand.raiseLockedSeats.length || invalidReveals || hand.pendingActorSeats.some((seatNumber) => {
     const seat = seatsByNumber.get(seatNumber);
     return !seat || !seat.holeCards || seat.isFolded === true || seat.stack <= 0;
   }) || hand.raiseLockedSeats.some((seatNumber) => !seatsByNumber.has(seatNumber)) || (hand.pendingActorSeats.length > 0 && (!actor || !hand.pendingActorSeats.includes(hand.currentActorSeat))) || hand.seats.some((seat) => (!seat.holeCards && (seat.stack !== 0 || seat.currentBet !== 0 || seat.totalCommitted !== 0)) || (seat.holeCards && seat.holeCards.length !== 2))) throw new Error('Invalid private hand snapshot');
@@ -497,13 +499,6 @@ export function startHand(input: StartHandInput): StartedHand {
   const bigBlindEligiblePosition = (smallBlindEligiblePosition + 1) % eligibleIndexes.length;
   const smallBlindIndex = eligibleIndexes[smallBlindEligiblePosition];
   const bigBlindIndex = eligibleIndexes[bigBlindEligiblePosition];
-  for (const index of eligibleIndexes) {
-    const seat = input.seats[index];
-    const blind = index === smallBlindIndex ? input.smallBlind : index === bigBlindIndex ? input.bigBlind : 0;
-    if (seat.stack < blind) {
-      throw new Error('A player must have enough chips to post their blind');
-    }
-  }
   const deck = new Deck();
   deck.shuffle(input.randomInt);
   const firstHoleCards = new Map<number, Card>();
@@ -516,7 +511,7 @@ export function startHand(input: StartHandInput): StartedHand {
     holeCards.set(index, [firstHoleCards.get(index)!, deck.deal() as Card]);
   }
   const seats = input.seats.map((seat, index) => {
-    const blind = index === smallBlindIndex ? input.smallBlind : index === bigBlindIndex ? input.bigBlind : 0;
+    const blind = Math.min(seat.stack, index === smallBlindIndex ? input.smallBlind : index === bigBlindIndex ? input.bigBlind : 0);
     const startedSeat: StartedHandSeat = { ...seat, stack: seat.stack - blind, currentBet: blind, totalCommitted: blind };
     const dealtCards = holeCards.get(index);
     if (dealtCards) {
@@ -529,15 +524,18 @@ export function startHand(input: StartHandInput): StartedHand {
     (_, offset) => eligibleIndexes[(bigBlindEligiblePosition + 1 + offset) % eligibleIndexes.length],
   );
   const pendingPreflopSeats = preflopActionOrder.filter((index) => seats[index].stack > 0).map((index) => input.seats[index].seatNumber);
+  const fundedSeats = seats.filter((seat) => seat.holeCards && seat.stack > 0);
+  const openingBet = fundedSeats.length <= 1 ? Math.max(...seats.map((seat) => seat.currentBet)) : input.bigBlind;
+  if (fundedSeats.length <= 1 && (!fundedSeats[0] || fundedSeats[0].currentBet === openingBet)) pendingPreflopSeats.length = 0;
 
   return attachPrivateHandState({
     dealerSeat: input.seats[activeDealerIndex].seatNumber,
     smallBlindSeat: input.seats[smallBlindIndex].seatNumber,
     bigBlindSeat: input.seats[bigBlindIndex].seatNumber,
     currentActorSeat: pendingPreflopSeats[0] ?? input.seats[preflopActionOrder[0]].seatNumber,
-    currentBet: input.bigBlind,
+    currentBet: openingBet,
     minimumRaiseIncrement: input.bigBlind,
-    pot: input.smallBlind + input.bigBlind,
+    pot: seats.reduce((sum, seat) => sum + seat.currentBet, 0),
     seats,
   }, {
     street: 'preflop',
@@ -546,7 +544,7 @@ export function startHand(input: StartHandInput): StartedHand {
     burnedCards: [],
     smallBlindAmount: input.smallBlind,
     bigBlindAmount: input.bigBlind,
-    streetPot: input.smallBlind + input.bigBlind,
+    streetPot: seats.reduce((sum, seat) => sum + seat.currentBet, 0),
     pendingActorSeats: pendingPreflopSeats,
   });
 }

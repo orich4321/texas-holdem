@@ -19,6 +19,8 @@ import type { VerifiedPrivateHandRecovery } from './private-hand-snapshot.js';
 import { signPrivateHandSnapshot } from './private-hand-snapshot.js';
 import { ServerGameLifecycle, type PlayerAction, type PlayerActionNotification, type ServerPlayerView } from '../game-lifecycle.js';
 import { startServerHand } from '../hand-start.js';
+import { chipUnits, chipsFromEngine, isChipAmount } from '../chip-amounts.js';
+import { JACKPOT_ID, contributeJackpot, settleJackpot, publicHandJackpot, readHandJackpot, type HandJackpot } from './jackpot.js';
 
 type PlayerInput = {
   id: string;
@@ -60,6 +62,11 @@ const TURN_DURATION_MS = 60_000;
 const HAND_START_TYPES = ['GAME_STARTED', 'HAND_STARTED', 'FINAL_HAND_STARTED'];
 const DEFAULT_ROOM_SETTINGS: RoomGameSettings = Object.freeze({ initialStack: 500, smallBlind: 1, bigBlind: 2, maxPlayers: 9 });
 
+function settledPlayerData(seat: { playerId: string; stack: number }, jackpot?: HandJackpot) {
+  const currentStack = (chipUnits(seat.stack) + chipUnits(jackpot?.payouts.find((payout) => payout.playerId === seat.playerId)?.amount ?? 0)) / 10;
+  return { currentStack, isSittingOut: currentStack <= 0.1, rebuyDecisionPending: currentStack <= 0.1 };
+}
+
 function isAccessTokenHashCollision(error: unknown): boolean {
   if (error === null || typeof error !== 'object' || !('code' in error) || error.code !== 'P2002') return false;
   const target = 'meta' in error && error.meta !== null && typeof error.meta === 'object' && 'target' in error.meta
@@ -89,7 +96,7 @@ const publicPlayerSelect = {
 const identityPlayerSelect = { id: true, roomId: true, displayName: true } satisfies Prisma.PlayerSelect;
 
 const roomWithPlayers = {
-  players: { where: { leftAt: null }, orderBy: { createdAt: 'asc' }, select: publicPlayerSelect },
+  players: { where: { leftAt: null }, orderBy: [{ seatOrder: 'asc' }, { id: 'asc' }], select: publicPlayerSelect },
 } satisfies Prisma.RoomInclude;
 
 export type RoomJoinIdFactory = () => string;
@@ -200,7 +207,7 @@ function validatePersistedPlayerAction(action: unknown): asserts action is Playe
   const keys = Object.keys(record).sort();
   if (typeof record.type !== 'string' || !['check', 'call', 'fold', 'all-in', 'raise'].includes(record.type)) throw new Error('Invalid player action');
   if (record.type === 'raise') {
-    if (keys.length !== 2 || keys[0] !== 'raiseTo' || keys[1] !== 'type' || typeof record.raiseTo !== 'number' || !Number.isSafeInteger(record.raiseTo) || record.raiseTo < 0) throw new Error('Invalid player action');
+    if (keys.length !== 2 || keys[0] !== 'raiseTo' || keys[1] !== 'type' || !isChipAmount(record.raiseTo)) throw new Error('Invalid player action');
     return;
   }
   if (keys.length !== 1 || keys[0] !== 'type') throw new Error('Invalid player action');
@@ -219,7 +226,7 @@ function actionNotificationFromEvent(
   } catch {
     return undefined;
   }
-  const amount = Number.isSafeInteger(payload.amount) && (payload.amount as number) >= 0 ? payload.amount as number : undefined;
+  const amount = isChipAmount(payload.amount) ? payload.amount : undefined;
   const raiseKind = payload.raiseKind === 'bet' || payload.raiseKind === 'raise' ? payload.raiseKind : undefined;
   return Object.freeze({
     sequence: event.sequence,
@@ -232,6 +239,10 @@ function actionNotificationFromEvent(
 }
 
 export class RoomRepository {
+  async getJackpotBalance() {
+    const pool = await this.db.jackpotPool.findUniqueOrThrow({ where: { id: JACKPOT_ID }, select: { balanceUnits: true } });
+    return { balance: pool.balanceUnits / 10, contributionPerPlayer: 0.1 };
+  }
   constructor(
     private readonly db: PrismaClient,
     private readonly createJoinId: RoomJoinIdFactory = createRoomJoinId,
@@ -254,7 +265,8 @@ export class RoomRepository {
       if (type !== 'check-fold' && type !== 'call') throw new Error('Invalid pre-action');
       const latest = await tx.gameSnapshot.findFirst({ where: { roomId }, orderBy: { sequence: 'desc' }, select: { sequence: true, state: true } });
       if (!latest) throw new Error('Pre-action is unavailable');
-      const hand = hydrateSignedPrivateHandSnapshot(latest.state as unknown as SignedPrivateHandSnapshot, { roomId, sequence: latest.sequence }, this.privateSnapshotKeyring).hand;
+      const recovery = hydrateSignedPrivateHandSnapshot(latest.state as unknown as SignedPrivateHandSnapshot, { roomId, sequence: latest.sequence }, this.privateSnapshotKeyring);
+      const hand = recovery.hand;
       const seat = hand.seats.find((candidate) => candidate.playerId === playerId);
       if (hand.street === 'showdown' || hand.currentActorSeat === seat?.seatNumber || !seat?.holeCards || seat.isFolded || seat.stack === 0 || hand.pendingActorSeats.length === 0) throw new Error('Pre-action is unavailable');
       const toCall = Math.max(0, hand.currentBet - seat.currentBet);
@@ -266,7 +278,7 @@ export class RoomRepository {
         create: { roomId, playerId, handStartSequence: handStart.sequence, street: hand.street, type, expectedCurrentBet: type === 'call' ? hand.currentBet : null, quotedToCall: type === 'call' ? Math.min(toCall, seat.stack) : null },
         update: { handStartSequence: handStart.sequence, street: hand.street, type, expectedCurrentBet: type === 'call' ? hand.currentBet : null, quotedToCall: type === 'call' ? Math.min(toCall, seat.stack) : null },
       });
-      return { type, ...(type === 'call' ? { quotedToCall: Math.min(toCall, seat.stack) } : {}) };
+      return { type, ...(type === 'call' ? { quotedToCall: Math.min(toCall, seat.stack) / recovery.chipScale } : {}) };
     });
   }
 
@@ -302,13 +314,13 @@ export class RoomRepository {
     }
   }
 
-  private decorateView(view: ServerPlayerView, sequence: number, hostPlayerId: string, gameCompleted = false, finalSummaryVisible = false, lastAction?: PlayerActionNotification, roomPlayers?: readonly RoomViewPlayer[], gameStartedAt?: string, turnDeadlineAt?: Date | null, recentActions?: readonly PlayerActionNotification[]): ServerPlayerView {
+  private decorateView(view: ServerPlayerView, sequence: number, hostPlayerId: string, gameCompleted = false, finalSummaryVisible = false, lastAction?: PlayerActionNotification, roomPlayers?: readonly RoomViewPlayer[], gameStartedAt?: string, turnDeadlineAt?: Date | null, recentActions?: readonly PlayerActionNotification[], jackpot?: HandJackpot, chipScale = 1): ServerPlayerView {
     const activeSeats = new Map(view.seats.map((seat) => [seat.playerId, seat]));
     const seats = roomPlayers
       ? roomPlayers.map((player, index) => {
         const activeSeat = activeSeats.get(player.id);
         return Object.freeze(activeSeat
-          ? { ...activeSeat, isSittingOut: player.isSittingOut && !player.rebuyDecisionPending }
+          ? { ...activeSeat, stack: view.showdown ? (chipUnits(activeSeat.stack) + chipUnits(jackpot?.payouts.find((payout) => payout.playerId === player.id)?.amount ?? 0)) / 10 : activeSeat.stack, isSittingOut: player.isSittingOut && !player.rebuyDecisionPending }
           : {
             seatNumber: -(index + 1),
             playerId: player.id,
@@ -323,10 +335,11 @@ export class RoomRepository {
     const viewer = roomPlayers?.find((player) => player.id === view.playerId);
     const choice = viewer?.preAction?.street === view.street ? viewer.preAction : undefined;
     const preAction: ServerPlayerView['preAction'] = choice?.type === 'call'
-      ? { type: 'call', ...(choice.quotedToCall !== null ? { quotedToCall: choice.quotedToCall } : {}) }
+      ? { type: 'call', ...(choice.quotedToCall !== null ? { quotedToCall: choice.quotedToCall / chipScale } : {}) }
       : choice?.type === 'check-fold' ? { type: 'check-fold' } : undefined;
     return Object.freeze({
       ...view,
+      ...(jackpot ? { jackpot } : {}),
       seats: Object.freeze(seats),
       sequence,
       hostPlayerId,
@@ -341,7 +354,7 @@ export class RoomRepository {
     });
   }
 
-  private async createPlayerWithUniqueAccessToken(db: PlayerWriter, player: PlayerInput, roomId: string) {
+  private async createPlayerWithUniqueAccessToken(db: PlayerWriter, player: PlayerInput, roomId: string, seatOrder = 0) {
     for (let attempt = 0; attempt < MAX_ACCESS_TOKEN_ATTEMPTS; attempt += 1) {
       const accessToken = this.createAccessToken();
       try {
@@ -355,6 +368,7 @@ export class RoomRepository {
             currentStack: player.initialStack,
             accessTokenHash: this.hashAccessToken(accessToken).toString('hex'),
             roomId,
+            seatOrder,
           },
         });
         return { player: persistedPlayer, accessToken };
@@ -371,7 +385,7 @@ export class RoomRepository {
         data: { id: randomUUID(), joinId: this.createJoinId(), status, ...settings },
       });
       const persistedHost = await this.createPlayerWithUniqueAccessToken(tx, host, room.id);
-      await Promise.all(players.map((player) => this.createPlayerWithUniqueAccessToken(tx, player, room.id)));
+      await Promise.all(players.map((player, index) => this.createPlayerWithUniqueAccessToken(tx, player, room.id, index + 1)));
       const persistedRoom = await tx.room.update({
         where: { id: room.id },
         data: { hostPlayerId: host.id },
@@ -404,7 +418,8 @@ export class RoomRepository {
       const playerCount = await tx.player.count({ where: { roomId: room.id, leftAt: null, isSittingOut: false } });
       if (playerCount >= room.maxPlayers) return { kind: 'full' as const };
 
-      const createdPlayer = await this.createPlayerWithUniqueAccessToken(tx, { ...player, initialStack: room.initialStack }, room.id);
+      const lastSeat = await tx.player.findFirst({ where: { roomId: room.id }, orderBy: { seatOrder: 'desc' }, select: { seatOrder: true } });
+      const createdPlayer = await this.createPlayerWithUniqueAccessToken(tx, { ...player, initialStack: room.initialStack }, room.id, (lastSeat?.seatOrder ?? 0) + 1);
       const persistedRoom = await tx.room.findUniqueOrThrow({
         where: { id: room.id },
         include: roomWithPlayers,
@@ -587,29 +602,31 @@ export class RoomRepository {
       // Read the roster only after acquiring the room-row lock. A concurrent
       // host removal must not leave a stale player in the first dealt hand.
       const players = await tx.player.findMany({
-        where: { roomId: room.id, leftAt: null, isSittingOut: false },
-        orderBy: { createdAt: 'asc' },
+        where: { roomId: room.id, leftAt: null, isSittingOut: false, currentStack: { gt: 0.1 } },
+        orderBy: [{ seatOrder: 'asc' }, { id: 'asc' }],
         select: { id: true, currentStack: true },
       });
       if (players.length < 2) throw new Error('Room is not startable by this host');
 
+      const fundedPlayers = await contributeJackpot(tx, room.id, 0, players);
+
       const hand = startServerHand({
-        seats: players.map((player, index) => ({
+        seats: fundedPlayers.map((player, index) => ({
           seatNumber: index + 1,
           playerId: player.id,
-          stack: player.currentStack,
+          stack: chipUnits(player.currentStack),
         })),
         dealerSeat: 1,
-        smallBlind: room.smallBlind,
-        bigBlind: room.bigBlind,
+        smallBlind: chipUnits(room.smallBlind),
+        bigBlind: chipUnits(room.bigBlind),
       });
       const sequence = 0;
       const event = Object.freeze({
         dealerSeat: hand.dealerSeat,
-        smallBlind: hand.smallBlindAmount,
-        bigBlind: hand.bigBlindAmount,
+        smallBlind: room.smallBlind,
+        bigBlind: room.bigBlind,
       });
-      const snapshot = signPrivateHandSnapshot(hand, { roomId: room.id, sequence, keyId }, key);
+      const snapshot = signPrivateHandSnapshot(hand, { roomId: room.id, sequence, keyId, chipScale: 10 }, key);
       await tx.gameEvent.create({ data: { roomId: room.id, sequence, type: 'GAME_STARTED', payload: event } });
       await tx.gameSnapshot.create({ data: { roomId: room.id, sequence, state: snapshot as unknown as Prisma.InputJsonValue } });
       return { roomId: room.id, sequence };
@@ -690,7 +707,7 @@ export class RoomRepository {
           finalSummaryVisible: true,
           turnDeadlineAt: true,
           players: {
-            orderBy: { createdAt: 'asc' },
+            orderBy: [{ seatOrder: 'asc' }, { id: 'asc' }],
             select: { id: true, displayName: true, currentStack: true, isSittingOut: true, rebuyDecisionPending: true, timeCardsRemaining: true, leftAt: true, rejoinRequestedAt: true, preAction: { select: { type: true, street: true, quotedToCall: true } } },
           },
         },
@@ -712,6 +729,8 @@ export class RoomRepository {
     ]);
     if (!room || !latest) return null;
     const hand = latest.recovery.hand;
+    const jackpotRound = latest.recovery.chipScale === 10 && hand.street === 'showdown'
+      ? await this.db.jackpotHand.findFirst({ where: { roomId, handSequence: { lte: latest.sequence } }, orderBy: { handSequence: 'desc' }, select: { contributions: true, payouts: true } }) : null;
     // A participant who joined during an active hand waits for the next hand;
     // their session is valid, but no private cards exist in the current hand.
     const seatedInHand = hand.seats.some((seat) => seat.playerId === playerId);
@@ -746,7 +765,7 @@ export class RoomRepository {
       .filter((event): event is PlayerActionNotification => Boolean(event))
       .reverse();
     return {
-      ...this.decorateView(safeView, latest.sequence, room.hostPlayerId, room.status === 'COMPLETED', room.status === 'COMPLETED' && room.finalSummaryVisible, latestAction, room.players.filter((player) => !player.leftAt), gameStarted?.createdAt.toISOString(), room.turnDeadlineAt, recentActions),
+      ...this.decorateView(safeView, latest.sequence, room.hostPlayerId, room.status === 'COMPLETED', room.status === 'COMPLETED' && room.finalSummaryVisible, latestAction, room.players.filter((player) => !player.leftAt), gameStarted?.createdAt.toISOString(), room.turnDeadlineAt, recentActions, jackpotRound ? publicHandJackpot(jackpotRound) : undefined, latest.recovery.chipScale),
       ...(playerId === room.hostPlayerId ? { rejoinRequestCount: room.players.filter((player) => player.leftAt && player.rejoinRequestedAt).length } : {}),
     };
   }
@@ -758,7 +777,7 @@ export class RoomRepository {
     return this.db.$transaction(async (tx) => {
       const room = await tx.room.findUnique({
         where: { id: roomId },
-        select: { status: true, hostPlayerId: true, turnDeadlineAt: true, players: { where: { leftAt: null }, orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, currentStack: true, isSittingOut: true, rebuyDecisionPending: true, timeCardsRemaining: true } } },
+        select: { status: true, hostPlayerId: true, turnDeadlineAt: true, players: { where: { leftAt: null }, orderBy: [{ seatOrder: 'asc' }, { id: 'asc' }], select: { id: true, displayName: true, currentStack: true, isSittingOut: true, rebuyDecisionPending: true, timeCardsRemaining: true } } },
       });
       if (!room || !room.hostPlayerId || room.status !== 'IN_PROGRESS' || !room.players.some((player) => player.id === playerId)) throw new Error('Game action is unavailable');
 
@@ -794,8 +813,9 @@ export class RoomRepository {
           select: { sequence: true, payload: true },
         });
         if (duplicate) {
+          const jackpot = recovery.chipScale === 10 && hand.street === 'showdown' ? await readHandJackpot(tx, roomId, latest.sequence) : undefined;
           const lastAction = duplicate.sequence === latest.sequence ? actionNotificationFromEvent(duplicate, room.players) : undefined;
-          const views = Object.freeze(hand.seats.map((seat) => this.decorateView(lifecycle.viewFor(seat.playerId), latest.sequence, room.hostPlayerId!, false, false, lastAction, room.players, undefined, room.turnDeadlineAt)));
+          const views = Object.freeze(hand.seats.map((seat) => this.decorateView(lifecycle.viewFor(seat.playerId), latest.sequence, room.hostPlayerId!, false, false, lastAction, room.players, undefined, room.turnDeadlineAt, undefined, jackpot, recovery.chipScale)));
           return { sequence: latest.sequence, view: views.find((candidate) => candidate.playerId === playerId)!, views };
         }
       }
@@ -811,7 +831,7 @@ export class RoomRepository {
       }
       // A raise to the actor's complete stack is semantically an all-in even
       // when an older client submitted it through the generic raise control.
-      const effectiveAction: PlayerAction = action.type === 'raise' && action.raiseTo === actorSeat.currentBet + actorSeat.stack
+      const effectiveAction: PlayerAction = action.type === 'raise' && chipUnits(action.raiseTo) === chipUnits(actorSeat.currentBet) + chipUnits(actorSeat.stack)
         ? { type: 'all-in' }
         : action;
       const isAllInCall = effectiveAction.type === 'call' && actorSeat.stack > 0 && beforeAction.toCall >= actorSeat.stack;
@@ -834,19 +854,26 @@ export class RoomRepository {
         { type: 'call', expectedCurrentBet: { not: lifecycle.handForDurableSnapshot().currentBet } },
       ] } });
       let gameCompleted = false;
+      let jackpot: HandJackpot | undefined;
       const settledHand = lifecycle.handForDurableSnapshot();
       const settlement = settledHand.street === 'showdown'
         ? lifecycle.showdownSettlement()
         : undefined;
       if (settlement) {
+        jackpot = recovery.chipScale === 10 ? await settleJackpot(tx, roomId, latest.sequence, settledHand, view.showdown?.pots ?? []) : undefined;
+        for (const payout of jackpot?.payouts ?? []) {
+          lifecycle.revealShowdownCard(payout.playerId, 0);
+          lifecycle.revealShowdownCard(payout.playerId, 1);
+        }
         await Promise.all(settlement.seats.map((seat) => tx.player.update({
-          where: { id: seat.playerId }, data: { currentStack: seat.stack, isSittingOut: seat.stack === 0, rebuyDecisionPending: seat.stack === 0 },
+          where: { id: seat.playerId }, data: settledPlayerData(seat, jackpot),
         })));
         await tx.settlement.create({
           data: {
             roomId,
             idempotencyKey: `hand-${latest.sequence}`,
             result: {
+              ...(jackpot ? { jackpot } : {}),
               pots: view.showdown?.pots.map((pot) => ({ amount: pot.amount, eligibleSeatNumbers: [...pot.eligibleSeatNumbers], winnerSeatNumbers: [...pot.winnerSeatNumbers], payouts: pot.payouts.map((payout) => ({ ...payout })) })) ?? [],
               uncalledReturns: settlement.uncalledReturns.map((returned) => ({ ...returned })),
               winners: view.showdown?.winners.map((winner) => ({
@@ -863,7 +890,7 @@ export class RoomRepository {
                 folded: seat.isFolded,
                 holeCards: seat.holeCards.map((card) => ({ ...card })),
               }] : []),
-              stacks: settlement.seats.map((seat) => ({ seatNumber: seat.seatNumber, playerId: seat.playerId, stack: seat.stack })),
+              stacks: settlement.seats.map((seat) => ({ seatNumber: seat.seatNumber, playerId: seat.playerId, stack: (chipUnits(seat.stack) + chipUnits(jackpot?.payouts.find((payout) => payout.playerId === seat.playerId)?.amount ?? 0)) / 10 })),
             } as Prisma.InputJsonValue,
           },
         });
@@ -883,19 +910,19 @@ export class RoomRepository {
       const publicAction = isAllInCall
         ? { type: 'all-in' as const }
         : effectiveAction.type === 'raise'
-          ? { type: 'raise' as const, raiseTo: effectiveAction.raiseTo }
+          ? { type: 'raise' as const, raiseTo: Math.round(effectiveAction.raiseTo * 10) / 10 }
           : { type: effectiveAction.type };
-      const publicActionPayload = { actorPlayerId: playerId, action: publicAction, ...(raiseKind ? { raiseKind } : {}), ...(actionAmount !== undefined ? { amount: actionAmount } : {}) };
+      const publicActionPayload = { actorPlayerId: playerId, action: publicAction, ...(raiseKind ? { raiseKind } : {}), ...(actionAmount !== undefined ? { amount: Math.round(actionAmount * 10) / 10 } : {}) };
       const lastAction = actionNotificationFromEvent({ sequence, payload: publicActionPayload }, room.players);
       if (!lastAction) throw new Error('Game action is unavailable');
       const activeKey = this.privateSnapshotKeyring.entries().next().value as [string, PrivateSnapshotSigningKey] | undefined;
       if (!activeKey) throw new Error('Game action is unavailable');
       const [keyId, key] = activeKey;
-      const snapshot = signPrivateHandSnapshot(lifecycle.handForDurableSnapshot(), { roomId, sequence, keyId }, key);
+      const snapshot = signPrivateHandSnapshot(lifecycle.handForDurableSnapshot(), { roomId, sequence, keyId, chipScale: recovery.chipScale }, key);
       await tx.gameEvent.create({ data: { roomId, sequence, type: 'PLAYER_ACTION', payload: publicActionPayload, ...(clientActionId ? { clientActionId } : {}) } });
       await tx.gameSnapshot.create({ data: { roomId, sequence, state: snapshot as unknown as Prisma.InputJsonValue } });
       await tx.room.update({ where: { id: roomId }, data: { turnDeadlineAt } });
-      const timedViews = Object.freeze(settledHand.seats.map((seat) => this.decorateView(lifecycle.viewFor(seat.playerId), sequence, room.hostPlayerId!, gameCompleted, false, lastAction, room.players, undefined, turnDeadlineAt)));
+      const timedViews = Object.freeze(settledHand.seats.map((seat) => this.decorateView(lifecycle.viewFor(seat.playerId), sequence, room.hostPlayerId!, gameCompleted, false, lastAction, room.players, undefined, turnDeadlineAt, undefined, jackpot, recovery.chipScale)));
       return { sequence, view: timedViews.find((candidate) => candidate.playerId === playerId)!, views: timedViews };
     });
   }
@@ -954,7 +981,7 @@ export class RoomRepository {
     return this.db.$transaction(async (tx) => {
       const room = await tx.room.findUnique({
         where: { joinId },
-        select: { id: true, hostPlayerId: true, status: true, players: { where: { leftAt: null }, orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, currentStack: true, isSittingOut: true, rebuyDecisionPending: true } } },
+        select: { id: true, hostPlayerId: true, status: true, players: { where: { leftAt: null }, orderBy: [{ seatOrder: 'asc' }, { id: 'asc' }], select: { id: true, displayName: true, currentStack: true, isSittingOut: true, rebuyDecisionPending: true } } },
       });
       if (!room || room.hostPlayerId !== hostPlayerId || room.status !== 'IN_PROGRESS') throw new Error('All-in board is unavailable');
       const locked = await tx.room.updateMany({ where: { id: room.id, hostPlayerId, status: 'IN_PROGRESS' }, data: { updatedAt: new Date() } });
@@ -975,14 +1002,18 @@ export class RoomRepository {
       const hand = lifecycle.handForDurableSnapshot();
       const settlement = hand.street === 'showdown' ? lifecycle.showdownSettlement() : undefined;
       let gameCompleted = false;
+      let jackpot: HandJackpot | undefined;
       if (settlement) {
         const showdown = lifecycle.viewFor(hand.seats[0].playerId).showdown;
-        await Promise.all(settlement.seats.map((seat) => tx.player.update({ where: { id: seat.playerId }, data: { currentStack: seat.stack, isSittingOut: seat.stack === 0, rebuyDecisionPending: seat.stack === 0 } })));
+        jackpot = recovery.chipScale === 10 ? await settleJackpot(tx, room.id, latest.sequence, hand, showdown?.pots ?? []) : undefined;
+        for (const payout of jackpot?.payouts ?? []) { lifecycle.revealShowdownCard(payout.playerId, 0); lifecycle.revealShowdownCard(payout.playerId, 1); }
+        await Promise.all(settlement.seats.map((seat) => tx.player.update({ where: { id: seat.playerId }, data: settledPlayerData(seat, jackpot) })));
         await tx.settlement.create({
           data: {
             roomId: room.id,
             idempotencyKey: `hand-${latest.sequence}`,
             result: {
+              ...(jackpot ? { jackpot } : {}),
               pots: showdown?.pots.map((pot) => ({ amount: pot.amount, eligibleSeatNumbers: [...pot.eligibleSeatNumbers], winnerSeatNumbers: [...pot.winnerSeatNumbers], payouts: pot.payouts.map((payout) => ({ ...payout })) })) ?? [],
               uncalledReturns: settlement.uncalledReturns.map((returned) => ({ ...returned })),
               winners: showdown?.winners.map((winner) => ({
@@ -999,7 +1030,7 @@ export class RoomRepository {
                 folded: seat.isFolded,
                 holeCards: seat.holeCards.map((card) => ({ ...card })),
               }] : []),
-              stacks: settlement.seats.map((seat) => ({ seatNumber: seat.seatNumber, playerId: seat.playerId, stack: seat.stack })),
+              stacks: settlement.seats.map((seat) => ({ seatNumber: seat.seatNumber, playerId: seat.playerId, stack: (chipUnits(seat.stack) + chipUnits(jackpot?.payouts.find((payout) => payout.playerId === seat.playerId)?.amount ?? 0)) / 10 })),
             } as Prisma.InputJsonValue,
           },
         });
@@ -1013,10 +1044,10 @@ export class RoomRepository {
         }
       }
       const sequence = latest.sequence + 1;
-      const snapshot = signPrivateHandSnapshot(hand, { roomId: room.id, sequence, keyId }, key);
+      const snapshot = signPrivateHandSnapshot(lifecycle.handForDurableSnapshot(), { roomId: room.id, sequence, keyId, chipScale: recovery.chipScale }, key);
       await tx.gameEvent.create({ data: { roomId: room.id, sequence, type: 'ALL_IN_RUNOUT_ADVANCED', payload: { street: hand.street } } });
       await tx.gameSnapshot.create({ data: { roomId: room.id, sequence, state: snapshot as unknown as Prisma.InputJsonValue } });
-      return { sequence, views: Object.freeze(hand.seats.map((seat) => this.decorateView(lifecycle.viewFor(seat.playerId), sequence, room.hostPlayerId!, gameCompleted, false, undefined, room.players))) };
+      return { sequence, views: Object.freeze(hand.seats.map((seat) => this.decorateView(lifecycle.viewFor(seat.playerId), sequence, room.hostPlayerId!, gameCompleted, false, undefined, room.players, undefined, undefined, undefined, jackpot, recovery.chipScale))) };
     });
   }
 
@@ -1028,7 +1059,7 @@ export class RoomRepository {
     return this.db.$transaction(async (tx) => {
       const room = await tx.room.findUnique({
         where: { joinId },
-        select: { id: true, hostPlayerId: true, status: true, finalSummaryVisible: true, players: { where: { leftAt: null }, orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, currentStack: true, isSittingOut: true, rebuyDecisionPending: true } } },
+        select: { id: true, hostPlayerId: true, status: true, finalSummaryVisible: true, players: { where: { leftAt: null }, orderBy: [{ seatOrder: 'asc' }, { id: 'asc' }], select: { id: true, displayName: true, currentStack: true, isSittingOut: true, rebuyDecisionPending: true } } },
       });
       if (!room || room.hostPlayerId !== hostPlayerId || (room.status !== 'IN_PROGRESS' && (room.status !== 'COMPLETED' || room.finalSummaryVisible))) {
         throw new Error('Uncontested board is unavailable');
@@ -1051,14 +1082,15 @@ export class RoomRepository {
         dealerSeat: recovery.hand.dealerSeat, smallBlind: recovery.hand.smallBlindAmount, bigBlind: recovery.hand.bigBlindAmount,
       }, recovery);
       lifecycle.advanceRabbitRunout();
+      const jackpot = recovery.chipScale === 10 ? await readHandJackpot(tx, room.id, latest.sequence) : undefined;
       const hand = lifecycle.handForDurableSnapshot();
       const sequence = latest.sequence + 1;
-      const snapshot = signPrivateHandSnapshot(hand, { roomId: room.id, sequence, keyId }, key);
+      const snapshot = signPrivateHandSnapshot(hand, { roomId: room.id, sequence, keyId, chipScale: recovery.chipScale }, key);
       await tx.gameEvent.create({ data: { roomId: room.id, sequence, type: 'UNCONTESTED_RUNOUT_ADVANCED', payload: { communityCardCount: hand.communityCards.length } } });
       await tx.gameSnapshot.create({ data: { roomId: room.id, sequence, state: snapshot as unknown as Prisma.InputJsonValue } });
       return {
         sequence,
-        views: Object.freeze(hand.seats.map((seat) => this.decorateView(lifecycle.viewFor(seat.playerId), sequence, room.hostPlayerId!, room.status === 'COMPLETED', false, undefined, room.players))),
+        views: Object.freeze(hand.seats.map((seat) => this.decorateView(lifecycle.viewFor(seat.playerId), sequence, room.hostPlayerId!, room.status === 'COMPLETED', false, undefined, room.players, undefined, undefined, undefined, jackpot, recovery.chipScale))),
       };
     });
   }
@@ -1071,7 +1103,7 @@ export class RoomRepository {
     return this.db.$transaction(async (tx) => {
       const room = await tx.room.findUnique({
         where: { id: roomId },
-        select: { status: true, hostPlayerId: true, finalSummaryVisible: true, players: { where: { leftAt: null }, orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, currentStack: true, isSittingOut: true, rebuyDecisionPending: true } } },
+        select: { status: true, hostPlayerId: true, finalSummaryVisible: true, players: { where: { leftAt: null }, orderBy: [{ seatOrder: 'asc' }, { id: 'asc' }], select: { id: true, displayName: true, currentStack: true, isSittingOut: true, rebuyDecisionPending: true } } },
       });
       if (!room || !room.hostPlayerId || (room.status !== 'IN_PROGRESS' && (room.status !== 'COMPLETED' || room.finalSummaryVisible)) || !room.players.some((player) => player.id === playerId)) throw new Error('Showdown reveal is unavailable');
       const locked = await tx.room.updateMany({ where: { id: roomId, status: room.status }, data: { updatedAt: new Date() } });
@@ -1089,14 +1121,15 @@ export class RoomRepository {
         dealerSeat: recovery.hand.dealerSeat, smallBlind: recovery.hand.smallBlindAmount, bigBlind: recovery.hand.bigBlindAmount,
       }, recovery);
       const view = lifecycle.revealShowdownCard(playerId, cardIndex);
+      const jackpot = recovery.chipScale === 10 ? await readHandJackpot(tx, roomId, latest.sequence) : undefined;
       const sequence = latest.sequence + 1;
-      const snapshot = signPrivateHandSnapshot(lifecycle.handForDurableSnapshot(), { roomId, sequence, keyId }, key);
+      const snapshot = signPrivateHandSnapshot(lifecycle.handForDurableSnapshot(), { roomId, sequence, keyId, chipScale: recovery.chipScale }, key);
       await tx.gameEvent.create({ data: { roomId, sequence, type: 'SHOWDOWN_CARD_REVEALED', payload: { playerId, cardIndex } } });
       await tx.gameSnapshot.create({ data: { roomId, sequence, state: snapshot as unknown as Prisma.InputJsonValue } });
       return {
         sequence,
-        view: this.decorateView(view, sequence, room.hostPlayerId, room.status === 'COMPLETED', room.finalSummaryVisible, undefined, room.players),
-        views: Object.freeze(recovery.hand.seats.map((seat) => this.decorateView(lifecycle.viewFor(seat.playerId), sequence, room.hostPlayerId!, room.status === 'COMPLETED', room.finalSummaryVisible, undefined, room.players))),
+        view: this.decorateView(view, sequence, room.hostPlayerId, room.status === 'COMPLETED', room.finalSummaryVisible, undefined, room.players, undefined, undefined, undefined, jackpot, recovery.chipScale),
+        views: Object.freeze(recovery.hand.seats.map((seat) => this.decorateView(lifecycle.viewFor(seat.playerId), sequence, room.hostPlayerId!, room.status === 'COMPLETED', room.finalSummaryVisible, undefined, room.players, undefined, undefined, undefined, jackpot, recovery.chipScale))),
       };
     });
   }
@@ -1193,7 +1226,7 @@ export class RoomRepository {
           smallBlind: true,
           bigBlind: true,
           nextHandIsFinal: true,
-          players: { where: { leftAt: null }, orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, currentStack: true, leaveAfterHand: true, isSittingOut: true, rebuyDecisionPending: true } },
+          players: { where: { leftAt: null }, orderBy: [{ seatOrder: 'asc' }, { id: 'asc' }], select: { id: true, displayName: true, currentStack: true, leaveAfterHand: true, isSittingOut: true, rebuyDecisionPending: true } },
           chipAdjustments: { where: { status: 'PENDING' }, orderBy: { createdAt: 'asc' } },
         },
       });
@@ -1218,8 +1251,8 @@ export class RoomRepository {
           continue;
         }
         const before = stacks.get(adjustment.playerId);
-        if (before === undefined || !Number.isSafeInteger(before + adjustment.amount)) throw new Error('Next hand is unavailable');
-        const after = before + adjustment.amount;
+        if (before === undefined || !isChipAmount(before + adjustment.amount)) throw new Error('Next hand is unavailable');
+        const after = (chipUnits(before) + chipUnits(adjustment.amount)) / 10;
         stacks.set(adjustment.playerId, after);
         await tx.player.update({ where: { id: adjustment.playerId }, data: { currentStack: after } });
         await tx.chipAdjustment.update({ where: { id: adjustment.id }, data: { status: 'APPLIED', stackBefore: before, stackAfter: after, appliedAt } });
@@ -1230,32 +1263,33 @@ export class RoomRepository {
 
       const seatNumbers = recovery.hand.seats.map((seat) => seat.seatNumber);
       const dealerIndex = seatNumbers.indexOf(recovery.hand.dealerSeat);
-      if (activePlayers.some((player) => (stacks.get(player.id) ?? 0) < 1)) throw new Error('Next hand is unavailable');
+      if (activePlayers.some((player) => (stacks.get(player.id) ?? 0) <= 0.1)) throw new Error('A chip top-up or sit-out is required');
       const nextDealerPlayerId = Array.from({ length: seatNumbers.length }, (_, offset) => seatNumbers[(dealerIndex + offset + 1) % seatNumbers.length])
         .map((seatNumber) => recovery.hand.seats.find((seat) => seat.seatNumber === seatNumber)!.playerId)
         .find((playerId) => activePlayers.some((player) => player.id === playerId) && (stacks.get(playerId) ?? 0) > 0)
         ?? activePlayers.find((player) => (stacks.get(player.id) ?? 0) > 0)?.id;
       const nextDealerSeat = activePlayers.findIndex((player) => player.id === nextDealerPlayerId) + 1;
       if (!nextDealerPlayerId || nextDealerSeat < 1) throw new Error('Next hand is unavailable');
+      const sequence = latest.sequence + 1;
+      const fundedPlayers = await contributeJackpot(tx, room.id, sequence, activePlayers.map((player) => ({ ...player, currentStack: stacks.get(player.id) ?? player.currentStack })));
       const hand = startServerHand({
-        seats: activePlayers.map((player, index) => ({
+        seats: fundedPlayers.map((player, index) => ({
           seatNumber: index + 1,
           playerId: player.id,
-          stack: stacks.get(player.id) ?? player.currentStack,
+          stack: chipUnits(player.currentStack),
         })),
         dealerSeat: nextDealerSeat,
-        smallBlind: lockedRoom.smallBlind,
-        bigBlind: lockedRoom.bigBlind,
+        smallBlind: chipUnits(lockedRoom.smallBlind),
+        bigBlind: chipUnits(lockedRoom.bigBlind),
       });
-      const sequence = latest.sequence + 1;
-      const snapshot = signPrivateHandSnapshot(hand, { roomId: room.id, sequence, keyId }, key);
+      const snapshot = signPrivateHandSnapshot(hand, { roomId: room.id, sequence, keyId, chipScale: 10 }, key);
       await tx.preAction.deleteMany({ where: { roomId: room.id } });
       await tx.gameEvent.create({
         data: {
           roomId: room.id,
           sequence,
           type: nextHandIsFinal ? 'FINAL_HAND_STARTED' : 'HAND_STARTED',
-          payload: { dealerSeat: hand.dealerSeat, smallBlind: hand.smallBlindAmount, bigBlind: hand.bigBlindAmount },
+          payload: { dealerSeat: hand.dealerSeat, smallBlind: lockedRoom.smallBlind, bigBlind: lockedRoom.bigBlind },
         },
       });
       await tx.gameSnapshot.create({ data: { roomId: room.id, sequence, state: snapshot as unknown as Prisma.InputJsonValue } });
@@ -1388,10 +1422,10 @@ export class RoomRepository {
       if (!player) throw new Error('Player restoration is unavailable');
       if (!player.leftAt) return { restoredPlayerId: targetPlayerId };
       const activeCount = await tx.player.count({ where: { roomId: room.id, leftAt: null, isSittingOut: false } });
-      if (player.currentStack > 0 && activeCount >= room.maxPlayers) throw new Error('Waiting room is full');
+      if (player.currentStack > 0.1 && activeCount >= room.maxPlayers) throw new Error('Waiting room is full');
       const restored = await tx.player.updateMany({
         where: { id: targetPlayerId, roomId: room.id, leftAt: { not: null } },
-        data: { leftAt: null, isSittingOut: player.currentStack === 0, rebuyDecisionPending: false, leaveAfterHand: false, rejoinRequestedAt: null },
+        data: { leftAt: null, isSittingOut: player.currentStack <= 0.1, rebuyDecisionPending: false, leaveAfterHand: false, rejoinRequestedAt: null },
       });
       if (restored.count !== 1) throw new Error('Waiting-room restoration is unavailable');
       return { restoredPlayerId: targetPlayerId };
@@ -1430,7 +1464,7 @@ export class RoomRepository {
       const locked = await tx.room.updateMany({ where: { id: room.id, hostPlayerId, status: room.status }, data: { updatedAt: new Date() } });
       if (locked.count !== 1) throw new Error('Chip adjustment is unavailable');
       await tx.chipAdjustment.updateMany({ where: { roomId: room.id, playerId: targetPlayerId, status: 'PENDING' }, data: { status: 'CANCELLED', cancelledAt: new Date() } });
-      await tx.player.updateMany({ where: { id: targetPlayerId, roomId: room.id, currentStack: 0, leftAt: null }, data: { isSittingOut: true, rebuyDecisionPending: false } });
+      await tx.player.updateMany({ where: { id: targetPlayerId, roomId: room.id, currentStack: { lte: 0.1 }, leftAt: null }, data: { isSittingOut: true, rebuyDecisionPending: false } });
     });
   }
 
@@ -1440,7 +1474,7 @@ export class RoomRepository {
       if (!room) throw new Error('Rebuy decision is unavailable');
       const locked = await tx.room.updateMany({ where: { id: room.id, hostPlayerId, status: room.status }, data: { updatedAt: new Date() } });
       if (locked.count !== 1) throw new Error('Rebuy decision is unavailable');
-      const updated = await tx.player.updateMany({ where: { id: targetPlayerId, roomId: room.id, currentStack: 0, leftAt: null, isSittingOut: true, rebuyDecisionPending: true }, data: { rebuyDecisionPending: false } });
+      const updated = await tx.player.updateMany({ where: { id: targetPlayerId, roomId: room.id, currentStack: { lte: 0.1 }, leftAt: null, isSittingOut: true, rebuyDecisionPending: true }, data: { rebuyDecisionPending: false } });
       if (updated.count !== 1) throw new Error('Rebuy decision is unavailable');
       return { isSittingOut: true };
     });
@@ -1555,13 +1589,14 @@ export class RoomRepository {
       orderBy: { sequence: 'asc' }, select: { sequence: true, state: true },
     });
     const frames: ReplayFrame[] = snapshots.map((snapshot) => {
-      const hand = hydrateSignedPrivateHandSnapshot(snapshot.state as unknown as SignedPrivateHandSnapshot,
-        { roomId: room.id, sequence: snapshot.sequence }, this.privateSnapshotKeyring).hand;
-      return {
+      const recovery = hydrateSignedPrivateHandSnapshot(snapshot.state as unknown as SignedPrivateHandSnapshot,
+        { roomId: room.id, sequence: snapshot.sequence }, this.privateSnapshotKeyring);
+      const hand = recovery.hand;
+      return chipsFromEngine({
         sequence: snapshot.sequence, street: hand.street, board: hand.communityCards.map((card) => ({ ...card })), pot: hand.pot,
         seats: hand.seats.map((seat) => ({ playerId: seat.playerId, seatNumber: seat.seatNumber, stack: seat.stack,
           currentBet: seat.currentBet, totalCommitted: seat.totalCommitted, isFolded: seat.isFolded === true })),
-      };
+      }, recovery.chipScale);
     });
     const ownPlayerIds = new Set(room.players.map((player) => player.id));
     return { key: handKey, settledAt: settlement.createdAt.toISOString(),
@@ -1592,6 +1627,7 @@ export class RoomRepository {
       where: { id: roomId, status: 'COMPLETED', finalSummaryVisible: true, players: { some: { id: playerId } } },
       select: {
         joinId: true, initialStack: true, smallBlind: true, bigBlind: true,
+        jackpotHands: { orderBy: { handSequence: 'asc' }, select: { handSequence: true, contributions: true, payouts: true } },
         players: { orderBy: { createdAt: 'asc' }, select: { id: true, displayName: true, avatarDataUrl: true, initialStack: true, currentStack: true, leftAt: true } },
         chipAdjustments: { where: { status: 'APPLIED' }, orderBy: { createdAt: 'asc' }, select: { playerId: true, authorizedByPlayerId: true, amount: true, stackBefore: true, stackAfter: true, createdAt: true, appliedAt: true } },
         events: { orderBy: { sequence: 'asc' }, select: { sequence: true, type: true, payload: true, createdAt: true } },
@@ -1613,11 +1649,12 @@ export class RoomRepository {
           addedChips,
           totalBuyIn,
           finalStack: player.currentStack,
-          net: player.currentStack - totalBuyIn,
+          net: Math.round((player.currentStack - totalBuyIn) * 10) / 10,
           leftAt: player.leftAt?.toISOString() ?? null,
         });
       }).sort((first, second) => second.net - first.net || second.finalStack - first.finalStack)),
       recap: buildGameRecap(room.settlements, room.players.map((player) => player.id)),
+      ...(room.jackpotHands?.length ? { jackpot: { hands: room.jackpotHands.map((hand) => ({ handSequence: hand.handSequence, ...publicHandJackpot(hand) })) } } : {}),
       chipAdjustments: Object.freeze(room.chipAdjustments.map((adjustment) => Object.freeze({
         playerId: adjustment.playerId,
         authorizedByPlayerId: adjustment.authorizedByPlayerId,

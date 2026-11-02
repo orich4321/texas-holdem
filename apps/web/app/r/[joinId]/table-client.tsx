@@ -6,9 +6,10 @@ import { io } from 'socket.io-client';
 import { parsePositiveInteger } from '../../numeric-input';
 import { ProfileImage } from '../../profile-image';
 import { RejoinPanel } from '../../rejoin-panel';
+import { JackpotBadge } from '../../jackpot-badge';
 import { formatChipsInBigBlinds } from '../../chips-in-blinds';
 import { actionAudioIsReady, playActionSound, unlockActionAudio } from '../../action-sounds';
-import { CHIP_VALUES, breakChip, chipTotal, clearChipSelection, createChipTray, displayChipCounts, returnChip, selectAllChips, selectChip, type ChipValue } from '../../betting-chips';
+import { CHIP_VALUES, breakChip, chipTotal, clearChipSelection, createChipTray, displayChipCounts, returnChip, selectAllChips, selectChip, isChipAmount, type ChipValue } from '../../betting-chips';
 
 declare const process: { env: { NODE_ENV?: string; NEXT_PUBLIC_GAME_URL?: string; NEXT_PUBLIC_SERVER_URL?: string } };
 
@@ -59,6 +60,7 @@ type FinalSummary = {
   };
 };
 type PlayerView = {
+  jackpot?: { contributionPerPlayer: number; contributions: readonly { playerId: string; amount: number }[]; payouts: readonly { playerId: string; amount: number }[] };
   rejoinRequestCount?: number;
   sequence?: number;
   hostPlayerId?: string;
@@ -102,7 +104,7 @@ const streetNames: Record<PlayerView['street'], string> = {
   preflop: 'לפני הפלופ', flop: 'פלופ', turn: 'טרן', river: 'ריבר', showdown: 'חשיפה',
 };
 const suits: Record<string, string> = { spades: '♠', hearts: '♥', diamonds: '♦', clubs: '♣' };
-const chipNames: Record<ChipValue, string> = { 100: 'שחור', 50: 'כחול', 25: 'ירוק', 5: 'אדום', 1: 'לבן' };
+const chipNames: Record<ChipValue, string> = { 100: 'שחור', 50: 'כחול', 25: 'ירוק', 5: 'אדום', 1: 'לבן', 0.1: 'עשירית' };
 
 function isCard(value: unknown): value is Card {
   return value !== null && typeof value === 'object'
@@ -169,7 +171,7 @@ function isPlayerAction(value: unknown): value is PlayerAction {
   if (value === null || typeof value !== 'object') return false;
   const action = value as Record<string, unknown>;
   return ['check', 'call', 'fold', 'all-in'].includes(action.type as string)
-    || (action.type === 'raise' && Number.isSafeInteger(action.raiseTo));
+    || (action.type === 'raise' && isChipAmount(action.raiseTo));
 }
 
 function isPlayerActionNotification(value: unknown): value is PlayerActionNotification {
@@ -180,7 +182,7 @@ function isPlayerActionNotification(value: unknown): value is PlayerActionNotifi
     && typeof notice.actorPlayerName === 'string'
     && (notice.avatarDataUrl === undefined || typeof notice.avatarDataUrl === 'string')
     && (notice.raiseKind === undefined || notice.raiseKind === 'bet' || notice.raiseKind === 'raise')
-    && (notice.amount === undefined || (Number.isSafeInteger(notice.amount) && (notice.amount as number) >= 0))
+    && (notice.amount === undefined || isChipAmount(notice.amount))
     && isPlayerAction(notice.action);
 }
 
@@ -220,7 +222,7 @@ function isPlayerView(value: unknown): value is PlayerView {
     && (view.isSittingOut === undefined || typeof view.isSittingOut === 'boolean')
     && (view.lastAction === undefined || isPlayerActionNotification(view.lastAction))
     && (view.recentActions === undefined || (Array.isArray(view.recentActions) && view.recentActions.every(isPlayerActionNotification)))
-    && (view.waitingToCall === undefined || (Number.isSafeInteger(view.waitingToCall) && (view.waitingToCall as number) >= 0))
+    && (view.waitingToCall === undefined || isChipAmount(view.waitingToCall))
     && (view.preAction === undefined || (view.preAction !== null && typeof view.preAction === 'object'
       && (view.preAction as { type?: unknown }).type !== undefined
       && ['check-fold', 'call'].includes((view.preAction as { type: string }).type)))
@@ -244,7 +246,7 @@ function isPlayerView(value: unknown): value is PlayerView {
     && Array.isArray(view.exposedHands) && view.exposedHands.every(isExposedHand)
     && (view.raise === undefined || (view.raise !== null && typeof view.raise === 'object'
       && ['minRaiseTo', 'maxRaiseTo', 'minimumIncrement'].every((key) => typeof (view.raise as Record<string, unknown>)[key] === 'number')))
-    && (view.allInRaiseTo === undefined || (Number.isSafeInteger(view.allInRaiseTo) && (view.allInRaiseTo as number) > 0))
+    && (view.allInRaiseTo === undefined || (isChipAmount(view.allInRaiseTo) && view.allInRaiseTo > 0))
     && (view.allInRunout === undefined || isAllInRunout(view.allInRunout))
     && (view.rabbitRunout === undefined || isRabbitRunout(view.rabbitRunout))
     && (view.showdown === undefined || isShowdown(view.showdown));
@@ -578,7 +580,7 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
 
   const ownSeat = useMemo(() => view?.seats.find((seat) => seat.playerId === view.playerId), [view]);
   const selectedChipAmount = chipTotal(chipTray.selected);
-  const selectedRaiseTo = (ownSeat?.currentBet ?? 0) + selectedChipAmount;
+  const selectedRaiseTo = Math.round(((ownSeat?.currentBet ?? 0) + selectedChipAmount) * 10) / 10;
   const canBetWithChips = Boolean(view?.raise || view?.allInRaiseTo !== undefined);
   const chipBetIsLegal = Boolean(view && ownSeat && selectedChipAmount > 0
     && (selectedRaiseTo === view.allInRaiseTo || (view.raise && selectedRaiseTo >= view.raise.minRaiseTo && selectedRaiseTo <= view.raise.maxRaiseTo))
@@ -1246,6 +1248,7 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
   return (
     <main className="table-shell" dir="rtl" onPointerUpCapture={handleTablePointerUp}>
       <header className="table-header">
+        <JackpotBadge active={networkActive} revision={`${view.holeCards.map(cardKey).join(',')}-${view.street === 'showdown'}`} />
         <div className="table-header-tools"><button type="button" className="table-sound-toggle" aria-label={soundEnabled ? 'השתקת צלילי המשחק' : 'הפעלת צלילי המשחק'} aria-pressed={soundEnabled} title={soundEnabled ? 'השתקת צלילים' : 'הפעלת צלילים ובדיקתם'} onClick={toggleSound}><span aria-hidden="true">{soundEnabled ? '♪' : '♪̸'}</span></button></div>
         {isCurrentHost ? <button type="button" className="table-management-button" aria-label="ניהול שולחן" title="ניהול שולחן" aria-expanded={managementOpen} onClick={() => {
           setManagementOpen(true);
@@ -1260,6 +1263,7 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
         <header><span>{showdownPotLabel(safeActivePotIndex)} · {safeActivePotIndex + 1} מתוך {view.showdown!.pots.length}</span><strong><i aria-hidden="true" />{activeShowdownPot.amount.toLocaleString('he-IL')}</strong></header>
         <p>{activePotPayouts.map((payout) => <span key={payout.seatNumber}><b>{payout.playerName}</b> זוכה ב־{payout.amount.toLocaleString('he-IL')} צ׳יפים</span>)}</p>
         <small>זכאים לקופה: {activePotEligibleNames.join(' · ')}</small>
+        {view.jackpot?.payouts.map((payout) => <small className="jackpot-award" key={payout.playerId}>ג׳קפוט 2–7 · {view.seats.find((seat) => seat.playerId === payout.playerId)?.playerName} זוכה בעוד {payout.amount.toLocaleString('he-IL')} צ׳יפים</small>)}
         {view.showdown!.pots.length > 1 ? <nav aria-label="מעבר בין קופות">{view.showdown!.pots.map((pot, index) => <button type="button" className={index === safeActivePotIndex ? 'is-active' : ''} aria-label={`הצגת ${showdownPotLabel(index)}, ${pot.amount.toLocaleString('he-IL')} צ׳יפים`} aria-pressed={index === safeActivePotIndex} onClick={() => setActivePotIndex(index)} key={`${pot.amount}-${index}`}>{index + 1}</button>)}</nav> : null}
       </section> : turnMessage ? <p className={`turn-banner${isTurn ? ' turn-banner-active' : ''}`} role="status" aria-live="polite"><span aria-hidden="true" />{turnMessage}</p> : <div className="turn-banner-spacer" aria-hidden="true" />}
       <section className="poker-table" aria-label="שולחן טקסס הולדם">
@@ -1328,7 +1332,7 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
           <div className="chip-piles" aria-label="הערימות שלכם">{CHIP_VALUES.map((value) => <div className="chip-pile" key={value}>
             <strong aria-label={`${chipTray.available[value]} צ׳יפים בערך ${value}`}>×{chipTray.available[value]}</strong>
             <button type="button" className={`bet-chip bet-chip-${value}`} disabled={!isTurn || !canBetWithChips || pending || chipTray.available[value] === 0} onClick={() => setChipTray((current) => selectChip(current, value))} aria-label={`הוספת צ׳יפ ${chipNames[value]} בשווי ${value}`}>{value}</button>
-            {isTurn && canBetWithChips ? value !== 1 ? <button type="button" className="chip-break" disabled={pending || chipTray.available[value] === 0} onClick={() => setChipTray((current) => breakChip(current, value))} aria-label={`פריטת צ׳יפ ${chipNames[value]}`}>פריטה</button> : <span className="chip-break-spacer" /> : null}
+            {isTurn && canBetWithChips ? value !== 0.1 ? <button type="button" className="chip-break" disabled={pending || chipTray.available[value] === 0} onClick={() => setChipTray((current) => breakChip(current, value))} aria-label={`פריטת צ׳יפ ${chipNames[value]}`}>פריטה</button> : <span className="chip-break-spacer" /> : null}
           </div>)}</div>
           {isTurn && canBetWithChips ? <div className="chip-tray-actions"><div className="chip-tray-selected" aria-label="צ׳יפים שנבחרו"><span>על השולחן</span>{selectedChipAmount > 0 ? CHIP_VALUES.filter((value) => chipTray.selected[value] > 0).map((value) => <button type="button" key={value} className={`bet-chip bet-chip-${value}`} disabled={pending} onClick={() => setChipTray((current) => returnChip(current, value))} aria-label={`החזרת צ׳יפ ${chipNames[value]} בשווי ${value}`}><b>{value}</b><i>×{chipTray.selected[value]}</i></button>) : <small>בחרו צ׳יפים מהערימות</small>}</div>
           <div className="chip-tray-footer"><button type="button" className={`chip-bet-submit${selectedRaiseTo === view.allInRaiseTo ? ' chip-bet-all-in' : ''}`} disabled={pending || !chipBetIsLegal} onClick={submitChipBet}>{selectedRaiseTo === view.allInRaiseTo ? 'אול אין' : 'הימור'} · {selectedRaiseTo.toLocaleString('he-IL')}</button><button type="button" className="chip-all-in" title="בחירת כל הצ׳יפים; יש לאשר את ההימור" disabled={pending} onClick={() => setChipTray(selectAllChips)}>אול אין</button><button type="button" className="chip-reset" disabled={pending || selectedChipAmount === 0} onClick={() => setChipTray(clearChipSelection)}>איפוס</button></div></div> : null}

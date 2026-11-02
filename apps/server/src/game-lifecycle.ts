@@ -39,6 +39,7 @@ import {
 } from '@texas-holdem/poker-core/server';
 
 import { startServerHand } from './hand-start.js';
+import { chipsFromEngine, chipUnits } from './chip-amounts.js';
 import { isVerifiedPrivateHandRecovery, type VerifiedPrivateHandRecovery } from './persistence/private-hand-snapshot.js';
 
 export interface GameSeatInput {
@@ -102,6 +103,7 @@ function publicShowdownPot(hand: StartedHand, pot: ShowdownPot): PublicShowdownP
 }
 
 export interface ServerPlayerView {
+  jackpot?: import('./persistence/jackpot.js').HandJackpot;
   /** Durable snapshot sequence used by clients to reject stale delivery. */
   sequence?: number;
   /** Public seat identity of the current host; authority is still checked server-side. */
@@ -202,6 +204,7 @@ function bestFiveCards(cards: readonly Card[]): readonly Card[] {
  * RNG nor a client deck: `startServerHand` is the only dealing boundary.
  */
 export class ServerGameLifecycle {
+  private chipScale: 1 | 10 = 1;
   private hand: StartedHand | undefined;
   private readonly namesByPlayerId: ReadonlyMap<string, string>;
   private readonly avatarsByPlayerId: ReadonlyMap<string, string>;
@@ -230,6 +233,7 @@ export class ServerGameLifecycle {
       }
     }
     lifecycle.hand = hand;
+    lifecycle.chipScale = recovery.chipScale;
     return lifecycle;
   }
 
@@ -323,7 +327,7 @@ export class ServerGameLifecycle {
         reason,
       })];
     }));
-    return Object.freeze({
+    return Object.freeze(chipsFromEngine({
       playerId,
       street: hand.street,
       dealerSeat: hand.dealerSeat,
@@ -382,23 +386,24 @@ export class ServerGameLifecycle {
           uncalledReturns: Object.freeze(showdown.uncalledReturns.map((returned) => Object.freeze({ ...returned }))),
         }),
       } : {}),
-    });
+    }, this.chipScale));
   }
 
   /** Computes the authoritative payout only after a terminal showdown. */
   showdownSettlement() {
     const hand = this.requireHand();
     if (hand.street !== 'showdown') throw new Error('Hand has not reached showdown');
-    return this.showdownResult(hand);
+    return chipsFromEngine(this.showdownResult(hand), this.chipScale);
   }
 
   applyAction(playerId: string, action: PlayerAction): ServerPlayerView {
     const hand = this.requireHand();
     if (this.allInRunoutNextStreet(hand)) throw new Error('The host must advance the all-in board');
     if (this.currentActorPlayerId() !== playerId) throw new Error('Only the active player may act');
-    this.validateAction(action);
+    const engineAction = action.type === 'raise' && this.chipScale === 10 ? { ...action, raiseTo: chipUnits(action.raiseTo) } : action;
+    this.validateAction(engineAction);
     const actorSeat = hand.currentActorSeat;
-    this.hand = this.advanceIfSettled(this.apply(hand, actorSeat, action));
+    this.hand = this.advanceIfSettled(this.apply(hand, actorSeat, engineAction));
     return this.viewFor(playerId);
   }
 

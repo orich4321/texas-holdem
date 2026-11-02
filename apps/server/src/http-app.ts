@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { isChipAmount } from './chip-amounts.js';
 import express, { type ErrorRequestHandler, type RequestHandler } from 'express';
 import type { PlayerAction } from './game-lifecycle.js';
 import { createOriginPolicy, isAllowedRequestOrigin } from './origin-policy.js';
@@ -129,7 +130,7 @@ function validatePlayerAction(body: unknown): PlayerAction | undefined {
   if (body === null || typeof body !== 'object' || Array.isArray(body)) return undefined;
   const { type, raiseTo } = body as { type?: unknown; raiseTo?: unknown };
   if (type === 'check' || type === 'call' || type === 'fold' || type === 'all-in') return { type };
-  if (type === 'raise' && typeof raiseTo === 'number' && Number.isSafeInteger(raiseTo)) return { type, raiseTo };
+  if (type === 'raise' && isChipAmount(raiseTo)) return { type, raiseTo };
   return undefined;
 }
 
@@ -258,6 +259,13 @@ export function createApp({ roomRepository, accountRepository, socialRepository,
   const authReady = Boolean(accountRepository && googleOAuth);
   const appRedirect = (path: string) => publicAppOrigin ? new URL(path, publicAppOrigin).toString() : path;
   const oauthCookieOptions = { httpOnly: true, sameSite: 'lax' as const, secure: process.env.NODE_ENV === 'production', path: '/', maxAge: 10 * 60 * 1_000 };
+
+  routes.get('/jackpot', async (_request, response) => {
+    try {
+      response.setHeader('Cache-Control', 'public, max-age=5, s-maxage=5, stale-while-revalidate=5');
+      response.json(await roomRepository.getJackpotBalance());
+    } catch { response.status(503).json({ error: { code: 'JACKPOT_UNAVAILABLE' } }); }
+  });
 
   routes.get('/auth/me', async (request, response) => {
     if (!authReady) {

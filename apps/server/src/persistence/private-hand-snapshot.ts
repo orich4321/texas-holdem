@@ -13,6 +13,7 @@ export interface SignedPrivateHandSnapshot {
   readonly keyId: string;
   readonly roomId: string;
   readonly sequence: number;
+  readonly chipScale?: 10;
   readonly snapshot: StartedHandSnapshot;
   readonly signature: string;
 }
@@ -22,6 +23,7 @@ export type PrivateSnapshotSigningKey = Buffer;
 /** Opaque server capability minted only after a context-bound MAC verifies. */
 export interface VerifiedPrivateHandRecovery {
   readonly hand: StartedHand;
+  readonly chipScale: 1 | 10;
 }
 
 const verifiedRecoveries = new WeakSet<object>();
@@ -59,7 +61,7 @@ function canonicalJson(value: unknown): string {
 }
 
 function unsignedEnvelope(value: Omit<SignedPrivateHandSnapshot, 'signature'>): Omit<SignedPrivateHandSnapshot, 'signature'> {
-  return { version: value.version, keyId: value.keyId, roomId: value.roomId, sequence: value.sequence, snapshot: value.snapshot };
+  return { version: value.version, keyId: value.keyId, roomId: value.roomId, sequence: value.sequence, snapshot: value.snapshot, ...(value.chipScale === 10 ? { chipScale: 10 } : {}) };
 }
 
 function signatureFor(value: Omit<SignedPrivateHandSnapshot, 'signature'>, key: PrivateSnapshotSigningKey): string {
@@ -93,7 +95,7 @@ function upgradeAuthenticatedLegacyInitialSnapshot(snapshot: StartedHandSnapshot
 /** Server-only persistence envelope. Do not emit this value to Socket.IO clients. */
 export function signPrivateHandSnapshot(
   hand: StartedHand,
-  context: { roomId: string; sequence: number; keyId: string },
+  context: { roomId: string; sequence: number; keyId: string; chipScale?: 1 | 10 },
   key: PrivateSnapshotSigningKey,
 ): SignedPrivateHandSnapshot {
   requireSigningKey(key);
@@ -104,6 +106,7 @@ export function signPrivateHandSnapshot(
     keyId: context.keyId,
     roomId: context.roomId,
     sequence: context.sequence,
+    ...(context.chipScale === 10 ? { chipScale: 10 as const } : {}),
     snapshot: serializeStartedHand(hand),
   };
   return Object.freeze({ ...unsigned, signature: signatureFor(unsigned, key) });
@@ -117,7 +120,8 @@ export function hydrateSignedPrivateHandSnapshot(
 ): VerifiedPrivateHandRecovery {
   requireContext(context.roomId, context.sequence);
   if (!value || typeof value !== 'object') throw new Error('Invalid signed private hand snapshot');
-  const { version, keyId, roomId, sequence, snapshot, signature } = value as Partial<SignedPrivateHandSnapshot>;
+  const { version, keyId, roomId, sequence, snapshot, signature, chipScale } = value as Partial<SignedPrivateHandSnapshot>;
+  if (chipScale !== undefined && chipScale !== 10) throw new Error('Invalid chip scale');
   if (version !== 1 || !snapshot || typeof signature !== 'string' || !/^[a-f0-9]{64}$/i.test(signature)) throw new Error('Invalid signed private hand snapshot');
   try {
     requireKeyId(keyId);
@@ -132,11 +136,11 @@ export function hydrateSignedPrivateHandSnapshot(
   } catch {
     throw new Error('Invalid signed private hand snapshot');
   }
-  const expected = Buffer.from(signatureFor({ version, keyId, roomId, sequence, snapshot }, key), 'hex');
+  const expected = Buffer.from(signatureFor({ version, keyId, roomId, sequence, snapshot, ...(chipScale === 10 ? { chipScale } : {}) }, key), 'hex');
   const actual = Buffer.from(signature, 'hex');
   if (actual.length !== expected.length || !timingSafeEqual(actual, expected)) throw new Error('Invalid signed private hand snapshot');
   const authenticatedSnapshot = upgradeAuthenticatedLegacyInitialSnapshot(snapshot, sequence);
-  const recovery = Object.freeze({ hand: hydrateStartedHandForVerifiedServerRecovery(authenticatedSnapshot) });
+  const recovery = Object.freeze({ hand: hydrateStartedHandForVerifiedServerRecovery(authenticatedSnapshot), chipScale: chipScale ?? 1 });
   verifiedRecoveries.add(recovery);
   return recovery;
 }

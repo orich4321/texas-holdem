@@ -118,10 +118,10 @@ test('startHand deals two deterministic hole cards clockwise from the small blin
   assert.equal(new Set(hand.seats.flatMap((seat) => seat.holeCards).map(({ rank, suit }) => `${rank}-${suit}`)).size, 6);
 });
 
-test('startHand rejects an unaffordable blind before consuming injected randomness', () => {
+test('a short blind posts its remaining stack all-in without creating or losing chips', () => {
   let randomCalls = 0;
 
-  assert.throws(() => startHand({
+  const hand = startHand({
     seats: [
       { seatNumber: 1, playerId: 'ada', stack: 100 },
       { seatNumber: 2, playerId: 'ben', stack: 4 },
@@ -134,8 +134,12 @@ test('startHand rejects an unaffordable blind before consuming injected randomne
       randomCalls += 1;
       return maxExclusive - 1;
     },
-  }), /enough chips to post their blind/i);
-  assert.equal(randomCalls, 0);
+  });
+  assert.ok(randomCalls > 0);
+  assert.equal(hand.seats[1].stack, 0);
+  assert.equal(hand.seats[1].currentBet, 4);
+  assert.equal(hand.pot, 14);
+  assert.equal(hand.seats.reduce((sum, seat) => sum + seat.stack, hand.pot), 204);
 });
 
 test('startHand skips a zero-stack seat for dealer, blinds, action, and hole-card dealing', () => {

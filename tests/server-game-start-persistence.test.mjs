@@ -29,7 +29,9 @@ function createDb({ updateCount = 1, createEvent = undefined, createSnapshot = u
       updateMany: async (args) => { calls.push(['room.updateMany', args]); return { count: updateCount }; },
       findUnique: async (args) => { calls.push(['room.findUnique', args]); return roomRecord; },
     },
-    player: { findMany: async (args) => { calls.push(['player.findMany', args]); return roomRecord?.players ?? []; } },
+    player: { findMany: async (args) => { calls.push(['player.findMany', args]); return roomRecord?.players ?? []; }, update: async () => ({}) },
+    jackpotPool: { update: async () => ({}) },
+    jackpotHand: { create: async () => ({}) },
     gameEvent: { create: async (args) => { calls.push(['gameEvent.create', args]); return createEvent ?? { id: 'event-1', sequence: 0, ...args.data }; } },
     gameSnapshot,
   };
@@ -54,12 +56,14 @@ test('authenticated host start deals only on the server and commits the first si
   assert.deepEqual(db.calls[1][1].where, { id: room.id, hostPlayerId: room.hostPlayerId, status: 'WAITING' });
   assert.equal(db.calls[1][1].data.status, 'IN_PROGRESS');
   assert.ok(db.calls[1][1].data.turnDeadlineAt instanceof Date);
-  assert.deepEqual(db.calls[2][1].where, { roomId: room.id, leftAt: null, isSittingOut: false });
+  assert.deepEqual(db.calls[2][1].where, { roomId: room.id, leftAt: null, isSittingOut: false, currentStack: { gt: 0.1 } });
   assert.deepEqual(db.calls[3][1].data.payload, { dealerSeat: 1, smallBlind: 5, bigBlind: 10 });
   assert.equal(JSON.stringify(db.calls[3][1].data).includes('holeCards'), false);
   assert.equal(JSON.stringify(db.calls[3][1].data).includes('deck'), false);
   const recovered = hydrateSignedPrivateHandSnapshot(db.calls[4][1].data.state, { roomId: room.id, sequence: 0 }, snapshotKeyring);
   assert.deepEqual(recovered.hand.seats.map((seat) => seat.playerId), ['host-id', 'player-1']);
+  assert.equal(recovered.chipScale, 10);
+  assert.equal(recovered.hand.seats.reduce((sum, seat) => sum + seat.stack, recovered.hand.pot), 1998);
 });
 
 test('authenticated start refuses a non-host or a one-player room without committing a hand', async () => {

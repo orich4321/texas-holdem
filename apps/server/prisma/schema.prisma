@@ -34,6 +34,7 @@ model Room {
   preActions          PreAction[]
   gameInvites         GameInvite[]
   hiddenForAccounts   AccountHiddenGame[]
+  jackpotHands        JackpotHand[]
   createdAt           DateTime            @default(now())
   updatedAt           DateTime            @updatedAt
 
@@ -43,11 +44,12 @@ model Room {
 model Player {
   id                        String           @id @db.Uuid
   roomId                    String           @db.Uuid
+  seatOrder                 Int              @default(0)
   accountId                 String?          @db.Uuid
   displayName               String
   avatarDataUrl             String?
   initialStack              Int
-  currentStack              Int
+  currentStack              Float
   accessTokenHash           String           @unique
   leftAt                    DateTime?
   rejoinRequestedAt         DateTime?
@@ -210,8 +212,8 @@ model ChipAdjustment {
   authorizedByPlayerId String    @db.Uuid
   amount               Int
   status               String    @default("PENDING")
-  stackBefore          Int?
-  stackAfter           Int?
+  stackBefore          Float?
+  stackAfter           Float?
   createdAt            DateTime  @default(now())
   appliedAt            DateTime?
   cancelledAt          DateTime?
@@ -243,4 +245,22 @@ model Settlement {
   createdAt      DateTime @default(now())
 
   @@unique([roomId, idempotencyKey])
+}
+
+model JackpotPool {
+  id           String   @id
+  balanceUnits Int      @default(0)
+  updatedAt    DateTime @updatedAt
+}
+
+model JackpotHand {
+  roomId        String   @db.Uuid
+  handSequence  Int
+  contributions Json
+  payouts       Json
+  settledAt     DateTime?
+  createdAt     DateTime @default(now())
+  room          Room     @relation(fields: [roomId], references: [id], onDelete: Restrict)
+
+  @@id([roomId, handSequence])
 }

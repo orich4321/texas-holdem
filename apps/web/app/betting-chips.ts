@@ -1,17 +1,18 @@
-export const CHIP_VALUES = [100, 50, 25, 5, 1] as const;
+export const CHIP_VALUES = [100, 50, 25, 5, 1, 0.1] as const;
 export type ChipValue = (typeof CHIP_VALUES)[number];
 export type ChipCounts = Record<ChipValue, number>;
 export type ChipTray = { available: ChipCounts; selected: ChipCounts };
 
-const emptyCounts = (): ChipCounts => ({ 100: 0, 50: 0, 25: 0, 5: 0, 1: 0 });
+const emptyCounts = (): ChipCounts => ({ 100: 0, 50: 0, 25: 0, 5: 0, 1: 0, 0.1: 0 });
+export const isChipAmount = (value: unknown): value is number => typeof value === 'number' && value >= 0 && Number.isSafeInteger(Math.round(value * 10)) && Math.abs(value - Math.round(value * 10) / 10) < 1e-9;
 
 /** Compact visual breakdown for a wager or call; the amount still comes from the server. */
 export function displayChipCounts(amount: number): ChipCounts {
   const counts = emptyCounts();
-  let remainder = Number.isSafeInteger(amount) && amount > 0 ? amount : 0;
+  let remainder = isChipAmount(amount) ? Math.round(amount * 10) : 0;
   for (const value of CHIP_VALUES) {
-    counts[value] = Math.floor(remainder / value);
-    remainder %= value;
+    counts[value] = Math.floor(remainder / (value * 10));
+    remainder %= value * 10;
   }
   return counts;
 }
@@ -19,22 +20,22 @@ export function displayChipCounts(amount: number): ChipCounts {
 /** A visual denomination of the authoritative stack, never a second balance. */
 export function createChipTray(stack: number): ChipTray {
   const available = emptyCounts();
-  let remainder = Number.isSafeInteger(stack) && stack > 0 ? stack : 0;
+  let remainder = isChipAmount(stack) ? Math.round(stack * 10) : 0;
   for (const [value, target] of [[1, 5], [5, 4], [25, 1], [50, 1]] as const) {
-    const count = Math.min(target, Math.floor(remainder / value));
+    const count = Math.min(target, Math.floor(remainder / (value * 10)));
     available[value] = count;
-    remainder -= count * value;
+    remainder -= count * value * 10;
   }
   for (const value of CHIP_VALUES) {
-    const count = Math.floor(remainder / value);
+    const count = Math.floor(remainder / (value * 10));
     available[value] += count;
-    remainder -= count * value;
+    remainder -= count * value * 10;
   }
   return { available, selected: emptyCounts() };
 }
 
 export function chipTotal(counts: ChipCounts): number {
-  return CHIP_VALUES.reduce((total, value) => total + value * counts[value], 0);
+  return CHIP_VALUES.reduce((total, value) => total + Math.round(value * 10) * counts[value], 0) / 10;
 }
 
 export function selectChip(tray: ChipTray, value: ChipValue): ChipTray {

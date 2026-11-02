@@ -141,7 +141,7 @@ export class SocialRepository {
         // An invitation from another guest cannot override a host's removal.
         if (invite.fromAccountId !== invite.room.hostPlayer?.accountId) return null;
         const activeCount = await tx.player.count({ where: { roomId: invite.roomId, leftAt: null, isSittingOut: false } });
-        if (previousSeat.currentStack > 0 && activeCount >= invite.room.maxPlayers) return null;
+        if (previousSeat.currentStack > 0.1 && activeCount >= invite.room.maxPlayers) return null;
       }
       const changed = await tx.gameInvite.updateMany({
         where: { id: inviteId, toAccountId: accountId, status: 'PENDING' },
@@ -151,7 +151,7 @@ export class SocialRepository {
       if (previousSeat?.leftAt) {
         await tx.player.update({
           where: { id: previousSeat.id },
-          data: { leftAt: null, isSittingOut: previousSeat.currentStack === 0, leaveAfterHand: false, rebuyDecisionPending: false, rejoinRequestedAt: null },
+          data: { leftAt: null, isSittingOut: previousSeat.currentStack <= 0.1, leaveAfterHand: false, rebuyDecisionPending: false, rejoinRequestedAt: null },
         });
       }
       return invite.room.joinId;

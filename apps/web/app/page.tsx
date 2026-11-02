@@ -12,6 +12,7 @@ import { deleteGamePreset, loadGamePresets, saveGamePreset, type GamePreset } fr
 import { answerGameInvite, loadInvitations, loadSocial, type SocialOverview } from './social-api';
 import { usePageActivity } from './use-page-activity';
 import { HomeActiveGames } from './home-active-games';
+import { JackpotBadge } from './jackpot-badge';
 
 export default function HomePage() {
   const activity = usePageActivity();
@@ -157,7 +158,7 @@ export default function HomePage() {
   return (
     <main className="entry-shell home-shell">
       <div className="app-aurora" aria-hidden="true" />
-      <header className="entry-topbar"><AppBrand compact /><span>יצירת שולחן</span></header>
+      <header className="entry-topbar"><AppBrand compact /><JackpotBadge active={activity.networkActive} /><span>יצירת שולחן</span></header>
       {social?.invitations.length ? <aside className="home-invites" aria-label="הזמנות למשחק" aria-live="polite">
         {social.invitations.map((invite) => <div className="home-invite-banner" key={invite.id}>
           <ProfileImage className="social-avatar" dataUrl={invite.from.avatarDataUrl} fallback="♠" />

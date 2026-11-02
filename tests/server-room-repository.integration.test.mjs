@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { Buffer } from 'node:buffer';
 import { randomUUID } from 'node:crypto';
 import { test, before, after, beforeEach } from 'node:test';
+import { serializeStartedHand, hydrateStartedHandForVerifiedServerRecovery } from '../packages/poker-core/src/index.ts';
+import { signPrivateHandSnapshot } from '../apps/server/src/persistence/private-hand-snapshot.ts';
 
 const testDatabaseUrl = globalThis.process?.env.TEST_DATABASE_URL;
 const integrationEnabled = testDatabaseUrl !== undefined;
@@ -31,6 +33,8 @@ if (integrationEnabled) {
   });
 
   beforeEach(async () => {
+    await prisma.jackpotHand.deleteMany();
+    await prisma.jackpotPool.updateMany({ data: { balanceUnits: 0 } });
     await prisma.chipAdjustment.deleteMany();
     await prisma.settlement.deleteMany();
     await prisma.gameSnapshot.deleteMany();
@@ -170,7 +174,8 @@ test('removed player requests and rejoins a running game with the original stack
   assert.equal(view.playerId, guestId);
   assert.equal(view.holeCards.length, 2);
   assert.equal(view.seats.length, 3);
-  assert.equal(view.seats.reduce((sum, seat) => sum + seat.stack, view.pot), 1500);
+  const pool = (await rooms.getJackpotBalance()).balance;
+  assert.equal(Math.round((view.seats.reduce((sum, seat) => sum + seat.stack, view.pot) + pool) * 10), 15000);
   assert.ok((await rooms.listHandsForAccount(profile.id, room.joinId)).hands.length >= 2);
 });
 
@@ -219,6 +224,130 @@ test('a non-host invitation cannot bypass removal, and host invitation preserves
   assert.equal(guest.currentStack, 0);
   assert.equal(guest.isSittingOut, true);
   assert.equal(guest.rejoinRequestedAt, null);
+});
+
+// Deterministic private fixtures are signed only in tests; production always uses the secure dealer.
+async function rigJackpotHand(repository, room, holeCards, board) {
+  const current = await repository.recoverLatestHandForPlayer(room.id, room.hostPlayerId);
+  const snapshot = serializeStartedHand(current.recovery.hand);
+  const slots = snapshot.hand.seats.flatMap((seat) => seat.holeCards.map((_, index) => ({ array: seat.holeCards, index })));
+  slots.push(...snapshot.hand.remainingDeck.map((_, index) => ({ array: snapshot.hand.remainingDeck, index })));
+  function put(array, index, card) {
+    const source = slots.find((slot) => slot.array[slot.index].rank === card.rank && slot.array[slot.index].suit === card.suit);
+    assert.ok(source);
+    [array[index], source.array[source.index]] = [source.array[source.index], array[index]];
+  }
+  holeCards.forEach((cards, seat) => cards.forEach((card, index) => put(snapshot.hand.seats[seat].holeCards, index, card)));
+  board?.forEach((card, index) => put(snapshot.hand.remainingDeck, [1, 2, 3, 5, 7][index], card));
+  const hand = hydrateStartedHandForVerifiedServerRecovery(snapshot);
+  const state = signPrivateHandSnapshot(hand, { roomId: room.id, sequence: current.sequence, keyId: 'integration-current', chipScale: 10 }, snapshotKeyring.get('integration-current'));
+  await prisma.gameSnapshot.update({ where: { roomId_sequence: { roomId: room.id, sequence: current.sequence } }, data: { state } });
+}
+
+const card = (rank, suit) => ({ rank, suit });
+async function jackpotRoom(repository, stacks = [500, 500]) {
+  const room = await repository.createRoom({ status: 'WAITING', host: { id: randomUUID(), displayName: 'Host', initialStack: stacks[0] },
+    players: stacks.slice(1).map((initialStack, index) => ({ id: randomUUID(), displayName: `Guest ${index}`, initialStack })),
+  });
+  await repository.startGameForHostAtomically({ joinId: room.joinId, hostPlayerId: room.hostPlayerId });
+  return room;
+}
+
+async function finishAllInJackpot(repository, room) {
+  for (let i = 0; i < 3; i += 1) {
+    const { recovery: { hand } } = await repository.recoverLatestHandForPlayer(room.id, room.hostPlayerId);
+    const actor = hand.seats.find((seat) => seat.seatNumber === hand.currentActorSeat);
+    await repository.persistPlayerActionAtomically({ roomId: room.id, playerId: actor.playerId, action: i === 0 ? { type: 'all-in' } : { type: 'call' } });
+  }
+  for (let i = 0; i < 4; i += 1) await repository.advanceAllInRunoutForHostAtomically({ joinId: room.joinId, hostPlayerId: room.hostPlayerId });
+}
+
+test('jackpot charges only dealt seats, rolls back with a failed deal, and survives a game ending', { skip: !integrationEnabled }, async () => {
+  const repository = new RoomRepository(prisma, undefined, undefined, undefined, snapshotKeyring);
+  const room = await jackpotRoom(repository);
+  assert.deepEqual(await repository.getJackpotBalance(), { balance: 0.2, contributionPerPlayer: 0.1 });
+  await assert.rejects(repository.startGameForHostAtomically({ joinId: room.joinId, hostPlayerId: room.hostPlayerId }));
+  assert.equal((await repository.getJackpotBalance()).balance, 0.2);
+  const late = await repository.joinWaitingRoom(room.joinId, { id: randomUUID(), displayName: 'Late' });
+  assert.equal(late.kind, 'joined');
+  assert.equal((await repository.getJackpotBalance()).balance, 0.2);
+  const { contributeJackpot } = await import('../apps/server/src/persistence/jackpot.ts');
+  await assert.rejects(prisma.$transaction(async (tx) => {
+    await contributeJackpot(tx, room.id, 99, [{ id: room.hostPlayerId, currentStack: 499.9 }, { id: room.players[1].id, currentStack: 499.9 }]);
+    throw new Error('simulated deal failure');
+  }));
+  assert.equal(await prisma.jackpotHand.count({ where: { roomId: room.id } }), 1);
+  assert.equal((await repository.getJackpotBalance()).balance, 0.2);
+  await repository.closeRoomForHost(room.joinId, room.hostPlayerId);
+  assert.equal((await repository.getJackpotBalance()).balance, 0.2);
+  await jackpotRoom(repository);
+  assert.equal((await repository.getJackpotBalance()).balance, 0.4);
+});
+
+test('a fold win pays the shared jackpot once, exposes the qualifying hand, and survives recovery', { skip: !integrationEnabled }, async () => {
+  const repository = new RoomRepository(prisma, undefined, undefined, undefined, snapshotKeyring);
+  await prisma.jackpotPool.updateMany({ data: { balanceUnits: 17 } });
+  const room = await jackpotRoom(repository);
+  await rigJackpotHand(repository, room, [[card('2', 'clubs'), card('7', 'diamonds')], [card('A', 'hearts'), card('Q', 'hearts')]]);
+  await repository.persistPlayerActionAtomically({ roomId: room.id, playerId: room.hostPlayerId, action: { type: 'call' } });
+  const clientActionId = randomUUID();
+  const input = { roomId: room.id, playerId: room.players[1].id, action: { type: 'fold' }, clientActionId };
+  const result = await repository.persistPlayerActionAtomically(input);
+  assert.equal(result.view.jackpot.payouts[0].amount, 1.9);
+  assert.equal((await repository.getJackpotBalance()).balance, 0);
+  const winner = await prisma.player.findUniqueOrThrow({ where: { id: room.hostPlayerId } });
+  assert.equal(result.view.seats.find((seat) => seat.playerId === room.hostPlayerId).stack, winner.currentStack);
+  assert.equal(result.view.exposedHands.find((seat) => seat.playerId === room.hostPlayerId).cards.length, 2);
+  const duplicate = await repository.persistPlayerActionAtomically(input);
+  assert.equal(duplicate.sequence, result.sequence);
+  assert.equal((await prisma.player.findUniqueOrThrow({ where: { id: room.hostPlayerId } })).currentStack, winner.currentStack);
+  const restored = await new RoomRepository(prisma, undefined, undefined, undefined, snapshotKeyring).recoverLatestPlayerViewForPlayer(room.id, room.players[1].id);
+  assert.deepEqual(restored.jackpot, result.view.jackpot);
+  const round = await prisma.jackpotHand.findFirstOrThrow({ where: { roomId: room.id } });
+  assert.ok(round.settledAt);
+  assert.equal(round.payouts.length, 1);
+});
+
+test('two concurrent tables cannot both collect the same jackpot balance', { skip: !integrationEnabled }, async () => {
+  const repository = new RoomRepository(prisma, undefined, undefined, undefined, snapshotKeyring);
+  await prisma.jackpotPool.updateMany({ data: { balanceUnits: 17 } });
+  const rooms = await Promise.all([jackpotRoom(repository), jackpotRoom(repository)]);
+  for (const room of rooms) {
+    await rigJackpotHand(repository, room, [[card('2', 'clubs'), card('7', 'diamonds')], [card('A', 'hearts'), card('Q', 'hearts')]]);
+    await repository.persistPlayerActionAtomically({ roomId: room.id, playerId: room.hostPlayerId, action: { type: 'call' } });
+  }
+  const results = await Promise.all(rooms.map((room) => repository.persistPlayerActionAtomically({ roomId: room.id, playerId: room.players[1].id, action: { type: 'fold' } })));
+  const paid = results.map((result) => result.view.jackpot.payouts[0].amount).sort((a, b) => a - b);
+  assert.deepEqual(paid, [0, 2.1]);
+  assert.equal((await repository.getJackpotBalance()).balance, 0);
+});
+
+test('winning only a side pot with 2-7 offsuit still pays the jackpot', { skip: !integrationEnabled }, async () => {
+  const repository = new RoomRepository(prisma, undefined, undefined, undefined, snapshotKeyring);
+  const room = await jackpotRoom(repository, [100, 100, 30]);
+  await rigJackpotHand(repository, room, [
+    [card('2', 'clubs'), card('7', 'spades')], [card('A', 'hearts'), card('Q', 'hearts')], [card('K', 'spades'), card('K', 'diamonds')],
+  ], [card('K', 'hearts'), card('K', 'clubs'), card('7', 'clubs'), card('7', 'hearts'), card('2', 'diamonds')]);
+  await finishAllInJackpot(repository, room);
+  const view = await repository.recoverLatestPlayerViewForPlayer(room.id, room.hostPlayerId);
+  assert.deepEqual(view.showdown.pots.map((pot) => pot.winnerSeatNumbers), [[3], [1]]);
+  assert.equal(view.jackpot.payouts[0].playerId, room.hostPlayerId);
+  assert.equal(view.jackpot.payouts[0].amount, 0.3);
+  const players = await prisma.player.findMany({ where: { roomId: room.id } });
+  assert.equal(Math.round(players.reduce((sum, player) => sum + player.currentStack, 0) * 10), 2300);
+});
+
+test('tied 2-7 winners split the jackpot in tenths with deterministic odd-chip priority', { skip: !integrationEnabled }, async () => {
+  const repository = new RoomRepository(prisma, undefined, undefined, undefined, snapshotKeyring);
+  await prisma.jackpotPool.updateMany({ data: { balanceUnits: 2 } });
+  const room = await jackpotRoom(repository, [100, 100, 100]);
+  await rigJackpotHand(repository, room, [
+    [card('2', 'clubs'), card('7', 'diamonds')], [card('2', 'diamonds'), card('7', 'clubs')], [card('A', 'hearts'), card('Q', 'hearts')],
+  ], [card('10', 'spades'), card('J', 'spades'), card('Q', 'spades'), card('K', 'spades'), card('A', 'spades')]);
+  await finishAllInJackpot(repository, room);
+  const view = await repository.recoverLatestPlayerViewForPlayer(room.id, room.hostPlayerId);
+  assert.deepEqual(view.jackpot.payouts.map((payout) => payout.amount), [0.3, 0.2]);
+  assert.equal(view.jackpot.payouts[0].playerId, room.players[1].id);
 });
 
 test('room repository persists a room with two players and retrieves it by join ID', { skip: !integrationEnabled }, async () => {
@@ -398,7 +527,7 @@ test('a busted member sits out, keeps their session, and can return to the same 
   assert.equal(returned.seats.findIndex((seat) => seat.playerId === bustedId), parkedSeatIndex, 'a rebuy restores the same visual table position');
   assert.equal(returned.seats.find((seat) => seat.playerId === bustedId).isSittingOut, false);
   assert.ok(returned.seats.find((seat) => seat.playerId === bustedId).stack <= 500, 'the next hand may have posted a blind');
-  assert.equal((await prisma.player.findUnique({ where: { id: bustedId } })).currentStack, 500);
+  assert.equal((await prisma.player.findUnique({ where: { id: bustedId } })).currentStack, 499.9);
   assert.equal((await repository.getHostManagement(created.joinId, created.hostPlayerId)).players.find((player) => player.id === bustedId).isSittingOut, false);
   assert.equal((await prisma.chipAdjustment.findFirst({ where: { playerId: bustedId, status: 'APPLIED' } })).stackAfter, 500);
 });
@@ -532,6 +661,6 @@ test('a waiting room can be cancelled and an unfinished hand is excluded from fi
   assert.deepEqual(await repository.closeRoomForHost(playing.joinId, playing.hostPlayerId), { status: 'COMPLETED', finalSummaryVisible: true, abandonedHand: true });
   const summary = await repository.getFinalSummaryForPlayer(playing.id, guestId);
   assert.equal(summary.hands.length, 0);
-  assert.deepEqual(summary.standings.map((player) => player.finalStack).sort(), [500, 500]);
+  assert.deepEqual(summary.standings.map((player) => player.finalStack).sort(), [499.9, 499.9]);
   assert.equal((await prisma.settlement.count({ where: { roomId: playing.id } })), 0);
 });

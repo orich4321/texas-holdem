@@ -1,4 +1,5 @@
 /** A deliberately narrow projection of the stored settlement. Never return raw result JSON. */
+import { isChipAmount } from '../chip-amounts.js';
 type Card = { rank: string; suit: string };
 type Event = { sequence: number; type: string; payload: unknown; createdAt: Date };
 export type ReplayFrame = {
@@ -26,6 +27,7 @@ function cards(value: unknown): (Card | null)[] {
 function int(value: unknown): number {
   return typeof value === 'number' && Number.isSafeInteger(value) ? value : 0;
 }
+const amount = (value: unknown): number => isChipAmount(value) ? Math.round(value * 10) / 10 : 0;
 
 export function projectHandHistory(result: unknown, ownPlayerIds: ReadonlySet<string>, events: readonly Event[]) {
   const stored = record(result) ?? {};
@@ -36,6 +38,11 @@ export function projectHandHistory(result: unknown, ownPlayerIds: ReadonlySet<st
   const showdownPlayers = players.filter((player) => player.folded !== true);
   const publicShowdown = showdownPlayers.length >= 2;
   const revealed = new Map<string, Set<number>>();
+  const jackpot = record(stored.jackpot);
+  for (const payout of Array.isArray(jackpot?.payouts) ? jackpot.payouts : []) {
+    const entry = record(payout);
+    if (typeof entry?.playerId === 'string') revealed.set(entry.playerId, new Set([0, 1]));
+  }
   for (const event of events) {
     if (event.type !== 'SHOWDOWN_CARD_REVEALED') continue;
     const payload = record(event.payload);
@@ -59,9 +66,9 @@ export function projectHandHistory(result: unknown, ownPlayerIds: ReadonlySet<st
       };
     }),
     pots: (Array.isArray(stored.pots) ? stored.pots : []).map(record).filter((pot): pot is Record<string, unknown> => pot !== null).map((pot) => ({
-      amount: int(pot.amount),
+      amount: amount(pot.amount),
       winnerSeatNumbers: Array.isArray(pot.winnerSeatNumbers) ? pot.winnerSeatNumbers.map(int) : [],
-      payouts: (Array.isArray(pot.payouts) ? pot.payouts : []).map(record).filter((payout): payout is Record<string, unknown> => payout !== null).map((payout) => ({ seatNumber: int(payout.seatNumber), amount: int(payout.amount) })),
+      payouts: (Array.isArray(pot.payouts) ? pot.payouts : []).map(record).filter((payout): payout is Record<string, unknown> => payout !== null).map((payout) => ({ seatNumber: int(payout.seatNumber), amount: amount(payout.amount) })),
     })),
     actions: events.filter((event) => event.type === 'PLAYER_ACTION').map((event) => {
       const payload = record(event.payload) ?? {};
@@ -71,8 +78,8 @@ export function projectHandHistory(result: unknown, ownPlayerIds: ReadonlySet<st
         occurredAt: event.createdAt.toISOString(),
         playerId: typeof payload.actorPlayerId === 'string' ? payload.actorPlayerId : '',
         type: typeof action.type === 'string' ? action.type : 'unknown',
-        amount: int(payload.amount),
-        raiseTo: int(action.raiseTo),
+        amount: amount(payload.amount),
+        raiseTo: amount(action.raiseTo),
       };
     }),
   };
@@ -85,7 +92,7 @@ export function projectHandReplay(result: unknown, ownPlayerIds: ReadonlySet<str
   const resultData = record(result) ?? {};
   const finalStacks = new Map((Array.isArray(resultData.stacks) ? resultData.stacks : []).map(record)
     .filter((seat): seat is Record<string, unknown> => seat !== null && typeof seat.playerId === 'string')
-    .map((seat) => [seat.playerId as string, int(seat.stack)]));
+    .map((seat) => [seat.playerId as string, amount(seat.stack)]));
   const steps: {
     sequence: number; kind: string; street: string; board: Card[]; pot: number;
     actorPlayerId: string; action: { type: string; amount: number; raiseTo: number; raiseKind: string } | null;
@@ -104,7 +111,7 @@ export function projectHandReplay(result: unknown, ownPlayerIds: ReadonlySet<str
       actorPlayerId: typeof payload.actorPlayerId === 'string' ? payload.actorPlayerId : typeof payload.playerId === 'string' ? payload.playerId : '',
       action: event?.type === 'PLAYER_ACTION' ? {
         type: typeof action.type === 'string' ? action.type : 'unknown',
-        amount: int(payload.amount), raiseTo: int(action.raiseTo),
+        amount: amount(payload.amount), raiseTo: amount(action.raiseTo),
         raiseKind: typeof payload.raiseKind === 'string' ? payload.raiseKind : '',
       } : null,
       players: frame.seats.map((seat) => {

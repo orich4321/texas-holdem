@@ -329,7 +329,7 @@ test('a normal hand after a previous final hand does not complete the room again
 test('invalid or out-of-turn action writes nothing', async () => {
   for (const [playerId, action] of [
     ['player-1', { type: 'call' }],
-    ['host-id', { type: 'raise', raiseTo: 1.5 }],
+    ['host-id', { type: 'raise', raiseTo: 1.55 }],
     ['host-id', { type: 'call', playerId: 'player-1' }],
   ]) {
     const db = createDb();

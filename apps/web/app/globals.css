@@ -374,7 +374,13 @@ button:disabled { cursor: wait; opacity: 0.55; }
 .chip-tray-header { min-width: 0; }
 .chip-tray-header span { color: #d8e5dc; font-size: .65rem; font-weight: 850; }
 .chip-tray-header strong { color: var(--gold-light); font-size: .69rem; font-variant-numeric: tabular-nums; }
-.chip-piles { display: grid; grid-template-columns: repeat(5,minmax(0,1fr)); gap: 5px; }
+.chip-piles { display: grid; grid-template-columns: repeat(6,minmax(0,1fr)); gap: 5px; }
+.bet-chip[class~="bet-chip-0.1"] { background: #adb7b2; color: #17231c; }
+.jackpot-badge { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 5px 8px; border: 1px solid var(--gold-line); border-radius: 10px; color: #c5ad77; background: #15221b; font-size: .64rem; white-space: nowrap; }
+.jackpot-badge strong { font-size: .84rem; font-variant-numeric: tabular-nums; }
+.jackpot-award { color: #ddc080 !important; font-weight: 800; }
+.table-header > .jackpot-badge { grid-row: 2; grid-column: 1/-1; justify-self: center; padding-block: 2px; }
+.table-header:has(> .jackpot-badge) { row-gap: 3px; }
 .chip-pile { display: grid; justify-items: center; min-width: 0; gap: 2px; }
 .chip-pile > strong { color: #e2e8e1; font-size: .67rem; font-variant-numeric: tabular-nums; }
 .bet-chip { position: relative; display: grid; width: 43px; height: 43px; padding: 0; border: 3px dashed rgba(255,255,255,.48); border-radius: 50%; color: #f6f4e9; background: #1b2521; box-shadow: 0 2px 0 #090d0a, 0 4px 0 #6c6452, 0 6px 0 #090d0a, 0 8px 8px rgba(0,0,0,.4), inset 0 0 0 3px rgba(0,0,0,.22); cursor: pointer; font-size: .7rem; font-weight: 900; font-variant-numeric: tabular-nums; place-items: center; touch-action: manipulation; }

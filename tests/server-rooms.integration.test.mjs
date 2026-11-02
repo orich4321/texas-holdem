@@ -41,6 +41,8 @@ if (integrationEnabled) {
   });
 
   beforeEach(async () => {
+    await prisma.jackpotHand.deleteMany();
+    await prisma.jackpotPool.updateMany({ data: { balanceUnits: 0 } });
     await prisma.chipAdjustment.deleteMany();
     await prisma.settlement.deleteMany();
     await prisma.gameSnapshot.deleteMany();
