@@ -124,6 +124,7 @@ test('coach: all model calls are disabled without explicit free-project confirma
   assert.equal(coachConfiguration({}).enabled, false);
   const env = { AI_COACH_ENABLED: 'true', GEMINI_API_KEY: 'test-key', GEMINI_FREE_TIER_CONFIRMED: 'true' };
   assert.equal(coachConfiguration(env).enabled, true);
+  assert.equal(coachConfiguration({ ...env, GEMINI_COACH_MODEL: 'gemini-3.5-flash-lite' }).enabled, true);
   assert.equal(coachConfiguration({ ...env, GEMINI_COACH_MODEL: 'gemini-pro-paid' }).enabled, false);
   assert.equal(coachConfiguration({ ...env, GEMINI_FREE_TIER_CONFIRMED: 'false' }).enabled, false);
   assert.ok(retryDelay(2, true) > retryDelay(1, true));
@@ -162,8 +163,35 @@ test('coach: Gemini response schema follows the current batch size while exact d
   assert.equal(schema.properties.hands.items.properties.evaluations.maxItems, 3);
   assert.equal('temperature' in captured.generationConfig, false);
   assert.deepEqual(result.analyses.map((h) => h.evaluations.length), [1, 3]);
+  assert.equal((await provider.analyze(hands, 'gemini-3.5-flash-lite')).analyses.length, 2);
   omitDecision = true;
   await assert.rejects(provider.analyze(hands, 'gemini-3.8-flash'), (error) => error.kind === 'INVALID_OUTPUT');
+});
+
+test('coach: narrative schema compiles without nested array maxima but oversized model output is still rejected', async (t) => {
+  const stored = [{ hand: hand({ decisions: [decision()] }), analysis: { handKey: 'hand-0', summary: 'בדיקה', evaluations: [evaluation('hand-0:1')] } }];
+  let captured;
+  let oversized = false;
+  t.mock.method(globalThis, 'fetch', async (input, init) => {
+    const request = input instanceof globalThis.Request ? input : new globalThis.Request(input, init);
+    captured = await request.json();
+    const output = { ...narrative, strengths: oversized ? Array.from({ length: 9 }, () => ({
+      title: 'בדיקה', explanation: 'בדיקה', exercise: 'בדיקה', decisionIds: ['hand-0:1'],
+    })) : [] };
+    return new globalThis.Response(JSON.stringify({ candidates: [{ finishReason: 'STOP', content: {
+      role: 'model', parts: [{ text: JSON.stringify(output) }],
+    } }] }), { headers: { 'Content-Type': 'application/json' } });
+  });
+  const provider = createGeminiProvider('synthetic-test-key');
+  assert.equal((await provider.summarize(stored, 'hero', 'gemini-3.5-flash-lite')).narrative.summary, narrative.summary);
+  assert.equal(JSON.stringify(captured.generationConfig.responseJsonSchema).includes('maxItems'), false);
+  assert.deepEqual(JSON.parse(captured.contents[0].parts[0].text).opponents, []);
+  stored[0].hand.actions = Array.from({ length: 30 }, (_, index) => action(index, 'opponent', 'call'));
+  await provider.summarize(stored, 'hero', 'gemini-3.5-flash-lite');
+  const opponents = JSON.parse(captured.contents[0].parts[0].text).opponents;
+  assert.deepEqual(opponents.map((p) => [p.playerId, p.observedActions]), [['opponent', 30]]);
+  oversized = true;
+  await assert.rejects(provider.summarize(stored, 'hero', 'gemini-3.5-flash-lite'), (error) => error.kind === 'INVALID_OUTPUT');
 });
 test('coach HTTP: unauthenticated, foreign-game and spoofed-player requests are denied server-side', async () => {
   let calls = 0;
