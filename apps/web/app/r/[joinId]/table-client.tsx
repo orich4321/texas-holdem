@@ -8,6 +8,7 @@ import { ProfileImage } from '../../profile-image';
 import { RejoinPanel } from '../../rejoin-panel';
 import { JackpotBadge } from '../../jackpot-badge';
 import { CoachButton } from '../../coach/coach-button';
+import { createTableRefresh } from '../../table-refresh';
 import { formatChipsInBigBlinds } from '../../chips-in-blinds';
 import { actionAudioIsReady, playActionSound, unlockActionAudio } from '../../action-sounds';
 import { CHIP_VALUES, breakChip, chipTotal, clearChipSelection, createChipTray, displayChipCounts, returnChip, selectAllChips, selectChip, isChipAmount, type ChipValue } from '../../betting-chips';
@@ -154,16 +155,16 @@ function isShowdown(value: unknown): value is Showdown {
     && showdown.pots.every((pot) => {
       if (pot === null || typeof pot !== 'object') return false;
       const record = pot as Record<string, unknown>;
-      if (!Number.isSafeInteger(record.amount) || (record.amount as number) <= 0
+      if (!isChipAmount(record.amount) || record.amount <= 0
         || !Array.isArray(record.eligibleSeatNumbers) || !record.eligibleSeatNumbers.every(Number.isSafeInteger)
         || !Array.isArray(record.winnerSeatNumbers) || !record.winnerSeatNumbers.every(Number.isSafeInteger)
         || !Array.isArray(record.payouts)) return false;
       const payouts = record.payouts as unknown[];
       return payouts.every((payout) => payout !== null && typeof payout === 'object'
         && Number.isSafeInteger((payout as Record<string, unknown>).seatNumber)
-        && Number.isSafeInteger((payout as Record<string, unknown>).amount)
+        && isChipAmount((payout as Record<string, unknown>).amount)
         && ((payout as Record<string, unknown>).amount as number) > 0)
-        && payouts.reduce<number>((total, payout) => total + ((payout as Record<string, number>).amount), 0) === record.amount;
+        && payouts.reduce<number>((total, payout) => total + Math.round((payout as Record<string, number>).amount * 10), 0) === Math.round(record.amount * 10);
     })
     && Array.isArray(showdown.uncalledReturns);
 }
@@ -212,7 +213,7 @@ function isFinalSummary(value: unknown, joinId: string): value is FinalSummary {
     && typeof summary.handCount === 'number';
 }
 
-function isPlayerView(value: unknown): value is PlayerView {
+export function isPlayerView(value: unknown): value is PlayerView {
   if (value === null || typeof value !== 'object') return false;
   const view = value as Record<string, unknown>;
   return typeof view.playerId === 'string'
@@ -438,45 +439,35 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
   useEffect(() => {
     if (!networkActive || membershipLost) return;
     let active = true;
-    let refreshing = false;
-    const controller = new AbortController();
-    let refreshTag: string | undefined;
-    const refresh = async () => {
-      if (refreshing) return;
-      refreshing = true;
-      try {
-        const response = await globalThis.fetch(`${SERVER_URL}/rooms/${encodeURIComponent(joinId)}/game`, {
-          credentials: 'include', cache: 'no-store', signal: controller.signal,
-          ...(refreshTag ? { headers: { 'If-None-Match': refreshTag } } : {}),
-        });
-        if (response.status === 304) return;
-        if (response.status === 401) {
-          if (active) setMembershipLost(true);
-          return;
-        }
-        const next = await response.json();
-        if (response.status === 409 && (next as { error?: { code?: string } })?.error?.code === 'GAME_NOT_AVAILABLE') {
-          refreshTag = undefined;
-          if (active) {
-            setWaitingForNextHand(true);
-            setStatus('הצטרפתם בין ידיים — ממתינים למארח שיתחיל את היד הבאה…');
-          }
-          return;
-        }
-        if (!response.ok || !isPlayerView(next)) throw new Error('Invalid player view');
-        if (!active) return;
-        refreshTag = response.headers.get('etag') ?? undefined;
-        if ((next.sequence ?? 0) < latestSequenceRef.current) return;
+    let reconnecting = false;
+    const transport = createTableRefresh({
+      url: `${SERVER_URL}/rooms/${encodeURIComponent(joinId)}/game`,
+      validate: isPlayerView,
+      currentSequence: () => latestSequenceRef.current,
+      onView: (next) => {
+        reconnecting = false;
         latestSequenceRef.current = next.sequence ?? latestSequenceRef.current;
         setWaitingForNextHand(false);
         setView((current) => ({ ...next, gameStartedAt: next.gameStartedAt ?? current?.gameStartedAt }));
         setStatus(next.street === 'showdown' ? 'היד הסתיימה' : 'מחוברים לשולחן');
-      } catch {
-        if (active) setStatus('החיבור נותק זמנית — מתחברים מחדש…');
-      } finally {
-        refreshing = false;
-      }
-    };
+      },
+      onUnchanged: () => {
+        if (!reconnecting) return;
+        reconnecting = false;
+        setStatus(viewRef.current?.street === 'showdown' ? 'היד הסתיימה' : 'מחוברים לשולחן');
+      },
+      onUnauthorized: () => setMembershipLost(true),
+      onWaiting: () => {
+        reconnecting = false;
+        setWaitingForNextHand(true);
+        setStatus('הצטרפתם בין ידיים — ממתינים למארח שיתחיל את היד הבאה…');
+      },
+      onError: (kind) => {
+        reconnecting = true;
+        setStatus(kind === 'INVALID_STATE' ? 'לא הצלחנו לעדכן את השולחן — מנסים שוב…' : 'החיבור נותק זמנית — מתחברים מחדש…');
+      },
+    });
+    const refresh = transport.refresh;
 
     // Socket.IO is available for a standalone server. Vercel's same-origin
     // function cannot keep a WebSocket open; avoid repeated failed handshakes.
@@ -499,11 +490,13 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
       if (!active || !isPlayerView(next)) return;
       if ((next.sequence ?? 0) < latestSequenceRef.current) return;
       latestSequenceRef.current = next.sequence ?? latestSequenceRef.current;
+      reconnecting = false;
       setView((current) => ({ ...next, gameStartedAt: next.gameStartedAt ?? current?.gameStartedAt }));
       setStatus(next.street === 'showdown' ? 'היד הסתיימה' : 'מחוברים לשולחן');
     });
     socket?.on('game:error', () => { void refresh(); });
     socket?.on('disconnect', () => {
+      reconnecting = true;
       if (active) setStatus('החיבור נותק זמנית — מתחברים מחדש…');
     });
 
@@ -531,7 +524,7 @@ export default function TableClient({ joinId, isHost, networkActive = true }: { 
     globalThis.document.addEventListener('visibilitychange', onVisibilityChange);
     return () => {
       active = false;
-      controller.abort();
+      transport.dispose();
       socket?.close();
       socketRef.current = null;
       if (pollTimer !== undefined) globalThis.clearTimeout(pollTimer);
